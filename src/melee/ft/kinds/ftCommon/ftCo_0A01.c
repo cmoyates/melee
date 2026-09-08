@@ -8603,6 +8603,9 @@ void ftCo_800B3900(Fighter_GObj* gobj)
 #endif
     ftCo_800B3E04(fp);
     ftCo_800B0AF4(fp);
+#if SHOWBOAT_AI
+    ShowboatAI_PostInput(fp);
+#endif
     fp->cpu.x7C += 1;
 }
 

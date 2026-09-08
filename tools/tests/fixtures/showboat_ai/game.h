@@ -21,7 +21,7 @@ typedef struct Fighter_GObj {
 
 typedef struct { float x, y, z; } Vec3;
 typedef struct { s8 x, y; } TestStick;
-typedef struct { bool on_platform; } CollData;
+typedef struct { bool on_platform; struct { int index; } floor; } CollData;
 enum { GA_Ground, GA_Air };
 enum { HSD_PAD_DPADUP = 0x0008, HSD_PAD_B = 0x0200 };
 
@@ -44,7 +44,8 @@ struct Fighter {
     u8 player_id;
     int motion_id;
     int ground_or_air;
-    float facing_dir, cur_anim_frame;
+    float facing_dir, cur_anim_frame, grab_timer;
+    struct { struct { struct { int x40; } unk_deadleft; } co; } mv;
     Vec3 cur_pos, self_vel;
     CollData coll_data;
     struct { float x1830_percent; } dmg;
@@ -59,6 +60,13 @@ struct Fighter {
 struct TestFighterData { void* x8[FTKIND_MAX]; };
 extern struct TestFighterData* Fighter_804D64FC;
 
+struct TestCommonData { float x5D0; };
+extern struct TestCommonData* p_ftCommonData;
+struct TestEntities { void* items; };
+extern struct TestEntities* HSD_GObj_Entities;
+StKind Stage_80225194(void);
+void mpFloorGetLeft(int line_id, Vec3* out);
+void mpFloorGetRight(int line_id, Vec3* out);
 bool mpColl_IsOnPlatform(CollData* data);
 bool ftCo_800A2040(Fighter* fp);
 float ftCo_800A2A70(Fighter* fp, bool right);

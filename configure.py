@@ -2026,6 +2026,9 @@ if args.showboat_ai:
     showboat_source = "melee/mod/showboat_ai.c"
     config.libs.append(MeleeLib("Showboat AI mod", [Object(Matching, showboat_source)]))
     config.extra_dol_objects.append(showboat_source)
+    combat_source = "melee/mod/showboat_combat.c"
+    config.libs.append(MeleeLib("Showboat combat", [Object(Matching, combat_source)]))
+    config.extra_dol_objects.append(combat_source)
     if args.showboat_ai_hud:
         hud_source = "melee/mod/showboat_hud.c"
         config.libs.append(MeleeLib("Showboat HUD", [Object(Matching, hud_source)]))
@@ -2033,7 +2036,7 @@ if args.showboat_ai:
     for lib in config.libs:
         for obj in lib["objects"]:
             if obj.name in {
-                showboat_source, "melee/mod/showboat_hud.c",
+                showboat_source, combat_source, "melee/mod/showboat_hud.c",
                 "melee/ft/kinds/ftCommon/ftCo_0A01.c",
                 "melee/ft/ftcpuattack.c", "melee/pl/player.c", "melee/ft/fighter.c",
             }:

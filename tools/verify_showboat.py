@@ -12,6 +12,7 @@ EXPECTED_OBJECTS = {
     "melee/ft/ftcpuattack.o",
     "melee/ft/kinds/ftCommon/ftCo_0A01.o",
     "melee/mod/showboat_ai.o",
+    "melee/mod/showboat_combat.o",
     "melee/mod/showboat_hud.o",
     "melee/pl/player.o",
 }
@@ -72,7 +73,7 @@ def main():
     )
     (ROOT / "build/showboat/verification.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"Validated {report['dol']}: {len(data):,} bytes, SHA-1 {report['sha1']}")
-    print("Stock DOLs unchanged; exactly four hooked objects plus the AI/HUD modules differ from C-stick.")
+    print("Stock DOLs unchanged; exactly four hooked objects plus the AI/combat/HUD modules differ from C-stick.")
 
 
 if __name__ == "__main__":

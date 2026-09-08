@@ -9,6 +9,8 @@ void ShowboatAI_ResetSlot(int slot);
 void ShowboatAI_Suspend(Fighter* fp);
 /* After vanilla observations/arbitration; true supplies this frame's script. */
 bool ShowboatAI_Update(Fighter* fp);
+/* Optional controller-only technical overlay after the native interpreter. */
+void ShowboatAI_PostInput(Fighter* fp);
 /* Retains vanilla eligibility; only changes relative candidate probability. */
 float ShowboatAI_AttackWeight(Fighter* fp, void* table, int command,
                              float weight);

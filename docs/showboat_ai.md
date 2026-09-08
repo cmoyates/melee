@@ -4,6 +4,19 @@ Tracking: https://github.com/cmoyates/melee/issues/1
 Branch: `mod/showboat-ai`, based on the existing single-player C-stick mod.
 Initial working tree was clean; that mod is retained.
 
+## V2 direction: competence before ego
+
+The target is a skilled, infuriating opponent that sometimes prefers keeping a
+juggle alive to attempting a finisher. This is a **decision policy**, not special
+powers: no modified timings, physics, spacing/ranges, hitboxes, damage, recovery
+limits, input timers, or forced motion/hits. Technical execution must work even
+at low ego. See [research and primary sources](../research/showboat_v2.md).
+
+V2 adds a separate controller-only combat sidecar, shorter emotional lockouts,
+state-confirmed dashdance, conservative KO-reset taunts, and a huge-lead
+up-air-over-Knee preference. It is not a trained superhuman model; competitive
+strength and the ability to dominate a good human remain to be established.
+
 ## Architecture traced so far
 
 Local source, not external AI mods, is the ground truth:
@@ -31,12 +44,12 @@ Local source, not external AI mods, is the ground truth:
   observations; `x7C` starts at a random 0–9, so it is not a reliable new-match
   sentinel. Use an explicit mod reset hook instead.
 
-## V1 integration
+## Integration
 
 `src/melee/mod/showboat_ai.c` owns six sidecars, not padding or unknown game
 fields. Eligibility requires normal CPU mode **4**, literal level **9**,
 `FTKIND_CAPTAIN`, active CPU control, and the primary entity of a player slot.
-V1 additionally requires **exactly one other instantiated player**, not an ally,
+The mod additionally requires **exactly one other instantiated player**, not an ally,
 and no active secondary opponent entity (Nana). Multi-opponent fights, training
 orders, human Falcon, other levels and characters
 keep vanilla behavior. Existing C-stick changes on the base branch remain.
@@ -45,9 +58,12 @@ Hooks (all behind `SHOWBOAT_AI`):
 
 1. `ftCo_800B3900`: after vanilla mode/priority arbitration, call
    `ShowboatAI_Update`. If false, call the unchanged script builder. Always run
-   the original interpreter and partner postprocessing. A cancelled or completed
-   style clears its script/inputs and cached attack `xA4`, then resumes vanilla
-   dispatch on this update. Cached selections made during antics are discarded.
+   the original interpreter and partner postprocessing, then
+   `ShowboatAI_PostInput` for a narrowly guarded analog-only L-cancel overlay.
+   `ShowboatCombat_RestoreInput` runs before update gates/reset/taunt returns.
+   Movement flourishes yield to fresh native attacks; combat cleanup compares
+   bounded script identity and does not erase a replacement native priority.
+   Mod takeover clears stale `xA4` and controls before emitting normal inputs.
 2. `ftCo_800B4AB0`: adjust only weights in the **local eligible-candidate copy**
    before summation. All range/level/modulo/allowlist/denylist filters, selection
    RNG calls and shared archive data remain unchanged.
@@ -79,6 +95,7 @@ pointers, disc ID/revision and FST. Offsets below include the DAT's 0x20 header:
 
 | Move | Script | Candidate offset | Weight | Modulo / min level |
 |---|---|---|---|---|
+| Up-air | 6 | 0x155C (air) | 1 | 5 / 0 |
 | Knee | 8 | 0x1580 (air) | 1 | 15 / 0 |
 | Stomp | 10 | 0x15C8 (air) | 1 | 5 / 0 |
 | Punch | 17 | 0x13AC (ground) | 10 | 60 / 3 |
@@ -86,6 +103,7 @@ pointers, disc ID/revision and FST. Offsets below include the DAT's 0x20 header:
 Verified script bytes, for reproducible interpretation (not entire assets):
 
 ```
+06: 80 00 81 50 86 01 81 00 87 01 7F  # up, A, release
 08: 91 50 81 00 86 01 80 00 87 01 7F  # facing +X, A, release
 0A: 80 00 81 B0 86 01 81 00 87 01 7F  # down, A, release
 11: 80 00 81 00 88 01 89 01 7F        # neutral B, release
@@ -94,7 +112,7 @@ Verified script bytes, for reproducible interpretation (not entire assets):
 Script 10 also exists in the ground table as down-A. The hook therefore checks
 **aerial table identity**, not just script ID. It never substitutes a move for
 an ineligible candidate. Falcon's existing forward-floor exclusions in
-`800B77E8` are preserved. No deliberate offstage pursuit is added in V1.
+`800B77E8` are preserved. No deliberate offstage pursuit is added.
 
 ### Movement, targeting, defense and recovery
 
@@ -123,20 +141,22 @@ No heap allocation, game-struct extension or writes to fighter physics.
 
 | Event/condition | Effect |
 |---|---|
-| Initial ego | 30, clamped to 0–100 |
+| Initial ego | 55, clamped to 0–100 |
 | Opponent damage increase | +2 + floor(0.4 × damage), capped +12/update |
 | Damage during Falcon Knee/Stomp/Punch | additional +8, celebration window 120 |
-| Opponent death/stock loss | +22, celebration window 120; KO dedup window 240 |
-| Sustained advantage every 120 updates | +3 |
-| No sustained advantage, ego >30 | −1 per 120 updates |
-| Taking damage | −5 − floor(1.5 × damage), serious for 300 updates |
-| Hit within 180 updates of style start | additional −20 |
-| Stock loss/new life | −30; serious for 600 updates |
-| Entering hitstun/offstage/high-percent danger | −15; serious at least 180 |
+| Opponent death/stock loss | +22, celebration window 180; KO dedup window 240 |
+| Sustained advantage every 90 updates | +4 |
+| No sustained advantage, ego >55 | −1 per 90 updates |
+| Taking damage | −3 − floor(0.5 × damage), serious for 90 updates |
+| Hit within 30 updates of short style / 75 of taunt start | additional −10 |
+| Stock loss/new life | −15; serious for 120 updates |
+| Entering physical danger (not initial entry/death) | −4; serious at least 30 |
 
 Advantage means stock lead in a stock match, percent lead ≥30, or opponent
-≥100% while Falcon <80%. Danger includes ≥110% self damage, capture links,
-forced entry/rebirth states, hitstun, and airborne with no safe floor below.
+≥100% while Falcon <80%. Physical danger includes capture links, forced
+entry/rebirth states, hitstun, and airborne with no safe floor below. High percent
+alone no longer perpetually suppresses personality. The separate aerial style
+weight boost remains conservative at ≥110%; competence is independent of ego.
 Damage is approximate attribution, not a combat-event bus; items/hazards can
 contribute. Normal damage and velocity remain entirely game-owned.
 
@@ -148,28 +168,86 @@ and blast-margin check: it is a veto, not proof of recoverability. Ground
 antics additionally require both island-endpoint distances >22, using
 `800A2A70` (which returns −1 for missing island/air).
 
+### Independent combat layer
+
+`showboat_combat.c/.h` owns six separate identity/spawn sidecars, bounded script
+snapshots, input age and mod-only retry budgets. It runs regardless of ego and
+serious mode; physical unavailability, items/capture and native defense/recovery/
+grab priorities still veto it. It never calls action-entry or CheckInput helpers.
+
+- **Standing grab:** grounded Wait/walk, facing a rival within 11 units on the
+  same floor, slow relative movement, no protection/items/capture. Reactive
+  against shield or actual remaining landing lag / compatible grounded hitstun.
+  Neutral sample → recheck → one Z → acknowledge Catch and hand back to native
+  pummel/throws. The rival can release shield; no guaranteed grab claim.
+- **Direct airborne Knee/up-air:** actual free Jump/Fall variants only, not a
+  scripted jump-age chain. FD/Battlefield, valid safe floor under both predicted
+  paths, compatible rival damage hitstun through startup + reserve. Read-only
+  projection includes gravity, friction, knockback decay and both extremes of
+  subsequent native drift. Reject predicted floor collision/edge escape before
+  the active frame. Choose Knee if its 14-frame intercept fits; otherwise up-air
+  at 6 frames. Neutral → recheck → one A/direction → actual AttackAirF/Hi
+  acknowledgment → release/yield. Root-relative fit boxes are heuristics, not
+  decoded hurtbox/sweetspot guarantees. No forced jump, drift, hit or animation.
+- Both use at most two sampled inputs, 45-update mod cooldowns after failed
+  attempts (none after acknowledged actions) and bounded 3/5/13-byte native
+  scripts with a release tail. Script fingerprinting includes
+  actual cursor/resume offset; abort releases only the still-owned script and
+  preserves a fresh native cached attack/replacement script.
+- **L-cancel overlay:** descending ordinary aerial attack with landing-lag flag,
+  no existing effective LR sample, no capture/hitlag/hitstun; read-only ECB sweep
+  predicts touchdown in 1–3 frames. Borrow analog L=128 for one sample, preserve
+  every button and stick, then restore only that channel if unchanged. The real
+  input preprocessor creates LR; the retail landing function decides whether
+  it cancels. No digital L/R, airdodge, tech-counter write or landing-lag edit.
+  Native DI/SDI/techs and recovery remain intact.
+
+Short-hop chasing, a full punish planner and learned opponent prediction are
+not implemented. Floor/ECB projections use current geometry and can be wrong;
+state acknowledgment proves acceptance, not connection or competitive strength.
+
 ### Implemented personality actions / tuning
 
-- **Contextual taunt:** ego ≥45, recent KO or flashy launch, safe interior,
-  stationary neutral/crouch, opponent dead or >90 units away in hitstun. One
-  80% roll per safe event; 600-update cooldown. Neutral/up-D-pad/neutral over
-  three updates. This starts the real taunt; it does not shorten its animation.
-- **Swagger:** ego ≥45, opponent's ordinary grounded attack ≥18 animation
-  frames old, facing away, 45–85 units away and within 12 vertically. On the
-  first actionable opportunity, 50% roll for two short crouches over 22 updates,
-  then vanilla. Forbidden on pass-through platforms (down-flick could drop
-  through). Not a frame-data-perfect whiff detector or guaranteed punish.
-- **Excessive Falcon Punch:** ego ≥75, opponent knocked down/dazed, facing
-  toward them, 18–42 units away and within 12 vertically. Standing Wait/walk
-  only: crouch reversal cannot accept neutral-B. One 35% roll per actionable
-  opportunity. Neutral/B/neutral; no guaranteed hit and no forced action state.
+- **KO-reset taunt:** recent KO, normal stock match with rival stocks
+  remaining, grounded on FD/Battlefield's static main floor, no existing items.
+  A running winner can send neutral for at most 18 updates to settle through
+  real Dash/RunBrake into a free stance (40-unit runway, bounded speed); it never
+  forces Wait or spends Up early. Require death countdown + mandatory Rebirth ≥80 frames,
+  including 20 frames of reserve beyond retail Falcon's 60-frame taunt. Recheck
+  before Up-D-pad. Never count actionable RebirthWait, distance alone, or
+  invulnerability as safety. Separate 180-update cooldown; a certified reset
+  bypasses low ego/emotional serious mode, never physical danger. Real motion
+  state must acknowledge the pulse. No custom final-stock victory pose yet.
+- **Dashdance:** ego ≥40, idle native priority, no selected attack or running
+  native script, rival 55–115 units away, no immediate knockdown/hitstun punish.
+  FD/Battlefield static main floor only, no items, signed endpoint clearance
+  ≥40 at start / ≥30 while running, bounded displacement and next-leg runway.
+  One neutral sample, then legal full horizontal flicks. Reverse only after
+  actual Dash frame 5 and observed facing; hold through Turn. At most two
+  reversals and 24 input updates. 75% opportunity roll, 45-update failed-roll
+  cooldown, 90 successful (60 at ego ≥80). Yield immediately to real attacks,
+  defense, recovery, nearby pressure and lost clearance; no forced dash cancels.
+- **Swagger:** two short crouches after a far (70–85), facing-away ordinary
+  attack with ego ≥45, 50% opportunity roll. Idle priority only, no native
+  script/attack, no pass-through platform, yields to a real punish. A heuristic
+  flourish, not a precise whiff-punish detector.
+- **Falcon Punch:** ego ≥75, facing a shield-broken `Furafura` opponent with
+  `grab_timer >300`, 18–42 units away and within 12 vertically; standing only,
+  35% roll. No longer replaces ordinary knockdown/tech-chase opportunities.
+  Mash can shorten daze, so this is NOT a guaranteed hit. Actual SpecialN must
+  acknowledge the B pulse; animation and startup remain untouched.
 - **Knee/Stomp preference:** eligible aerial candidates get multiplier
-  `1 + 2 × (ego − 45) / 55` above ego 45 (maximum 3×). No boost in danger,
-  serious mode, hitlag or without floor below. No grounded down-A boost.
-- Whiff/knockdown opportunities are consumed only when an eligible roll occurs,
-  not when Falcon is still in his own lag. The condition must end before another
-  roll. Other style actions share a 300-update cooldown. Punishment suppresses
-  antics and candidate boosts; gaining momentum can rebuild confidence.
+  `1 + 2 × (ego −45) /55` above ego 45 (maximum 3×), with the original safety
+  vetoes. No grounded down-A boost.
+- **Selective mercy / JUGGLE:** ego ≥90, stock lead ≥2, own percent ≤40, rival
+  ≥80% in hitstun, both central on FD/Battlefield. Already eligible up-air script
+  6 gets 4× weight, Knee gets 0.35× instead of its ego boost. This favors keeping
+  control over attempting a finisher; it never refuses all attacks or prevents
+  a KO. Up-air can still kill and native/direct combat can still choose Knee.
+  It is a conservative policy, not proof Falcon can end the match on demand.
+- Short styles share a 90-update cooldown. Opportunity rolls are consumed when
+  actionable, not during own lag. Gaining momentum rebuilds confidence; losing
+  ego suppresses personality, **not** the independent combat assistance.
 
 The short scripts own only CPU controller output. Every frame checks danger,
 priority behavior, compatible motion, target presence and floor margin.
@@ -212,15 +290,19 @@ runs the retail apploader and successfully reaches Melee initialization. The
 C-stick ISO baseline also initializes successfully.
 
 Debug prints include ego deltas/reasons, input action IDs (0 vanilla, 1 taunt,
-2 swagger, 3 Punch), age, start/exit/cancellation reasons and throttled eligible
+2 swagger, 3 Punch, 4 dance, 5 grab, 6 Knee, 7 up-air), age,
+start/acknowledgment/exit/cancellation reasons and throttled eligible
 Knee/Stomp weighting messages. These weighting messages do not claim a move
 was selected or hit. Logs: `build/showboat/dolphin-user/Logs/dolphin.log`.
 
 The optional HUD (`showboat_hud.c/.h`) shows a shadowed white line such as
 `FALCON P2 EGO 62 /100 (VANILLA) SERIOUS 120f` near the upper left. EGO is
-confidence, not fighter damage; SERIOUS is remaining custom-behavior suppression
-in CPU updates (normally 60/second). The action label is **input ownership**, not
-the animation: a three-frame input can start a much longer taunt/Punch.
+confidence, not fighter damage; SERIOUS suppresses personality, not competence,
+in CPU updates (normally 60/second). Action labels generally mean **input
+ownership**, not animation: a short input can start a long taunt/Punch. `JUGGLE`
+means the selective-mercy weighting policy was active within the last 45 updates;
+it is not a claim of a connected hit. Analog L-cancel is an overlay, logged
+separately rather than hiding the primary action.
 
 It reuses the always-initialized DevText screen camera and built-in stroke font,
 with private static character buffers rather than shared text-pool entries.
@@ -235,64 +317,106 @@ Versus, human P1 and CPU P2 Captain Falcon level 9, initially Final Destination.
 On CSS, change an unused panel's NONE label to CPU, move its token to Falcon,
 and set level 9. Leave other slots NONE.
 
-1. **Baseline:** fight normally for a minute. Falcon should retain ordinary
-   movement, attacks, defense, ledge options and recovery.
-2. **Build ego:** let Falcon land hits without hitting him back for a while.
-   At ego >45, eligible aerial Knee/Stomp weights increase, not all attacks.
-3. **KO:** let him take a stock while safely grounded away from the edge, with
-   no recent damage. Look for a TAUNT start and normal full taunt animation.
-   A roll can fail; do not expect every KO to taunt, especially while serious.
-4. **Swagger:** with ego ≥45, commit an attack facing away about 45–85 game
-   units from grounded stationary Falcon. Two quick crouches may occur. Try
-   again after the shared cooldown, not by holding the identical opportunity.
-5. **Punch:** at ego ≥75, suffer knockdown/daze in front of him, roughly 18–42
-   units away. Occasionally he should attempt a real, punishable Falcon Punch.
-6. **Punish:** hit him during/right after an antic. Expect extra ego loss,
-   cancelled input ownership and several seconds without custom antics.
-7. **Safety:** launch him offstage, approach during swagger, grab him, and
-   play on Battlefield platforms. No custom downward flick on pass platforms,
-   no custom input during recovery/defense/grab priorities, no permanent wedge.
-8. **Isolation:** repeat with level 8 Falcon, level 9 Fox, human Falcon,
-   three-player FFA, and live Ice Climbers opponent. No mod-owned behavior/HUD.
-9. **Lifecycle:** restart matches and switch CPU settings/control. Initial ego
-   starts fresh; ordinary stock loss lowers it instead of refreshing it.
+1. **Baseline:** fight normally; compare movement, defense, recovery and stock
+   differential with the C-stick/native level-9 build against the same human.
+2. **Execution:** shield close in front of grounded Falcon; look for GRAB
+   input and acknowledgment, followed by normal pummels/throws. Observe aerial
+   landing-cancel logs and actual landing behavior, including at low ego.
+3. **Conversions:** watch for direct KNEE/UPAIR acknowledgment during aerial
+   hitstun followups. Inputs/accepted action states do not alone prove hits.
+4. **Dance:** leave a medium neutral gap on FD/Battlefield's main floor. Look
+   for DANCE, real direction reversals, and immediate pressure/punish yielding.
+   Test near edges and on platforms: no custom dashdance there.
+5. **KO:** let him take a stock while grounded centrally with time left in
+   the death reset. Expect the real full TAUNT even at high percent/residual
+   serious mode if every physical/reset gate is satisfied. No late respawn taunt.
+6. **Toy policy:** give him a two-stock lead, high ego, and ≥80% on your current
+   stock while he has ≤40%. Central aerial hitstun can activate JUGGLE weighting;
+   look for up-air preference, not guaranteed nonlethal hits or a refused KO.
+7. **Punch/punishment:** ordinary knockdowns must not trigger custom Punch.
+   A long shield-break daze may. Hit him after a flourish: ego falls, personality
+   pauses briefly, but the independent technical assistance remains available.
+8. **Isolation/safety:** test grabs, launch/offstage, Battlefield platforms,
+   level-8 Falcon, level-9 Fox, human Falcon, FFA and live Ice Climbers. Preserve
+   native recovery/defense and never leave stuck controls or cross-slot HUD rows.
+9. **Lifecycle:** restart matches and change CPU settings/control. Initial ego
+   resets; ordinary stock loss lowers it, and ownership/borrowed analog clears.
 
-For quick observation, a several-stock match where you initially leave Falcon
-unhit is more revealing than exchanging hits constantly. The prototype is
-intentionally conservative after punishment. Do not confuse original CPU
-taunts or Punches with custom triggers: use the HUD/logs.
+Use HUD and logs to distinguish native moves from custom input starts. Play
+several fair matches as well as staged observations: deliberately feeding the
+CPU proves neither its strength nor its ability to sustain a real lead.
 
 ## Remaining limitations / reverse-engineering questions
 
 - Match outcome is not attributed to exact hit sources: hazards/items and
   self-destructs may count as success. Death-animation and confirmed stock
   accounting use a 240-update dedup window; very fast successive KOs can merge.
-- Whiffs use motion/range/facing, not hitbox activation or actual remaining lag.
-  Punch can miss or be too slow. Those are ordinary game consequences.
-- Local connected-floor clearance does not predict moving-stage hazards or
-  projectiles. Start testing on standard stages. No intentional offstage style.
+- Swagger uses motion/range/facing, not exact remaining attack lag. Punch can
+  miss if the rival mashes out of daze. Those remain ordinary game consequences.
+- Long poses and dashdance support FD/Battlefield main floors with no existing
+  items; no prediction of future item spawns. Other stages retain landing-cancel,
+  standing-grab and existing conservative personality behavior, but no new
+  direct aerial interception, dance or KO-reset taunt.
+  No intentional offstage style.
 - A started taunt/Punch cannot be magically cancelled by input ownership ending.
   Cancellation means vanilla controls resume, not forced escape from animation.
 - The candidate data's geometric fields and divisors are followed as implemented;
   not every script, mode, target-cache flag or special-stage case is decoded.
-- Normal CPU scripts/priority machinery still run; low-confidence Falcon is not
-  stronger than vanilla. Probabilities and conservative danger rules need human
-  tuning across more matches. Third-party cheat codes using fixed executable
-  addresses and stock/netplay savestates are not compatible with this shifted DOL.
+- Vanilla still owns most decisions. Technical assistance at low ego is new,
+  but stronger play, hit conversion rates and safe toying need human benchmarks.
+  No guaranteed kill evaluation, full opponent model, trained network or complete
+  combo/tech-chase planner. Fixed-address third-party cheats and stock/netplay
+  savestates are not compatible with this shifted DOL.
 
 ## Best next improvements
 
-1. Tune ego/safety thresholds from HUD-visible human matches so contextual
-   taunts and excessive punishes are noticeable without dominating play.
-2. Attribute real hit/KO events, recording which move landed and whether style
-   actually connected; replace percent-delta credit approximations.
-3. Give whiffs/knockdowns short contextual opportunity windows based on actual
-   attack commitment, improving plausible Punch timing without forced hits.
-4. Add recoverability-scored edgeguard candidates, still retaining vanilla
-   recovery and stock floor checks rather than unconditional offstage dives.
-5. Extract character-specific style tables once Falcon's loop feels right.
+1. Benchmark V2 vs native level 9; measure acknowledged inputs, connected
+   conversions, failed commitments, stock differential and personality frequency.
+2. Add state-confirmed jump/intercept and tech-chase conversions, not guessed
+   fixed-age input macros. Preserve native DI/SDI/techs until replacements win tests.
+3. Attribute exact hits/KOs and estimate escape/kill options before expanding
+   selective mercy. Up-air preference alone is not omniscient control.
+4. Extend signed movement/reset safety to more stages and current projectiles;
+   add recoverability-scored edgeguards only with validated return plans.
+5. Tune frequent, interruptible disrespect from human feedback; a reckless
+   flourish or a weak bot's missed punish is not the intended personality.
 
-## Verification evidence
+## V2 verification and runtime status
+
+- `sh tools/build_showboat.sh` succeeds. HUD/debug DOL:
+  **4,453,920 bytes**, SHA-1 `f63c0cfb49c325e9dacb4f040f042e4464972d66`.
+- `python tools/verify_showboat.py` validates sections, entry point and RAM;
+  stock DOLs remain unchanged. Exactly the four existing hook objects and the
+  AI/combat/HUD modules differ from the C-stick baseline. All four hooked native
+  units compiled with showboat defines removed remain **byte-identical** to that
+  baseline. No gameplay assets, game-data tables or binaries are committed.
+- **97 host tests pass**: 67 personality cases and 29 combat case groups, each
+  with debug off/on and ASan/UBSan, plus the HUD lifetime/formatting test. The
+  actual C modules are exercised, with explicit native enum extraction, bounded
+  controller interpreters and physical/rules-write guards. Personality/combat
+  integration is checked with spies; this is not a full native-engine simulation.
+- All three mod modules compile with MWCC `-warn all`, debug off/on, with no
+  module-local diagnostics. Existing decomp/SDK header warnings remain. Logs:
+  `build/showboat/v2-checks/*-warnings.log`.
+- Review/regression fixes include deferring the initial opposite dash flick
+  through unturnable frames, bounded neutral settling for KO taunts, restoring
+  borrowed analog before every early gate/reset, releasing our old script while
+  retaining a fresh native cached attack, and removing artificial retry delay
+  after an acknowledged combat action. Missing/failed input still has a bounded
+  retry budget; no motion or game input timer is forced.
+- `git diff --check`, Python compilation and shell syntax checks pass. Logs:
+  `build/showboat-v2-{tests,build,verify}.log`.
+- **V2 has not yet been booted or played.** The user's existing V1 Dolphin
+  session/controller profile was deliberately left alone. The running virtual
+  disc still contains V1 SHA-1 `f278e0701a97269f929c4386b1344a06c07da402`;
+  the new DOL is staged separately until an agreed restart. No V2 win-rate,
+  actual hit conversion, visual acknowledgment or superhuman-strength claim is
+  made from compilation or host tests.
+
+## Historical V1 verification evidence
+
+The following hashes, test counts and runtime observations describe V1, not V2.
+
 
 - `sh tools/build_showboat.sh`: full MWCC/WiBo build succeeded; final incremental
   Ninja reported no work. DOL: **4,434,464 bytes**, SHA-1

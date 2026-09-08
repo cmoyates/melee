@@ -325,10 +325,14 @@ taunts or Punches with custom triggers: use the HUD/logs.
   the 50s, eligible Knee/Stomp weighting at ego 54, loss of ego after damage and
   losing a stock, and a later opponent KO event. No custom taunt/swagger/Punch
   trigger was observed in that first match. Log: `virtual-disc-stdout.log`.
-- The latest HUD-enabled DOL is built; restarting the active game and visually
-  confirming HUD legibility is pending user coordination. Screen capture failed
-  (`could not create image from display`) and Accessibility automation is off;
-  no automated visual gameplay claims are made. The older virtual-disc copy is
-  deliberately not overwritten while the user's match may still be running.
+- The latest HUD-enabled DOL was restarted with user permission and boots
+  successfully through Melee initialization. The isolated profile's keyboard
+  mapping was backed up, the user's saved pad mapping copied in, and Port 1
+  explicitly enabled. Dolphin's CI log confirms the exact configured device:
+  `Added device: SDL/0/Nintendo Switch Pro Controller`. Original profile and
+  saves remain untouched. Log: `hud-controller-stdout.log`.
+- HUD legibility and button response still require the user's visual/physical
+  confirmation. Screen capture failed (`could not create image from display`)
+  and Accessibility automation is off; no automated visual claims are made.
 - `git diff --check`, Python syntax checks and shell syntax checks pass. No
   game assets or binary artifacts are tracked or pushed.

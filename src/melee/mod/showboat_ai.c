@@ -1,6 +1,10 @@
 /* A personality, not a replacement CPU. All actions use the stock input VM. */
 #include "showboat_ai.h"
 
+#if SHOWBOAT_AI_HUD
+#include "showboat_hud.h"
+#endif
+
 #include <melee/ft/fighter.h>
 #include <melee/ft/ftcoll.h>
 #include <melee/ft/ftcmdscript.h>
@@ -48,6 +52,7 @@ typedef struct {
     float opponent_percent;
     bool opponent_dead;
     bool stock_loss_pending;
+    bool spawn_loss_pending;
     bool danger;
     bool whiff;
     bool vulnerable;
@@ -99,6 +104,9 @@ static void SB_Log(Fighter* fp, SB_State* s, char* reason)
 void ShowboatAI_ResetSlot(int slot)
 {
     if (slot >= 0 && slot < SB_SLOTS) {
+#if SHOWBOAT_AI_HUD
+        ShowboatHUD_ResetSlot(slot);
+#endif
         memset(&sb_states[slot], 0, sizeof(SB_State));
     }
 }
@@ -267,7 +275,7 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
     return true;
 }
 
-bool ShowboatAI_Update(Fighter* fp)
+static bool SB_Update(Fighter* fp)
 {
     SB_State* s;
     Fighter* target;
@@ -284,6 +292,8 @@ bool ShowboatAI_Update(Fighter* fp)
     bool whiff;
     bool vulnerable;
     bool stock_match;
+    bool stock_lost;
+    bool spawned;
 
     if (fp->player_id >= SB_SLOTS) {
         return false;
@@ -318,6 +328,9 @@ bool ShowboatAI_Update(Fighter* fp)
     dead = SB_Dead(target);
     stock_match = gm_8016B094();
     if (s->owner != fp || s->opponent_slot != slot) {
+        if (s->owner == fp) {
+            SB_Stop(fp, s, "cancelled: opponent identity changed");
+        }
         ShowboatAI_ResetSlot(fp->player_id);
         s->owner = fp;
         s->spawn = fp->x8_spawnNum;
@@ -338,14 +351,26 @@ bool ShowboatAI_Update(Fighter* fp)
     SB_Countdown(&s->ko_lockout);
     SB_Countdown(&s->bias_log_cooldown);
 
-    if (s->spawn != fp->x8_spawnNum ||
-        (stock_match && stocks < s->stocks))
-    {
-        /* Accounting precedes respawn; don't charge twice for one stock. */
-        if (!s->stock_loss_pending) {
+    spawned = s->spawn != fp->x8_spawnNum;
+    stock_lost = stock_match && stocks < s->stocks;
+    if (spawned || stock_lost) {
+        /* Pair accounting and respawn even if a reset changes observation
+         * order. Neither halves nor their separation use cooldown heuristics. */
+        if (!((spawned && s->stock_loss_pending) ||
+              (stock_lost && s->spawn_loss_pending)))
+        {
             SB_Ego(fp, s, -30, "lost stock / new life");
         }
-        s->stock_loss_pending = s->spawn == fp->x8_spawnNum;
+        if (spawned && stock_lost) {
+            s->stock_loss_pending = false;
+            s->spawn_loss_pending = false;
+        } else if (spawned) {
+            s->spawn_loss_pending = !s->stock_loss_pending;
+            s->stock_loss_pending = false;
+        } else {
+            s->stock_loss_pending = !s->spawn_loss_pending;
+            s->spawn_loss_pending = false;
+        }
         SB_Stop(fp, s, "cancelled: new life");
         s->serious = 600;
         s->celebration = 0;
@@ -478,6 +503,20 @@ bool ShowboatAI_Update(Fighter* fp)
         }
     }
     return s->action != SB_NONE ? SB_Input(fp, s, target) : false;
+}
+
+bool ShowboatAI_Update(Fighter* fp)
+{
+    bool owns_input = SB_Update(fp);
+#if SHOWBOAT_AI_HUD
+    if (fp->player_id < SB_SLOTS) {
+        SB_State* s = &sb_states[fp->player_id];
+        if (s->owner == fp) {
+            ShowboatHUD_Update(fp, s->ego, s->action, s->serious);
+        }
+    }
+#endif
+    return owns_input;
 }
 
 float ShowboatAI_AttackWeight(Fighter* fp, void* table, int command,

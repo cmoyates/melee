@@ -186,9 +186,10 @@ sh tools/run_showboat.sh /absolute/path/to/original-US-v1.02.ciso
 ```
 
 Requires the local setup in `LOCAL_SETUP.md`. New configure options:
-`--showboat-ai` (explicit opt-in), `--showboat-ai-debug` (event OSReport logs).
-Without these flags, all hooks compile out and the new object is not linked.
-The helper enables both and builds only the modified DOL, not retail hash
+`--showboat-ai` (explicit opt-in), `--showboat-ai-debug` (event OSReport logs),
+`--showboat-ai-hud` (on-screen readout; independent of logging). Without the
+base flag all hooks compile out and the new objects are not linked.
+The helper enables all three and builds only the modified DOL, not retail hash
 verification. `tools/project.py` adds an explicit optional extra-DOL-unit list;
 retail split addresses and symbol metadata are unchanged. Stock and C-stick
 build directories are not overwritten.
@@ -199,7 +200,11 @@ disc once to `build/showboat/disc`, copies only the rebuilt executable into that
 generated tree, and boots `disc/sys/main.dol` as a Dolphin virtual disc with a
 separate user profile. No original assets, original executable or normal save
 are overwritten. Stop the prior session before rerunning the helper. Configure
-a controller in this isolated profile before manual testing.
+a controller in this isolated profile before manual testing. On first use the
+helper copies only `GCPadNew.ini` from the normal macOS Dolphin profile if it
+exists; existing test-profile mappings and all normal-profile files are left
+untouched. If the selected SDL device differs, choose the connected controller
+in Controllers → Port 1 → Configure.
 
 **Boot finding:** standalone DOL + `DefaultISO` reached an early sound-file DVD
 bounds panic in this environment. Do not use that route. Virtual-disc boot
@@ -211,4 +216,119 @@ Debug prints include ego deltas/reasons, input action IDs (0 vanilla, 1 taunt,
 Knee/Stomp weighting messages. These weighting messages do not claim a move
 was selected or hit. Logs: `build/showboat/dolphin-user/Logs/dolphin.log`.
 
-Build/runtime evidence and final test results are recorded below when verified.
+The optional HUD (`showboat_hud.c/.h`) shows a shadowed white line such as
+`FALCON P2 EGO 62 /100 (VANILLA) SERIOUS 120f` near the upper left. EGO is
+confidence, not fighter damage; SERIOUS is remaining custom-behavior suppression
+in CPU updates (normally 60/second). The action label is **input ownership**, not
+the animation: a three-frame input can start a much longer taunt/Punch.
+
+It reuses the always-initialized DevText screen camera and built-in stroke font,
+with private static character buffers rather than shared text-pool entries.
+A single render GObj owns no fighter pointers. Slot resets clear rows; live-list
+and callback/userdata validation rejects stale GObjs after scene heap resets.
+No repeated font/archive loads, new gameplay cameras or on-screen asset edits.
+
+## Manual test procedure
+
+Start from a fresh match, never a stock/C-stick savestate. Use normal 1v1 stock
+Versus, human P1 and CPU P2 Captain Falcon level 9, initially Final Destination.
+On CSS, change an unused panel's NONE label to CPU, move its token to Falcon,
+and set level 9. Leave other slots NONE.
+
+1. **Baseline:** fight normally for a minute. Falcon should retain ordinary
+   movement, attacks, defense, ledge options and recovery.
+2. **Build ego:** let Falcon land hits without hitting him back for a while.
+   At ego >45, eligible aerial Knee/Stomp weights increase, not all attacks.
+3. **KO:** let him take a stock while safely grounded away from the edge, with
+   no recent damage. Look for a TAUNT start and normal full taunt animation.
+   A roll can fail; do not expect every KO to taunt, especially while serious.
+4. **Swagger:** with ego ≥45, commit an attack facing away about 45–85 game
+   units from grounded stationary Falcon. Two quick crouches may occur. Try
+   again after the shared cooldown, not by holding the identical opportunity.
+5. **Punch:** at ego ≥75, suffer knockdown/daze in front of him, roughly 18–42
+   units away. Occasionally he should attempt a real, punishable Falcon Punch.
+6. **Punish:** hit him during/right after an antic. Expect extra ego loss,
+   cancelled input ownership and several seconds without custom antics.
+7. **Safety:** launch him offstage, approach during swagger, grab him, and
+   play on Battlefield platforms. No custom downward flick on pass platforms,
+   no custom input during recovery/defense/grab priorities, no permanent wedge.
+8. **Isolation:** repeat with level 8 Falcon, level 9 Fox, human Falcon,
+   three-player FFA, and live Ice Climbers opponent. No mod-owned behavior/HUD.
+9. **Lifecycle:** restart matches and switch CPU settings/control. Initial ego
+   starts fresh; ordinary stock loss lowers it instead of refreshing it.
+
+For quick observation, a several-stock match where you initially leave Falcon
+unhit is more revealing than exchanging hits constantly. The prototype is
+intentionally conservative after punishment. Do not confuse original CPU
+taunts or Punches with custom triggers: use the HUD/logs.
+
+## Remaining limitations / reverse-engineering questions
+
+- Match outcome is not attributed to exact hit sources: hazards/items and
+  self-destructs may count as success. Death-animation and confirmed stock
+  accounting use a 240-update dedup window; very fast successive KOs can merge.
+- Whiffs use motion/range/facing, not hitbox activation or actual remaining lag.
+  Punch can miss or be too slow. Those are ordinary game consequences.
+- Local connected-floor clearance does not predict moving-stage hazards or
+  projectiles. Start testing on standard stages. No intentional offstage style.
+- A started taunt/Punch cannot be magically cancelled by input ownership ending.
+  Cancellation means vanilla controls resume, not forced escape from animation.
+- The candidate data's geometric fields and divisors are followed as implemented;
+  not every script, mode, target-cache flag or special-stage case is decoded.
+- Normal CPU scripts/priority machinery still run; low-confidence Falcon is not
+  stronger than vanilla. Probabilities and conservative danger rules need human
+  tuning across more matches. Third-party cheat codes using fixed executable
+  addresses and stock/netplay savestates are not compatible with this shifted DOL.
+
+## Best next improvements
+
+1. Tune ego/safety thresholds from HUD-visible human matches so contextual
+   taunts and excessive punishes are noticeable without dominating play.
+2. Attribute real hit/KO events, recording which move landed and whether style
+   actually connected; replace percent-delta credit approximations.
+3. Give whiffs/knockdowns short contextual opportunity windows based on actual
+   attack commitment, improving plausible Punch timing without forced hits.
+4. Add recoverability-scored edgeguard candidates, still retaining vanilla
+   recovery and stock floor checks rather than unconditional offstage dives.
+5. Extract character-specific style tables once Falcon's loop feels right.
+
+## Verification evidence
+
+- `sh tools/build_showboat.sh`: full MWCC/WiBo build succeeded; final incremental
+  Ninja reported no work. DOL: **4,434,464 bytes**, SHA-1
+  `f278e0701a97269f929c4386b1344a06c07da402` (HUD-enabled build).
+- `python tools/verify_showboat.py`: all initialized section extents and RAM
+  ranges, no initialized overlap, valid text entry, stock DOL hashes unchanged.
+  Report: `build/showboat/verification.json`. Original and preserved stock DOL
+  SHA-1 remains `08e0bf20134dfcb260699671004527b2d6bb1a45`.
+- Compared all compiled objects against preserved C-stick build: only `fighter`,
+  `player`, `ftCo_0A01`, `ftcpuattack` and new AI/HUD objects differ. Separately
+  compiled all four original-file hooks **without** any showboat defines:
+  each is byte-identical to the C-stick baseline.
+- Both new modules also compile with `-warn all`. Existing SDK/decomp headers
+  emit enum/redeclaration/empty-assert warnings; no module-local diagnostics.
+  Logs: `build/showboat/showboat_{ai,hud}-warnings.log`.
+- **45 host tests pass**:
+  `python -m unittest discover -s tools/tests -p 'test_showboat*.py' -v`.
+  44 personality cases compile the actual module, with native enum extraction,
+  debug both off/on, ASan/UBSan, scripted-controller and physical-write guards.
+  HUD mock test checks bounded formatting, render passes, allocation failure,
+  six slots, object reuse and 100 bulk scene resets with sanitizers. These
+  mocks do not prove native rendering, fighter animation or PPC behavior.
+- Test-driven fixes include clearing stale input on opponent replacement and
+  deduplicating stock/spawn observations in either order, without cooldown
+  heuristics. Other safety fixes are described above.
+- Dolphin 2606a: original C-stick ISO control and **pre-HUD showboat virtual
+  disc** boot through the apploader to Melee initialization. Direct-DOL route
+  failed early and was replaced, not counted as success.
+- During the user's human-vs-Falcon9 match, logs show P2 initialization, ego in
+  the 50s, eligible Knee/Stomp weighting at ego 54, loss of ego after damage and
+  losing a stock, and a later opponent KO event. No custom taunt/swagger/Punch
+  trigger was observed in that first match. Log: `virtual-disc-stdout.log`.
+- The latest HUD-enabled DOL is built; restarting the active game and visually
+  confirming HUD legibility is pending user coordination. Screen capture failed
+  (`could not create image from display`) and Accessibility automation is off;
+  no automated visual gameplay claims are made. The older virtual-disc copy is
+  deliberately not overwritten while the user's match may still be running.
+- `git diff --check`, Python syntax checks and shell syntax checks pass. No
+  game assets or binary artifacts are tracked or pushed.

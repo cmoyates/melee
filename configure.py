@@ -217,9 +217,13 @@ parser.add_argument(
     "--showboat-ai-debug", action="store_true",
     help="log showboat events through OSReport (requires --showboat-ai)",
 )
+parser.add_argument(
+    "--showboat-ai-hud", action="store_true",
+    help="show an in-game ego/action readout (requires --showboat-ai)",
+)
 args = parser.parse_args()
-if args.showboat_ai_debug and not args.showboat_ai:
-    parser.error("--showboat-ai-debug requires --showboat-ai")
+if (args.showboat_ai_debug or args.showboat_ai_hud) and not args.showboat_ai:
+    parser.error("showboat debug/HUD options require --showboat-ai")
 
 if any({args.debug, args.asm, args.linkable}) or args.sym == "on":
     args.non_matching = True
@@ -2022,15 +2026,22 @@ if args.showboat_ai:
     showboat_source = "melee/mod/showboat_ai.c"
     config.libs.append(MeleeLib("Showboat AI mod", [Object(Matching, showboat_source)]))
     config.extra_dol_objects.append(showboat_source)
+    if args.showboat_ai_hud:
+        hud_source = "melee/mod/showboat_hud.c"
+        config.libs.append(MeleeLib("Showboat HUD", [Object(Matching, hud_source)]))
+        config.extra_dol_objects.append(hud_source)
     for lib in config.libs:
         for obj in lib["objects"]:
             if obj.name in {
-                showboat_source, "melee/ft/kinds/ftCommon/ftCo_0A01.c",
+                showboat_source, "melee/mod/showboat_hud.c",
+                "melee/ft/kinds/ftCommon/ftCo_0A01.c",
                 "melee/ft/ftcpuattack.c", "melee/pl/player.c", "melee/ft/fighter.c",
             }:
                 obj.options["extra_cflags"].append("-DSHOWBOAT_AI=1")
                 if args.showboat_ai_debug:
                     obj.options["extra_cflags"].append("-DSHOWBOAT_AI_DEBUG=1")
+                if args.showboat_ai_hud:
+                    obj.options["extra_cflags"].append("-DSHOWBOAT_AI_HUD=1")
 
 # Optional extra arguments to `objdiff-cli report generate`
 config.progress_report_args = [

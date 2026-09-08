@@ -28,8 +28,16 @@ if boot[:6] != b"GALE01" or boot[7] != 2:
     raise SystemExit("Expected Melee US v1.02 assets; no DOL copied")
 PY
 cp "$DOL" "$DISC/sys/main.dol"
+USER_DIR="$PWD/build/showboat/dolphin-user"
+# Seed only controller mappings on first use; never copy saves or overwrite
+# subsequent test-profile changes. The normal profile remains read-only.
+PAD_SOURCE="$HOME/Library/Application Support/Dolphin/Config/GCPadNew.ini"
+if [ ! -e "$USER_DIR/Config/GCPadNew.ini" ] && [ -f "$PAD_SOURCE" ]; then
+  mkdir -p "$USER_DIR/Config"
+  cp "$PAD_SOURCE" "$USER_DIR/Config/GCPadNew.ini"
+fi
 DOLPHIN=${DOLPHIN:-/Applications/Dolphin.app/Contents/MacOS/Dolphin}
-exec "$DOLPHIN" --user "$PWD/build/showboat/dolphin-user" \
+exec "$DOLPHIN" --user "$USER_DIR" \
   -C Main.Core.CPUThread=False \
   -C Main.Core.EnableCheats=False \
   -C Logger.Options.WriteToFile=True \

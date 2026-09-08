@@ -36,8 +36,9 @@ Local source, not external AI mods, is the ground truth:
 `src/melee/mod/showboat_ai.c` owns six sidecars, not padding or unknown game
 fields. Eligibility requires normal CPU mode **4**, literal level **9**,
 `FTKIND_CAPTAIN`, active CPU control, and the primary entity of a player slot.
-V1 additionally requires **exactly one other instantiated player**, not an ally.
-Teams/free-for-alls, training orders, human Falcon, other levels and characters
+V1 additionally requires **exactly one other instantiated player**, not an ally,
+and no active secondary opponent entity (Nana). Multi-opponent fights, training
+orders, human Falcon, other levels and characters
 keep vanilla behavior. Existing C-stick changes on the base branch remain.
 
 Hooks (all behind `SHOWBOAT_AI`):
@@ -45,13 +46,17 @@ Hooks (all behind `SHOWBOAT_AI`):
 1. `ftCo_800B3900`: after vanilla mode/priority arbitration, call
    `ShowboatAI_Update`. If false, call the unchanged script builder. Always run
    the original interpreter and partner postprocessing. A cancelled or completed
-   style clears its script/inputs and resumes vanilla dispatch on this update.
+   style clears its script/inputs and cached attack `xA4`, then resumes vanilla
+   dispatch on this update. Cached selections made during antics are discarded.
 2. `ftCo_800B4AB0`: adjust only weights in the **local eligible-candidate copy**
    before summation. All range/level/modulo/allowlist/denylist filters, selection
    RNG calls and shared archive data remain unchanged.
 3. `Player_InitOrResetPlayer`: clear that slot's sidecar, preventing cross-match
    pointer reuse. Updates also check owner and `x8_spawnNum`; respawning clears
    antics and penalizes ego instead of restoring initial confidence.
+4. `Fighter_8006ABA0`: outside the CPU-control gate, suspend active ownership.
+   Control changes to human/mode 5 cannot freeze and later resume a stale action.
+   Temporary inactive/death states preserve ego for the subsequent life check.
 
 ### Attack selection and verified assets
 
@@ -151,15 +156,19 @@ antics additionally require both island-endpoint distances >22, using
   three updates. This starts the real taunt; it does not shorten its animation.
 - **Swagger:** ego ≥45, opponent's ordinary grounded attack ≥18 animation
   frames old, facing away, 45–85 units away and within 12 vertically. On the
-  rising opportunity, 50% roll for two short crouches over 22 updates, then
-  vanilla. Not a frame-data-perfect whiff detector or guaranteed punish.
+  first actionable opportunity, 50% roll for two short crouches over 22 updates,
+  then vanilla. Forbidden on pass-through platforms (down-flick could drop
+  through). Not a frame-data-perfect whiff detector or guaranteed punish.
 - **Excessive Falcon Punch:** ego ≥75, opponent knocked down/dazed, facing
-  toward them, 18–42 units away and within 12 vertically. 35% opportunity-edge
-  roll. Neutral/B/neutral; no guaranteed hit and no forced action state.
+  toward them, 18–42 units away and within 12 vertically. Standing Wait/walk
+  only: crouch reversal cannot accept neutral-B. One 35% roll per actionable
+  opportunity. Neutral/B/neutral; no guaranteed hit and no forced action state.
 - **Knee/Stomp preference:** eligible aerial candidates get multiplier
   `1 + 2 × (ego − 45) / 55` above ego 45 (maximum 3×). No boost in danger,
   serious mode, hitlag or without floor below. No grounded down-A boost.
-- Other style actions share a 300-update cooldown. Punishment suppresses
+- Whiff/knockdown opportunities are consumed only when an eligible roll occurs,
+  not when Falcon is still in his own lag. The condition must end before another
+  roll. Other style actions share a 300-update cooldown. Punishment suppresses
   antics and candidate boosts; gaining momentum can rebuild confidence.
 
 The short scripts own only CPU controller output. Every frame checks danger,
@@ -185,10 +194,17 @@ retail split addresses and symbol metadata are unchanged. Stock and C-stick
 build directories are not overwritten.
 
 The DOL grows beyond the stock disc allocation (only 32 spare bytes). Do not
-use the fixed-allocation C-stick packager. The launch helper mounts the original
-disc via Dolphin DefaultISO and boots the new executable with a separate user
-profile. No source assets, original executable or normal save are overwritten.
-Configure a controller in this isolated profile before manual testing.
+use the fixed-allocation C-stick packager. The launch helper extracts the original
+disc once to `build/showboat/disc`, copies only the rebuilt executable into that
+generated tree, and boots `disc/sys/main.dol` as a Dolphin virtual disc with a
+separate user profile. No original assets, original executable or normal save
+are overwritten. Stop the prior session before rerunning the helper. Configure
+a controller in this isolated profile before manual testing.
+
+**Boot finding:** standalone DOL + `DefaultISO` reached an early sound-file DVD
+bounds panic in this environment. Do not use that route. Virtual-disc boot
+runs the retail apploader and successfully reaches Melee initialization. The
+C-stick ISO baseline also initializes successfully.
 
 Debug prints include ego deltas/reasons, input action IDs (0 vanilla, 1 taunt,
 2 swagger, 3 Punch), age, start/exit/cancellation reasons and throttled eligible
@@ -196,4 +212,3 @@ Knee/Stomp weighting messages. These weighting messages do not claim a move
 was selected or hit. Logs: `build/showboat/dolphin-user/Logs/dolphin.log`.
 
 Build/runtime evidence and final test results are recorded below when verified.
-

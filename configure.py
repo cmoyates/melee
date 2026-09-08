@@ -2026,7 +2026,7 @@ if args.showboat_ai:
         for obj in lib["objects"]:
             if obj.name in {
                 showboat_source, "melee/ft/kinds/ftCommon/ftCo_0A01.c",
-                "melee/ft/ftcpuattack.c", "melee/pl/player.c",
+                "melee/ft/ftcpuattack.c", "melee/pl/player.c", "melee/ft/fighter.c",
             }:
                 obj.options["extra_cflags"].append("-DSHOWBOAT_AI=1")
                 if args.showboat_ai_debug:

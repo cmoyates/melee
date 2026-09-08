@@ -9,6 +9,7 @@
 #include <melee/ft/types.h>
 #include <melee/gm/gm_16AE.h>
 #include <melee/pl/player.h>
+#include <melee/mp/mpcoll.h>
 #include <dolphin/os.h>
 #include <string.h>
 
@@ -31,7 +32,7 @@ typedef enum {
 
 typedef struct {
     Fighter* owner; /* identity only; never dereferenced between updates */
-    u32 spawn;
+    s32 spawn;
     int opponent_slot;
     int ego;
     int tick;
@@ -46,6 +47,7 @@ typedef struct {
     float percent;
     float opponent_percent;
     bool opponent_dead;
+    bool stock_loss_pending;
     bool danger;
     bool whiff;
     bool vulnerable;
@@ -130,10 +132,15 @@ static bool SB_Dead(Fighter* fp)
     return fp->motion_id < ftCo_MS_Rebirth;
 }
 
+static bool SB_Standing(Fighter* fp)
+{
+    return fp->motion_id >= ftCo_MS_Wait &&
+           fp->motion_id <= ftCo_MS_WalkFast;
+}
+
 static bool SB_GroundFree(Fighter* fp)
 {
-    return (fp->motion_id >= ftCo_MS_Wait &&
-            fp->motion_id <= ftCo_MS_WalkFast) ||
+    return SB_Standing(fp) ||
            (fp->motion_id >= ftCo_MS_Squat &&
             fp->motion_id <= ftCo_MS_SquatRv);
 }
@@ -177,6 +184,26 @@ static void SB_Stop(Fighter* fp, SB_State* s, char* reason)
         s->action = SB_NONE;
         /* Done and ReleaseAll are insufficient: sticks also persist. */
         ftCo_800B4A78(fp);
+        fp->cpu.xA4 = 0; /* reselect attacks against the current situation */
+    }
+}
+
+void ShowboatAI_Suspend(Fighter* fp)
+{
+    SB_State* s;
+    if (fp->player_id >= SB_SLOTS) {
+        return;
+    }
+    s = &sb_states[fp->player_id];
+    if (s->owner != fp) {
+        return;
+    }
+    SB_Stop(fp, s, "cancelled: CPU control suspended");
+    s->celebration = 0;
+    if (!ftCo_800A2040(fp) || fp->kind != FTKIND_CAPTAIN ||
+        fp->cpu.level != 9 || fp->cpu.xC != 4)
+    {
+        ShowboatAI_ResetSlot(fp->player_id);
     }
 }
 
@@ -211,7 +238,9 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
         compatible |= fp->motion_id == ftCa_MS_SpecialN;
     }
     if (!SB_Interior(fp) || !compatible || fp->x2219_b5 ||
-        (s->action == SB_SWAGGER && distance < 32.0f) ||
+        (s->action == SB_SWAGGER &&
+         (distance < 32.0f || mpColl_IsOnPlatform(&fp->coll_data))) ||
+        (s->action == SB_PUNCH && s->age < 2 && !SB_Standing(fp)) ||
         (s->action == SB_TAUNT && !SB_Dead(target) && distance < 70.0f) ||
         (s->action == SB_PUNCH && ftColl_8007B868(target->gobj) != 0))
     {
@@ -223,6 +252,7 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
         return false;
     }
     ftCo_800B4A78(fp);
+    fp->cpu.xA4 = 0; /* arbitration may have cached a vanilla selection */
     if (s->action == SB_TAUNT && s->age == 1) {
         ftCo_800B463C(fp, CpuCmd_PressUp);
     } else if (s->action == SB_PUNCH && s->age == 1) {
@@ -253,8 +283,6 @@ bool ShowboatAI_Update(Fighter* fp)
     bool danger;
     bool whiff;
     bool vulnerable;
-    bool new_whiff;
-    bool new_vulnerable;
     bool stock_match;
 
     if (fp->player_id >= SB_SLOTS) {
@@ -270,7 +298,11 @@ bool ShowboatAI_Update(Fighter* fp)
     }
     slot = SB_OpponentSlot(fp);
     target_gobj = slot >= 0 ? Player_GetEntity(slot) : NULL;
-    if (target_gobj == NULL) {
+    if (target_gobj == NULL ||
+        (Player_GetEntityAtIndex(slot, 1) != NULL &&
+         Player_GetEntityAtIndex(slot, 1) != target_gobj &&
+         !GET_FIGHTER(Player_GetEntityAtIndex(slot, 1))->x221F_b3))
+    {
         SB_Stop(fp, s, "cancelled: lost singles opponent");
         ShowboatAI_ResetSlot(fp->player_id);
         return false;
@@ -309,10 +341,11 @@ bool ShowboatAI_Update(Fighter* fp)
     if (s->spawn != fp->x8_spawnNum ||
         (stock_match && stocks < s->stocks))
     {
-        /* Stock accounting and respawn can arrive on different updates. */
-        if (s->serious < 500) {
+        /* Accounting precedes respawn; don't charge twice for one stock. */
+        if (!s->stock_loss_pending) {
             SB_Ego(fp, s, -30, "lost stock / new life");
         }
+        s->stock_loss_pending = s->spawn == fp->x8_spawnNum;
         SB_Stop(fp, s, "cancelled: new life");
         s->serious = 600;
         s->celebration = 0;
@@ -382,18 +415,6 @@ bool ShowboatAI_Update(Fighter* fp)
             SB_Ego(fp, s, -1, "confidence settling");
         }
     }
-    /* No override of defense, recovery, grabs, ledges or forced scenarios.
-     * Vanilla priority arbitration has already run on this frame. */
-    if (danger || s->serious || fp->x2219_b5 ||
-        !(fp->cpu.x18 == 1 || fp->cpu.x18 == 2 || fp->cpu.x18 == 3 ||
-          fp->cpu.x18 == 8 || fp->cpu.x18 == 10))
-    {
-        SB_Stop(fp, s, "cancelled: serious/vanilla priority");
-        return false;
-    }
-    if (s->action != SB_NONE) {
-        return SB_Input(fp, s, target);
-    }
     dx = target->cur_pos.x - fp->cur_pos.x;
     dy = SB_Abs(target->cur_pos.y - fp->cur_pos.y);
     /* A deliberately approximate 'you swung the wrong way', not frame data. */
@@ -406,10 +427,26 @@ bool ShowboatAI_Update(Fighter* fp)
     vulnerable = !dead && SB_Down(target) && dy < 12.0f &&
                  SB_Abs(dx) >= 18.0f && SB_Abs(dx) <= 42.0f &&
                  dx * fp->facing_dir > 0.0f;
-    new_whiff = whiff && !s->whiff;
-    new_vulnerable = vulnerable && !s->vulnerable;
-    s->whiff = whiff;
-    s->vulnerable = vulnerable;
+    /* Observe event endings even during cooldown/forced states. Consume only
+     * an actual eligible roll, not an opportunity seen during our own lag. */
+    if (!whiff) {
+        s->whiff = false;
+    }
+    if (!vulnerable) {
+        s->vulnerable = false;
+    }
+    /* No override of defense, recovery, grabs, ledges or forced scenarios.
+     * Vanilla priority arbitration has already run on this frame. */
+    if (danger || s->serious || fp->x2219_b5 ||
+        !(fp->cpu.x18 == 1 || fp->cpu.x18 == 2 || fp->cpu.x18 == 3 ||
+          fp->cpu.x18 == 8 || fp->cpu.x18 == 10))
+    {
+        SB_Stop(fp, s, "cancelled: serious/vanilla priority");
+        return false;
+    }
+    if (s->action != SB_NONE) {
+        return SB_Input(fp, s, target);
+    }
     if (s->cooldown || !SB_Interior(fp) || !SB_GroundFree(fp) ||
         fp->item_gobj != NULL || SB_Abs(fp->self_vel.x) > 1.0f)
     {
@@ -424,10 +461,20 @@ bool ShowboatAI_Update(Fighter* fp)
             SB_Start(fp, s, SB_TAUNT, "starting TAUNT: KO/flashy launch");
         }
     } else if (ftColl_8007B868(target->gobj) == 0) {
-        if (new_vulnerable && s->ego >= 75 && SB_Roll(s, 35)) {
-            SB_Start(fp, s, SB_PUNCH, "starting PUNCH: excessive knockdown punish");
-        } else if (new_whiff && s->ego >= 45 && SB_Roll(s, 50)) {
-            SB_Start(fp, s, SB_SWAGGER, "starting SWAGGER: opponent swung away");
+        if (vulnerable && !s->vulnerable && s->ego >= 75 && SB_Standing(fp)) {
+            s->vulnerable = true;
+            if (SB_Roll(s, 35)) {
+                SB_Start(fp, s, SB_PUNCH,
+                         "starting PUNCH: excessive knockdown punish");
+            }
+        } else if (whiff && !s->whiff && s->ego >= 45 &&
+                   !mpColl_IsOnPlatform(&fp->coll_data))
+        {
+            s->whiff = true;
+            if (SB_Roll(s, 50)) {
+                SB_Start(fp, s, SB_SWAGGER,
+                         "starting SWAGGER: opponent swung away");
+            }
         }
     }
     return s->action != SB_NONE ? SB_Input(fp, s, target) : false;
@@ -445,7 +492,9 @@ float ShowboatAI_AttackWeight(Fighter* fp, void* table, int command,
     if (s->owner != fp || s->spawn != fp->x8_spawnNum || s->ego <= 45 ||
         s->serious || s->danger || SB_Forced(fp) || fp->x2219_b5 ||
         fp->dmg.x1830_percent > s->percent ||
-        fp->dmg.x1830_percent >= 110.0f || !fp->cpu.xFA_b5)
+        fp->dmg.x1830_percent >= 110.0f || !fp->cpu.xFA_b5 ||
+        fp->cpu.x18 == 4 || fp->cpu.x18 == 6 || fp->cpu.x18 == 7 ||
+        fp->cpu.x18 == 15 || fp->cpu.x18 == 18)
     {
         return weight;
     }

@@ -1,5 +1,9 @@
 #include "fighter.h"
 
+#if SHOWBOAT_AI
+#include <melee/mod/showboat_ai.h>
+#endif
+
 #include <math.h>
 #include <placeholder.h>
 
@@ -1706,6 +1710,11 @@ void Fighter_8006ABA0(Fighter_GObj* gobj)
     if (!fp->x221F_b3 && ftCo_800A2040(fp)) {
         ftCo_800B3900(gobj);
     }
+#if SHOWBOAT_AI
+    else {
+        ShowboatAI_Suspend(fp);
+    }
+#endif
 }
 
 /// https://decomp.me/scratch/A7CgG

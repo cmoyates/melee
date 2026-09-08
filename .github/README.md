@@ -20,6 +20,31 @@ Super Smash Bros Melee \
 
 This repo contains a WIP decompilation of Super Smash Bros Melee (US).
 
+## About this fork
+
+This is a source-only fork of [doldecomp/melee](https://github.com/doldecomp/melee)
+with a [single-player C-stick controls mod](../docs/single-player-cstick.md)
+on branch `mod/single-player-cstick`.
+
+**No game disc images, original executable, extracted game assets, or rebuilt
+game binaries are included.** Supply `orig/GALE01/sys/main.dol` from your own
+Super Smash Bros. Melee US v1.02 (GALE01) disc using the extraction instructions
+below. Packaging a playable image also requires your own original disc image.
+These inputs and generated outputs must remain local: `orig/` (except empty
+`.gitkeep` placeholders), `build/`, and common disc-image/asset formats are
+ignored by Git. Never force-add them or upload them as release/Actions artifacts.
+
+Clone this fork with:
+
+```sh
+git clone https://github.com/cmoyates/melee.git
+cd melee
+git switch mod/single-player-cstick
+```
+
+The documentation below describes the upstream project and stock build. Use the
+mod guide linked above for the C-stick build.
+
 > [!TIP]
 > The DOL this repository builds can be shifted! Meaning you are able to now add and remove code as you see fit, for modding or research purposes.
 

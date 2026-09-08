@@ -13,6 +13,7 @@
 #include <dolphin/mtx.h>
 #include <dolphin/pad.h>
 #include <dolphin/types.h>
+#include <melee/db/db.h>
 #include <melee/ft/ftlib.h>
 #include <melee/gm/gm_unsplit.h>
 #include <melee/gr/grcastle.h>
@@ -1390,6 +1391,13 @@ void Camera_8002B0E0(void)
     f32 var_f1;
     f32 var_f2;
     PAD_STACK(8);
+
+    /* Reserve the C-stick for attacks; keep normal automatic framing. */
+    if (DbLevel < DbLKind_DebugRom) {
+        game_camera.x2BA = 0;
+        game_camera.x2BC = 1.0f;
+        return;
+    }
 
     if ((gm_8016B41C() != 0) && (game_camera.x2C0 > 0.0f)) {
         {

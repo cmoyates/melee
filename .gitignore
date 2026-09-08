@@ -34,6 +34,29 @@ orig/*/sys/*
 *.map
 *.MAP
 
+# Game disc images and extracted assets (keep local, never publish)
+*.[iI][sS][oO]
+*.[gG][cC][mM]
+*.[cC][iI][sS][oO]
+*.[rR][vV][zZ]
+*.[wW][iI][aA]
+*.[wW][bB][fF][sS]
+*.[gG][cC][zZ]
+*.[dD][oO][lL]
+*.[rR][eE][lL]
+*.[dD][aA][tT]
+*.[hH][pP][sS]
+*.[tT][hH][pP]
+*.[dD][sS][pP]
+/apploader.img
+/boot.bin
+/bi2.bin
+/fst.bin
+
+# Machine-specific setup and emulator notes
+/LOCAL_SETUP.md
+/research/dolphin-m3-max-setup.md
+
 # Python
 .env
 .venv

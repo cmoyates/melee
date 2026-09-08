@@ -1,5 +1,9 @@
 #include "ftcpuattack.h"
 
+#if SHOWBOAT_AI
+#include <melee/mod/showboat_ai.h>
+#endif
+
 #include <math.h>
 
 #include "fighter.h"
@@ -354,6 +358,10 @@ int ftCo_800B4AB0(Fighter* fp, Fighter* target, void* arg2)
     r = HSD_Randf();
     sum = 0.0f;
     for (i = 0; i < count; i++) {
+#if SHOWBOAT_AI
+        sp3C[i].weight = ShowboatAI_AttackWeight(fp, arg2, sp3C[i].cmd,
+                                               sp3C[i].weight);
+#endif
         sum += sp3C[i].weight;
     }
     if (sum < 0.00001f && sum > -0.00001f) {

@@ -1,5 +1,9 @@
 #include "player.h"
 
+#if SHOWBOAT_AI
+#include <melee/mod/showboat_ai.h>
+#endif
+
 #include <melee/ft/forward.h>
 
 #include "forward.h"
@@ -1909,6 +1913,9 @@ void Player_InitOrResetPlayer(s32 slot)
     u8 _[56];
 
     Player_CheckSlot(slot);
+#if SHOWBOAT_AI
+    ShowboatAI_ResetSlot(slot);
+#endif
     player = &player_slots[slot];
 
     player->player_state = 0;

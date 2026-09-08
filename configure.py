@@ -209,7 +209,17 @@ parser.add_argument(
     action="store_false",
     help="do not always run dtk dol apply after linking",
 )
+parser.add_argument(
+    "--showboat-ai", action="store_true",
+    help="enable the source-only Level 9 Captain Falcon personality mod",
+)
+parser.add_argument(
+    "--showboat-ai-debug", action="store_true",
+    help="log showboat events through OSReport (requires --showboat-ai)",
+)
 args = parser.parse_args()
+if args.showboat_ai_debug and not args.showboat_ai:
+    parser.error("--showboat-ai-debug requires --showboat-ai")
 
 if any({args.debug, args.asm, args.linkable}) or args.sym == "on":
     args.non_matching = True
@@ -2005,6 +2015,22 @@ config.progress_categories = [
 ]
 config.print_progress_categories = args.verbose
 config.progress_each_module = args.verbose
+
+# The new module has no retail address/split. Link it explicitly, leaving the
+# decompilation's original split/symbol metadata untouched.
+if args.showboat_ai:
+    showboat_source = "melee/mod/showboat_ai.c"
+    config.libs.append(MeleeLib("Showboat AI mod", [Object(Matching, showboat_source)]))
+    config.extra_dol_objects.append(showboat_source)
+    for lib in config.libs:
+        for obj in lib["objects"]:
+            if obj.name in {
+                showboat_source, "melee/ft/kinds/ftCommon/ftCo_0A01.c",
+                "melee/ft/ftcpuattack.c", "melee/pl/player.c",
+            }:
+                obj.options["extra_cflags"].append("-DSHOWBOAT_AI=1")
+                if args.showboat_ai_debug:
+                    obj.options["extra_cflags"].append("-DSHOWBOAT_AI_DEBUG=1")
 
 # Optional extra arguments to `objdiff-cli report generate`
 config.progress_report_args = [

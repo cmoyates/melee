@@ -1,5 +1,9 @@
 #include "ftCo_0A01.h"
 
+#if SHOWBOAT_AI
+#include <melee/mod/showboat_ai.h>
+#endif
+
 #include <Runtime/platform.h>
 
 #include <melee/ft/kinds/ftDonkey/forward.h>
@@ -8590,7 +8594,13 @@ void ftCo_800B3900(Fighter_GObj* gobj)
 
     ftCo_800B33B0(fp);
     ftCo_800B2AFC(fp);
+#if SHOWBOAT_AI
+    if (!ShowboatAI_Update(fp)) {
+        ftCo_800B2790(fp);
+    }
+#else
     ftCo_800B2790(fp);
+#endif
     ftCo_800B3E04(fp);
     ftCo_800B0AF4(fp);
     fp->cpu.x7C += 1;

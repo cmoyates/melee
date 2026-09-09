@@ -1,16 +1,20 @@
-# Read-only behavior recorder (schema v1 contract)
+# Read-only behavior recorder (schema v2 contract)
 
 Goal: explain observed custom AND native behavior after a playtest, including
 why tactics declined. No gameplay/controller writes, timers repaired, native RNG,
 allocations, network, model runtime, or claims that observed inputs guarantee hits.
-Current running Dolphin is left alone; launch/restart requires tester readiness.
+Recorder work does not launch Dolphin; launch/restart requires tester readiness.
 
 ## Transport and ownership
 
 Optional `SHOWBOAT_RECORDER=1` (raw configure off, showboat helper default on).
 Only mod sources change; existing native hooks remain the same. Disabled macros
 must not evaluate arguments. Native C emits one-line JSON prefixed `SBREC ` via
-OSReport. Dolphin timestamps/prefixes are transport, not game-frame timestamps.
+OSReport. V2 snapshots use a checked 1,024-byte local string builder and one
+`OSReport("%s", line)` call, with no floating-point variadic arguments. Overflow
+publishes nothing and marks a coverage gap. Integer-only lifecycle/gate records
+retain their existing transport. Dolphin timestamps/prefixes are transport, not
+game-frame timestamps.
 The launch helper archives each approved launch under an exclusive directory in
 `build/showboat/recordings/`, preserving `runtime.log`, an immutable `launch.json`
 written before execution, and final `metadata.json` with exit information. A
@@ -43,7 +47,7 @@ Acknowledgment is not a hit; lcancel_sample is not successful lag reduction.
 
 ## JSON records
 
-All records: `v:1`, `type`, `segment` (monotonically increasing capture-local ID),
+All new records: `v:2`, `type`, `segment` (monotonically increasing capture-local ID),
 `slot` (0-based CPU player), `frame` (native gm_GetFrameCount).
 Segments are observed intervals, NOT guaranteed complete matches. Identity,
 spawn, frame rollback, stage/rules change or suspension can split them. EOF
@@ -54,8 +58,16 @@ without end is explicitly incomplete, not a loss/victory. No raw addresses.
 
 `sample`: additionally `ego`, `action` (HUD controller intent code 0..11),
 `owns` (mod claimed VM for this update), `events` (mask), `gap` (0/1),
-`self` and `rival` numeric arrays with exactly these 13 fields:
+`float_encoding:"ieee754-binary32-hex"`, and `self`/`rival` arrays with exactly
+these 13 logical fields:
 `[spawn,kind,motion,anim,x,y,vx,vy,ground_v,percent,stocks,shield,flags]`.
+The eight float fields at indices **3,4,5,6,7,8,9,11** are transmitted as exactly
+eight lowercase hexadecimal characters in JSON strings, containing the native
+IEEE binary32 bits (`"3f800000"` = 1, `"80000000"` = negative zero). Other fields
+are JSON integers. `memcpy` into u32 plus numeric nibble extraction avoids aliasing
+and host byte-order dependence. The analyzer decodes these to numeric values;
+NaN/infinity encodings are rejected. No quantization, floating varargs, numeric
+formatter or pointer values are used to encode these fields.
 Flags bits: 1 airborne, 2 hitstun, 4 hitlag, 8 inactive, 16 held_item,
 32 captured_or_thrown, 64 protected (read-only native protection query),
 128 global_items_present.
@@ -81,8 +93,10 @@ reason per tactic per recorded update; last actual outcome wins. Unflushed EOF
 tails are unknown. `batch` starts at 1 per segment and advances per nonempty
 flush. Multiple CPU updates/flushes may share a native frame counter: counts are
 observed updates, **not** unique frames or durations. Batch identity disambiguates
-these flushes. The analyzer also accepts older v1 rows without `batch`/sample
-`reasons`, retaining ambiguity warnings.
+these flushes. The analyzer also accepts older v1 integer records without `batch`,
+retaining ambiguity warnings. All v1 sample-derived metrics are quarantined,
+including plausible-looking rows; they cannot become trusted by filtering out
+obviously invalid samples.
 
 `end`: additionally `reason` (fixed token), `observations` (segment total).
 Flush gates first. An end is a recording lifecycle event, NOT match result.
@@ -90,8 +104,12 @@ Flush gates first. An end is a recording lifecycle event, NOT match result.
 ## Offline reports
 
 Stream parse prefixed records; validate bounded shapes/types/finite numbers,
-versions and ordering; warn on malformed/truncated/missing rows and unfinished
-segments. Plain older SHOWBOAT logs have no structured coverage: say so rather
+versions and ordering; reject mixed versions within a segment, invalid encoding,
+nonfinite float words and impossible fighter fields (including flags above 255).
+Warn on malformed/truncated/missing rows and unfinished segments. For v1 or a
+corrupt capture, Markdown withholds sample summaries and JSON trusted metric
+fields are empty/null; bounded raw diagnostics are separate. Validated integer
+gate/end accounting is retained with its own coverage caveats. Plain older SHOWBOAT logs have no structured coverage: say so rather
 than inventing statistics. Never execute text from a log.
 
 Report per-segment context/coverage, observed motion entries and native-priority
@@ -103,9 +121,9 @@ combos or player wins. Do not count percent resets as healing/damage. Sparse
 position snapshots do not prove useful wavedash displacement. Emit Markdown
 and machine-readable JSON on request. No gameplay or emulator actions in analysis.
 
-## Verification checkpoint
+## Historical v1 offline checkpoint — superseded by live findings
 
-364 host tests pass, including main hook ordering across recorder/debug variants,
+364 host tests passed, including main hook ordering across recorder/debug variants,
 actual C writer output through the analyzer, repeated-clock batches, Time matches
 with zero stocks, and archive/source-file safety. Review found and corrected the
 update-count versus unique-frame mismatch and finite-f32 parser-domain mismatch.
@@ -116,6 +134,9 @@ The enabled MWCC build and isolation verifier pass; 24 module warning builds and
 six disabled-hook byte comparisons pass. Recorder-off reproduces the preceding
 DOL exactly; the enabled DOL is 4,506,976 bytes / SHA-1
 `690249dfe765ebdfefff6eb861df691c92cc2aca`. Existing virtual-disc DOL and controller
-hashes remain unchanged. No live recorder playtest was launched. OSReport
-formatting/I/O may cost runtime: host tests do not establish emulator speed,
-logging overhead or actual retail capture completeness.
+hashes remained unchanged at that offline checkpoint. Subsequent
+[first](showboat_recorder_playtest_1.md) and [second](showboat_recorder_playtest_2.md)
+live tests exposed mixed-format corruption despite those tests. The v2 repair
+replaces that serialization path rather than attempting to reinterpret damaged
+v1 samples. OSReport formatting/I/O may cost runtime: host tests do not establish
+emulator speed, logging overhead or actual retail capture completeness.

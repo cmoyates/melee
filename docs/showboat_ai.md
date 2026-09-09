@@ -6,20 +6,25 @@ Initial working tree was clean; that mod is retained.
 
 ## Read-only match recorder
 
-**Known live issue in `435836d5e`:** the first approved capture exposed corrupted
-mixed-format snapshot fields, despite passing host tests. Do not trust its
-automatic damage/state summaries. Integer-only gate accounting and separately
-corroborated custom events support a limited analysis. See the
-[first playtest review](../research/showboat_recorder_playtest_1.md). Serialization
-needs repair and live validation before another full-state analysis.
-A [second limited playtest review](../research/showboat_recorder_playtest_2.md)
-corroborates one custom fighter powershield contact and its +8 ego reward, while
-confirming that the same snapshot corruption remains unfixed.
+**Recorder v2 replaces the faulty v1 serialization path.** A bounded buffer and
+exact float-bit encoding replace the large mixed integer/double formatting call;
+only a string is passed to OSReport. See the [repair analysis](../research/showboat_recorder_repair.md).
+Native build/codegen checks and host transport tests are offline evidence; a
+new tester-approved live capture is still required to validate retail output.
 
-The default showboat build now includes structured **SBREC v1** telemetry and an
+Old v1 snapshots remain untrusted, including plausible-looking rows. The
+[first](../research/showboat_recorder_playtest_1.md) and
+[second](../research/showboat_recorder_playtest_2.md) reviews use only narrow,
+separately corroborated events and integer-only accounting. No historical
+snapshot fields are repaired by guessing offsets.
+
+The default showboat build now includes structured **SBREC v2** telemetry and an
 [offline analyzer](../tools/analyze_showboat.py). This observes the same legal bot;
 it does not change its decisions, controls, physics, resources, RNG or timers.
-See the [schema and design contract](../research/showboat_recorder.md).
+See the [schema and design contract](../research/showboat_recorder.md). On the wire,
+float fields are eight-digit IEEE binary32 hex strings; the analyzer converts them
+to ordinary numeric values. This preserves bits rather than rounding or changing
+game data.
 
 After the tester explicitly approves a launch, the normal launch helper creates
 an exclusive directory under `build/showboat/recordings/` containing:
@@ -63,7 +68,7 @@ hits. Native motion entries are observed transitions, not complete action totals
 
 ```sh
 .venv/bin/python tools/analyze_showboat.py build/showboat/recordings/<capture>
-.venv/bin/python tools/analyze_showboat.py build/showboat/recordings/<capture> \\
+.venv/bin/python tools/analyze_showboat.py build/showboat/recordings/<capture> \
   --json build/showboat/report.json --markdown build/showboat/report.md
 # Focus on one observed segment:
 .venv/bin/python tools/analyze_showboat.py <runtime.log> --segment 1
@@ -74,7 +79,7 @@ rejection counts, sampled ego range, comparable net percent increases, stock cha
 positions and a bounded timeline. It explicitly separates initial sightings,
 continuous transitions and unknown intervals. Percent changes are not attributed
 hit damage; stock changes are not confirmed KOs/wins. Airborne is not offstage:
-v1 has no complete stage geometry or offstage flag. Sparse positions alone do not
+the recorder has no complete stage geometry or offstage flag. Sparse positions alone do not
 prove useful wavedash displacement or recovery success.
 
 A recording segment is **not necessarily a whole match**. Spawn/identity changes,
@@ -99,9 +104,30 @@ Recorder opt-out reproduces the entire preceding ego-build DOL byte-for-byte
 Rebuilding does not alter an already-running game or its virtual-disc DOL.
 Logging/formatting can still cost runtime; offline tests do not establish emulator
 speed or recording overhead. The first live capture exposed the integrity fault
-noted above; the following offline checkpoint predates that finding.
+noted above; the following historical checkpoint predates that finding.
 
-### Recorder offline checkpoint
+### Recorder v2 repair checkpoint
+
+- **393 tests pass**: 235 main/retained tests, 52 recorder tests, 87 analyzer
+  tests, 16 capture tests and three configuration/verifier tests.
+- Raw C-to-CLI tests cover all 16 float positions, integer sentinels, signed zero,
+  subnormals, finite extrema, literal `%s` transport, exact-fit/overflow boundaries
+  and recovery gaps. Existing game/CPU immutability and recorder/debug matrices
+  remain intact.
+- Both real v1 captures were reanalyzed without overwriting old reports: invalid
+  rows are rejected, remaining plausible v1 samples are quarantined, and each
+  retains 7,324 integer-only gate updates per tactic. No trusted v1 sample totals.
+- Native build/verifier, 24 module warning compiles, six disabled-hook comparisons
+  and exact recorder-off DOL comparison pass. Static inspection of the linked
+  PPC call confirms format/buffer pointers only, with the FP-varargs flag clear.
+- Repaired DOL: **4,515,936 bytes**, SHA-1
+  `27db34f9111d37f01ebf83be4c78d9233fef06bb`.
+- Dolphin remains closed. Existing virtual-disc DOL remains the old
+  `690249dfe765ebdfefff6eb861df691c92cc2aca`; controller hash remains
+  `00dc2b7a5339493fe11fcf93e3adba16e93e0451`. The next approved launch will stage
+  v2. No new live-output or runtime-overhead claim is made yet.
+
+### Historical v1 recorder offline checkpoint
 
 - **364 tests pass**: 235 retained/main-orchestration tests, 45 recorder tests,
   66 analyzer tests, 16 capture tests and two configuration tests. The 123 main

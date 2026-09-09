@@ -9,6 +9,7 @@ A separate PPC clang syntax-only check uses real headers; it does not build/link
 any object or DOL, execute native physics, or touch the running playtest.
 """
 from collections import Counter, defaultdict
+from copy import deepcopy
 import json
 import math
 import os
@@ -16,6 +17,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import struct
 import tempfile
 import unittest
 
@@ -39,6 +41,9 @@ HEADERS = (
     "melee/gm/gm_16AE.h", "melee/gm/gm_1A3F.h", "melee/mn/types.h",
     "melee/pl/player.h", "sysdolphin/baselib/gobj.h", "dolphin/os.h",
 )
+FLOAT_INDICES = (3, 4, 5, 6, 7, 8, 9, 11)
+
+
 INVALID = ("level mode kind human owner_secondary target_secondary owner_subflag "
            "target_subflag ally third owner_slot target_slot owner_gobj target_gobj "
            "missing inactive_slot null self bad_target bad_owner no_rules bad_rules").split()
@@ -135,25 +140,50 @@ class RecorderTests(unittest.TestCase):
                                     for line in output.splitlines() if line.strip()}
         # Obtain numeric expectations from the checkout, not duplicate enum IDs.
         names = ["FTKIND_CAPTAIN", "FTKIND_FOX", "ftCo_MS_Wait", "ftCo_MS_CaptureWaitHi",
-                 "HSD_PAD_R", "HSD_PAD_A", "MatchKind_Stock", "MatchKind_Time", "GM_VS"]
+                 "HSD_PAD_R", "HSD_PAD_A", "MatchKind_Stock", "MatchKind_Time", "GM_VS",
+                 "ftCo_MS_Dash", "ftCo_MS_Fall"]
         probe = work / "enums.c"
         probe.write_text('#include "game.h"\n#include <stdio.h>\nint main(void) {\n' +
                          "\n".join(f'printf("{n} %d\\n", (int){n});' for n in names) + "\n}\n")
         run(base + [str(probe), "-o", str(work / "enums")])
         cls.native = {k: int(v) for k, v in (line.split() for line in
                       run([str(work / "enums")]).stdout.splitlines())}
+        # Fault injection only in temporary copies: the production buffer and
+        # control flow stay untouched. Exact-fit/one-byte-short also exercise
+        # the trailing newline and NUL reservation, not just gross overflow.
+        baseline = run([str(cls.binaries[0]), "capacity_baseline"], env=cls.env).stdout
+        sample = next(line for line in baseline.splitlines(keepends=True)
+                      if '"type":"sample"' in line)
+        cls.sample_bytes = len(sample.encode())
+        cls.capacity_binaries = {}
+        source = MODULE.read_text()
+        assert source.count("#define SR_LINE_CAP 1024") == 1
+        for cap in (64, cls.sample_bytes, cls.sample_bytes + 1):
+            copy = work / f"recorder-cap-{cap}.c"
+            copy.write_text(source.replace("#define SR_LINE_CAP 1024",
+                                           f"#define SR_LINE_CAP {cap}"))
+            binaries = []
+            for debug in (0, 1):
+                binary = work / f"recorder-cap-{cap}-debug-{debug}"
+                run(base + sanitize + [f"-DSHOWBOAT_AI_DEBUG={debug}",
+                    "-DSHOWBOAT_RECORDER=1", str(copy), str(FIX / "harness.c"),
+                    "-lm", "-o", str(binary)])
+                binaries.append(binary)
+            cls.capacity_binaries[cap] = binaries
         if any(p.read_bytes() != content for p, content in protected.items()):
             raise AssertionError("Recorder/header changed during build; rerun")
 
-    def records(self, case):
-        outputs = []
-        for binary in self.binaries:
+    def records(self, case, *, raw=False, binaries=None):
+        outputs, wires = [], []
+        for binary in self.binaries if binaries is None else binaries:
             with self.subTest(debug=binary.name):
                 result = run([str(binary), case], env=self.env)
                 self.assertEqual(result.stderr, "")
+                self.assertTrue(not result.stdout or result.stdout.endswith("\n"))
+                wires.append(result.stdout)
                 rows = []
                 for line in result.stdout.splitlines():
-                    self.assertLess(len(line.encode()) + 1, 1024)
+                    self.assertLessEqual(len(line.encode()) + 2, 1024)
                     self.assertTrue(line.startswith("SBREC "))
                     def reject_constant(value):
                         raise AssertionError(f"Non-JSON constant: {value}")
@@ -165,13 +195,24 @@ class RecorderTests(unittest.TestCase):
                                            object_pairs_hook=unique))
                 self.validate(rows)
                 outputs.append(rows)
+        self.assertEqual(wires[0], wires[1], "Debug must not alter wire bytes")
         self.assertEqual(outputs[0], outputs[1], "Debug must not alter telemetry")
-        return outputs[0]
+        self.last_wire = wires[0]
+        if raw:
+            return outputs[0]
+        # Legacy numeric assertions operate on copies only. Strict validation
+        # above and the CLI seam below always see the original wire strings.
+        decoded = deepcopy(outputs[0])
+        for row in rows_of(decoded, "sample"):
+            for side in ("self", "rival"):
+                for index in FLOAT_INDICES:
+                    row[side][index] = struct.unpack(">f", bytes.fromhex(row[side][index]))[0]
+        return decoded
 
     def validate(self, rows):
         fields = {
             "begin": "stage mode match_kind target interval",
-            "sample": "ego action owns events gap self rival native input reasons",
+            "sample": "ego action owns events gap float_encoding self rival native input reasons",
             "gate": "from tactic reason count batch",
             "end": "reason observations",
         }
@@ -182,7 +223,7 @@ class RecorderTests(unittest.TestCase):
             kind = row["type"]
             self.assertIn(kind, fields)
             self.assertEqual(set(row), base | set(fields[kind].split()))
-            self.assertEqual(row["v"], 1)
+            self.assertEqual(row["v"], 2)
             for key in ("v", "segment", "slot", "frame"):
                 self.assertIs(type(row[key]), int)
             self.assertIn(row["slot"], range(6))
@@ -208,15 +249,21 @@ class RecorderTests(unittest.TestCase):
             if kind == "sample":
                 self.assertNotIn(row["frame"], s["samples"])
                 s["samples"].add(row["frame"])
+                self.assertEqual(row["float_encoding"], "ieee754-binary32-hex")
                 for key, size in (("self", 13), ("rival", 13), ("native", 3), ("input", 7)):
                     self.assertIs(type(row[key]), list)
                     self.assertEqual(len(row[key]), size)
-                    for value in row[key]:
-                        self.assertIn(type(value), (int, float))
-                        self.assertTrue(math.isfinite(value))
                 for key in ("self", "rival"):
+                    for index in FLOAT_INDICES:
+                        value = row[key][index]
+                        self.assertIs(type(value), str)
+                        self.assertIsNotNone(re.fullmatch(r"[0-9a-f]{8}", value))
+                        self.assertNotEqual(int(value, 16) & 0x7F800000, 0x7F800000)
+                        self.assertTrue(math.isfinite(struct.unpack(">f", bytes.fromhex(value))[0]))
                     for index in (0, 1, 2, 10, 12):
                         self.assertIs(type(row[key][index]), int)
+                        if index != 12:
+                            self.assertTrue(-0x80000000 <= row[key][index] <= 0x7FFFFFFF)
                     self.assertIn(row[key][12], range(256))
                 for key in ("native", "input"):
                     self.assertTrue(all(type(v) is int for v in row[key]))
@@ -254,26 +301,40 @@ class RecorderTests(unittest.TestCase):
                 del active[slot]
         self.assertFalse(active, "These fixtures explicitly close every segment")
 
-    def test_native_header_syntax(self):
-        # Catch dependencies/types hidden by the host stubs (the freestanding
-        # MSL, for example, does not provide the host's <float.h>).
+    def ppc_syntax_command(self):
+        # Real headers only, never the host include stubs.
         base = [self.cc, "-fsyntax-only", "-xc", "-std=c99", "-nostdinc",
                 "-fno-builtin", "--target=ppc32-none-eabi", "-DLINT",
                 "-fno-short-enums", "-Werror", "-Wno-typedef-redefinition",
                 "-I", str(ROOT / "src")]
         for path in ("src/MSL", "extern/dolphin/include", "extern/dolphin/src"):
             base += ["-isystem", str(ROOT / path)]
+        return base
+
+    def test_native_header_syntax(self):
+        # Catch dependencies/types hidden by the host stubs (the freestanding
+        # MSL, for example, does not provide the host's <float.h>).
         for enabled in (0, 1):
             for debug in (0, 1):
-                run(base + [f"-DSHOWBOAT_RECORDER={enabled}",
+                run(self.ppc_syntax_command() + [f"-DSHOWBOAT_RECORDER={enabled}",
                             f"-DSHOWBOAT_AI_DEBUG={debug}", str(MODULE)])
+
+    def test_actual_codec_ppc_syntax(self):
+        # Compile the actual internal codec with real PPC types and sentinel
+        # call sites. Syntax ONLY: no target object, linking or runtime proof.
+        for debug in (0, 1):
+            run(self.ppc_syntax_command() + ["-DSHOWBOAT_RECORDER=1",
+                f"-DSHOWBOAT_AI_DEBUG={debug}", str(FIX / "ppc_codec.c")])
 
     def test_disabled_header_and_dependencies(self):
         for binary in self.disabled:
             self.assertEqual(run([str(binary)], env=self.env).stdout, "")
         self.assertEqual(self.symbols[0], set())
-        # Darwin clang lowers zeroing memset to bzero on the host.
-        allowed = {"OSReport", "memset", "memcpy", "bzero", "Player_GetEntity", "Player_GetEntityAtIndex",
+        # Darwin clang lowers zeroing memset to bzero and adds stack canaries
+        # for the bounded local line. These are compiler runtime dependencies,
+        # not new gameplay queries or allocation/formatting services.
+        allowed = {"OSReport", "memset", "memcpy", "bzero", "__stack_chk_fail",
+                   "__stack_chk_guard", "Player_GetEntity", "Player_GetEntityAtIndex",
                    "Player_GetPlayerState", "Player_GetStocks", "ftCo_800A2040", "ftCo_IsAlly",
                    "ftColl_8007B868", "gm_GetFrameCount", "gm_GetCurrentGameMode",
                    "gm_GetRules", "gm_GetStKind", "HSD_GObj_Entities"}
@@ -296,6 +357,108 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual([s[k] for k in ("ego", "action", "owns", "events", "gap")], [73, 11, 1, 127, 0])
         self.assertEqual({r["tactic"]: r["reason"] for r in rows_of(rows, "gate")},
                          {0: 2, 1: 0, 2: 0, 3: 0, 4: 15})
+
+    def test_sample_transport_single_pointer(self):
+        source = MODULE.read_text()
+        emit = re.search(r"^static bool SR_Emit\([^;]*?\n\{.*?^\}",
+                         source, re.S | re.M)
+        self.assertIsNotNone(emit)
+        # Runtime va_arg checks cannot detect unused trailing arguments. Pin
+        # the complete call expression too: literal %s and exactly b.text.
+        self.assertEqual(re.findall(r"\bOSReport\s*\([^;]*;", emit.group()),
+                         ['OSReport("%s", b.text);'])
+        self.assertRegex(emit.group(), r"\bSR_Line b;")
+        self.assertIn("#define SR_LINE_CAP 1024", source)
+
+    def test_exact_sentinel_mapping(self):
+        rows = self.records("sentinels", raw=True)
+        n = self.native
+        s = rows_of(rows, "sample")[0]
+        self.assertEqual(s, {
+            "v": 2, "type": "sample", "segment": 1, "slot": 0, "frame": 0xFFFFFFFD,
+            "float_encoding": "ieee754-binary32-hex",
+            "ego": 97, "action": 9, "owns": 1, "events": 85, "gap": 0,
+            "self": [-0x80000000, n["FTKIND_CAPTAIN"], n["ftCo_MS_Dash"],
+                     "80000000", "00000001", "7f7fffff", "80800000",
+                     "3f123456", "bf654321", "412abcde", 7, "c2480001", 21],
+            "rival": [0x7FFFFFFF, n["FTKIND_FOX"], n["ftCo_MS_Fall"],
+                      "00000000", "80000001", "ff7fffff", "00800000",
+                      "3eaaaaab", "c1234567", "42f6e979", 13, "3f800001", 74],
+            "native": [-0x80000000, 0x7FFFFFFF, 3],
+            "input": [0xFFFFFFFF, -128, 127, -73, 0, 17, 254],
+            "reasons": [1, 4, 7, 10, 13],
+        })
+        self.assertEqual(len({s[side][i] for side in ("self", "rival")
+                              for i in FLOAT_INDICES}), 16)
+        self.assertEqual(rows[0], {
+            "v": 2, "type": "begin", "segment": 1, "slot": 0, "frame": 0xFFFFFFFD,
+            "stage": 31, "mode": n["GM_VS"], "match_kind": n["MatchKind_Stock"],
+            "target": 1, "interval": 12,
+        })
+        self.assertEqual(rows[2:-1], [
+            {"v": 2, "type": "gate", "segment": 1, "slot": 0, "frame": 0xFFFFFFFD,
+             "from": 0xFFFFFFFD, "tactic": t, "reason": 1 + t * 3, "count": 1,
+             "batch": 1} for t in range(5)])
+        self.assertEqual(rows[-1], {
+            "v": 2, "type": "end", "segment": 1, "slot": 0, "frame": 0xFFFFFFFD,
+            "reason": "reset", "observations": 1,
+        })
+
+    def test_raw_wire_validator_rejects_noncanonical_floats(self):
+        rows = self.records("sentinels", raw=True)
+        for side in ("self", "rival"):
+            for index in FLOAT_INDICES:
+                for bad in (0, 1.0, True, None, "0x3f800000", "3F800000", "0000000",
+                            "000000000", " 00000000", "00000000\n", "gggggggg",
+                            "7f800000", "ff800000", "7fc00000", "7f800001"):
+                    with self.subTest(side=side, index=index, bad=bad):
+                        altered = deepcopy(rows)
+                        altered[1][side][index] = bad
+                        with self.assertRaises(AssertionError):
+                            self.validate(altered)
+        for encoding in (None, "ieee754-binary32", 2):
+            altered = deepcopy(rows)
+            altered[1]["float_encoding"] = encoding
+            with self.assertRaises(AssertionError):
+                self.validate(altered)
+        altered = deepcopy(rows)
+        del altered[1]["float_encoding"]
+        with self.assertRaises(AssertionError):
+            self.validate(altered)
+        for index in range(len(rows)):
+            altered = deepcopy(rows)
+            altered[index]["v"] = 1
+            with self.assertRaises(AssertionError):
+                self.validate(altered)
+
+    def test_overflow_publishes_no_partial_samples(self):
+        rows = self.records("overflow", raw=True, binaries=self.capacity_binaries[64])
+        self.assertEqual(Counter(r["type"] for r in rows), {"begin": 1, "gate": 10, "end": 1})
+        self.assertEqual([(r["batch"], r["from"], r["frame"], r["count"])
+                          for r in rows_of(rows, "gate")],
+                         [(1, 1, 60, 60)] * 5 + [(2, 61, 61, 1)] * 5)
+        self.assertEqual(rows[-1]["observations"], 61)
+
+    def test_line_capacity_exact_boundary(self):
+        for extra, count in ((0, 0), (1, 1)):
+            with self.subTest(nul_capacity=extra):
+                rows = self.records("capacity_baseline", raw=True,
+                                    binaries=self.capacity_binaries[self.sample_bytes + extra])
+                self.assertEqual(Counter(r["type"] for r in rows),
+                                 Counter({"begin": 1, "gate": 5, "end": 1, "sample": count}))
+                self.assertEqual(rows[-1]["observations"], 1)
+
+    def test_overflow_recovers_with_gap(self):
+        rows = self.records("overflow_recovery", raw=True,
+                            binaries=self.capacity_binaries[self.sample_bytes + 1])
+        samples = rows_of(rows, "sample")
+        self.assertEqual([(s["frame"], s["gap"]) for s in samples], [(1, 0), (3, 1)])
+        for key in ("self", "rival", "native", "input", "reasons"):
+            self.assertEqual(samples[0][key], samples[1][key])
+        self.assertEqual(Counter(r["type"] for r in rows),
+                         {"begin": 1, "sample": 2, "gate": 5, "end": 1})
+        self.assertEqual(rows[-1]["observations"], 4)
+        self.assertEqual([g["count"] for g in rows_of(rows, "gate")], [4] * 5)
 
     def test_frame_phase(self):
         rows = self.records("phase")
@@ -368,6 +531,17 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual((s["ego"], s["action"]), (100, 0))
         self.assertGreater(s["self"][3], 3e38)
         self.assertEqual(s["input"][0], 0xFFFFFFFF)
+        wire = next(json.loads(line[6:]) for line in self.last_wire.splitlines()
+                    if '"type":"sample"' in line)
+        # Full signed decimal boundaries as well as exact +/- max-finite bits;
+        # these deliberately non-gameplay integers are not sent to the CLI's
+        # stricter semantic plausibility checks (sentinels above are).
+        for side in ("self", "rival"):
+            self.assertEqual(wire[side], [-0x80000000, self.native["FTKIND_CAPTAIN"],
+                0x7FFFFFFF, "7f7fffff", "7f7fffff", "ff7fffff", "7f7fffff",
+                "ff7fffff", "7f7fffff", "ff7fffff", -0x80000000, "ff7fffff", 0])
+        self.assertEqual(wire["native"], [-0x80000000, -0x80000000, 2])
+        self.assertEqual(wire["input"], [0xFFFFFFFF, 0, 0, 0, 0, 0, 0])
 
     def test_lifecycle(self):
         rows = self.records("lifecycle")
@@ -419,11 +593,15 @@ class RecorderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="showboat-recorder-analysis-") as work:
             log = Path(work) / "runtime.log"
             report = Path(work) / "report.json"
-            for case in ("schema", "periodic", "gaps", "gates", "pending", "same_frame",
-                         "repeated_clock", "stale", "slots"):
+            cases = [(case, self.binaries) for case in (
+                "schema", "periodic", "gaps", "gates", "pending", "same_frame",
+                "repeated_clock", "stale", "slots", "sentinels", "nonfinite")]
+            cases += [("overflow", self.capacity_binaries[64]),
+                      ("overflow_recovery", self.capacity_binaries[self.sample_bytes + 1])]
+            for case, binaries in cases:
                 with self.subTest(case=case):
-                    rows = self.records(case)
-                    log.write_text("".join("SBREC " + json.dumps(row) + "\n" for row in rows))
+                    rows = self.records(case, raw=True, binaries=binaries)
+                    log.write_text(self.last_wire)
                     run = subprocess.run([sys.executable, str(ROOT / "tools/analyze_showboat.py"),
                                           str(log), "--json", str(report)],
                                          capture_output=True, text=True, timeout=20)

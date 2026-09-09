@@ -48,7 +48,26 @@ void OSReport(const char* format, ...)
     int n;
     va_list args;
     va_start(args, format);
-    n = vsnprintf(line, sizeof(line), format, args);
+    if (!strcmp(format, "%s")) {
+        /* The sample transport consumes exactly one pointer, never doubles or
+         * integer payload varargs. Python also checks the literal call site,
+         * since C varargs cannot reveal unused extra arguments at runtime. */
+        const char* text = va_arg(args, const char*);
+        assert(strncmp(text, "SBREC {\"v\":2,\"type\":\"sample\",", 29) == 0);
+        n = (int)strlen(text);
+        assert(n > 0 && n < (int)sizeof(line));
+        memcpy(line, text, (size_t)n + 1);
+    } else {
+        const char* p;
+        /* Reject any return to a numeric sample OSReport before consuming its
+         * varargs. Existing begin/gate/end may use only integer/string args. */
+        assert(strstr(format, "\"sample\"") == NULL);
+        for (p = format; *p; ++p) {
+            if (*p == '%') { ++p; assert(*p && strchr("dus", *p)); }
+        }
+        n = vsnprintf(line, sizeof(line), format, args);
+        assert(strstr(line, "\"type\":\"sample\"") == NULL);
+    }
     va_end(args);
     assert(n > 0 && n < (int)sizeof(line));
     assert(strncmp(line, "SBREC {", 7) == 0);
@@ -194,6 +213,81 @@ static void schema(void)
     observe(f, t);
     observe(f, t); /* No double count, no second sample. */
     finish(); finish();
+}
+static void sentinels(void)
+{
+    /* Independent bit patterns: all sixteen fields differ, including -0,
+     * both minimum subnormals, both maximum finite values and normal edges.
+     * memcpy sets the fixture bits without decimal rounding/aliasing. */
+    static const u32 bits[2][8] = {
+        { 0x80000000U, 0x00000001U, 0x7f7fffffU, 0x80800000U,
+          0x3f123456U, 0xbf654321U, 0x412abcdeU, 0xc2480001U },
+        { 0x00000000U, 0x80000001U, 0xff7fffffU, 0x00800000U,
+          0x3eaaaaabU, 0xc1234567U, 0x42f6e979U, 0x3f800001U },
+    };
+    Fighter* f = &fighters[0];
+    Fighter* t = &fighters[1];
+    int side, i;
+    for (side = 0; side < 2; ++side) {
+        Fighter* v = &fighters[side];
+        float* fields[] = { &v->cur_anim_frame, &v->cur_pos.x, &v->cur_pos.y,
+            &v->self_vel.x, &v->self_vel.y, &v->gr_vel,
+            &v->dmg.x1830_percent, &v->shield_health };
+        for (i = 0; i < 8; ++i) { memcpy(fields[i], &bits[side][i], sizeof(float)); }
+    }
+    frame = 0xFFFFFFFDU;
+    f->x8_spawnNum = INT_MIN; t->x8_spawnNum = INT_MAX;
+    f->motion_id = ftCo_MS_Dash; t->motion_id = ftCo_MS_Fall;
+    t->kind = FTKIND_FOX;
+    stocks[0] = 7; stocks[1] = 13;
+    f->ground_or_air = GA_Air; f->x2219_b5 = 1; f->item_gobj = &secondary;
+    t->x221C_b6 = t->x221F_b3 = 1; t->x198C = 2;
+    f->cpu.x18 = INT_MIN; f->cpu.xA4 = INT_MAX; f->cpu.xF8_b12 = 3;
+    f->cpu.buttons = UINT_MAX;
+    f->cpu.lstick.x = -128; f->cpu.lstick.y = 127;
+    f->cpu.cstick.x = -73; f->cpu.cstick.y = 0;
+    f->cpu.ltrigger = 17; f->cpu.rtrigger = 254;
+    begin(f);
+    for (i = 0; i < SBR_TACTICS; ++i) { CHECK(ShowboatRecorder_Reason(f, i, 1 + i * 3)); }
+    CHECK(ShowboatRecorder_Event(f, 85));
+    CHECK(ShowboatRecorder_Decision(f, 97, 9, true));
+    observe(f, t);
+    finish();
+}
+static void capacity_baseline(void)
+{
+    step(1, 0);
+    finish();
+}
+static void overflow(void)
+{
+    u32 n;
+    for (n = 1; n <= 61; ++n) { step(n, 0); }
+    finish();
+    /* Begin, two complete five-tactic flushes, end; NO sample fragments. */
+    assert(report_calls == 12);
+}
+static void overflow_recovery(void)
+{
+    unsigned before;
+    step(1, 0);
+    before = report_calls;
+    assert(before == 2);
+    /* Same identity/context: longer integer payload exceeds exact-fit cap. */
+    fighters[0].cpu.x18 = INT_MIN;
+    fighters[0].cpu.xA4 = INT_MAX;
+    fighters[0].cpu.buttons = UINT_MAX;
+    step(2, 0);
+    assert(report_calls == before);
+    fighters[0].cpu.x18 = 2;
+    fighters[0].cpu.xA4 = 42;
+    fighters[0].cpu.buttons = 0;
+    /* No normal change/interval trigger: only failed SR_Emit's gap recovers. */
+    step(3, 0);
+    assert(report_calls == before + 1);
+    step(4, 0);
+    assert(report_calls == before + 1);
+    finish();
 }
 static void phase(void)
 {
@@ -554,6 +648,10 @@ int main(int argc, char** argv)
     unsigned i;
     static const struct { const char* name; void (*run)(void); } cases[] = {
         CASE(schema),
+        CASE(sentinels),
+        CASE(capacity_baseline),
+        CASE(overflow),
+        CASE(overflow_recovery),
         CASE(phase),
         CASE(periodic),
         CASE(changes),

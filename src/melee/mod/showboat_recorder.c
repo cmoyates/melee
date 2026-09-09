@@ -1,4 +1,4 @@
-/* Read-only, game-thread schema-v1 observer. No saved Fighter token is ever
+/* Read-only, game-thread schema-v2 observer. No saved Fighter token is ever
  * dereferenced: reacquire primary entities before reading either argument.
  * This records observed intervals, not complete matches or attributed hits. */
 #include "showboat_recorder.h"
@@ -93,7 +93,7 @@ static void SR_Flush(SR_Segment* s, int slot)
         for (reason = 0; reason < SBR_REASONS; ++reason) {
             unsigned n = s->gates[tactic][reason];
             if (n != 0) {
-                OSReport("SBREC {\"v\":1,\"type\":\"gate\",\"segment\":%u,"
+                OSReport("SBREC {\"v\":2,\"type\":\"gate\",\"segment\":%u,"
                          "\"slot\":%d,\"frame\":%u,\"from\":%u,\"tactic\":%d,"
                          "\"reason\":%d,\"count\":%u,\"batch\":%u}\n",
                          (unsigned) s->id, slot, (unsigned) s->last_frame,
@@ -112,7 +112,7 @@ static void SR_End(SR_State* state, int slot, const char* reason)
         SR_Flush(s, slot);
         /* Close on the last observed native frame, including on rollback.
          * Never invent observations between that frame and a lifecycle call. */
-        OSReport("SBREC {\"v\":1,\"type\":\"end\",\"segment\":%u,\"slot\":%d,"
+        OSReport("SBREC {\"v\":2,\"type\":\"end\",\"segment\":%u,\"slot\":%d,"
                  "\"frame\":%u,\"reason\":\"%s\",\"observations\":%u}\n",
                  (unsigned) s->id, slot, (unsigned) s->last_frame, reason,
                  (unsigned) s->observations);
@@ -342,28 +342,121 @@ static bool SR_Changed(SR_Sample* a, SR_Sample* b)
         a->buttons != b->buttons || a->lt != b->lt || a->rt != b->rt;
 }
 
-/* One bounded call/line, no strings from gameplay, no pointer serialization.
- * Nine significant digits round-trip native f32; even FLT_MAX is bounded in
- * %g notation. Worst-case schema-v1 sample is less than 1024 bytes. */
-#define SR_FIGHTER_FMT "[%d,%d,%d,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%d,%.9g,%u]"
-#define SR_FIGHTER_ARGS(f) (f).spawn, (f).kind, (f).motion, (f).anim, \
-    (f).x, (f).y, (f).vx, (f).vy, (f).ground_v, (f).percent, (f).stocks, \
-    (f).shield, (f).flags
+/* V1's large mixed integer/double varargs call produced corrupt live output.
+ * V2 formats a bounded line privately, then passes ONLY a string to OSReport.
+ * Floats are exact IEEE binary32 hex strings, not numeric varargs or pointer
+ * values. memcpy avoids aliasing; integer nibble order is host-endian neutral.
+ * There is no allocation, shared scratch buffer or gameplay mutation. */
+#define SR_LINE_CAP 1024
+typedef char SR_WordSizes[(sizeof(float) == 4 && sizeof(u32) == 4 &&
+                          sizeof(unsigned) == 4 && sizeof(int) == 4) ? 1 : -1];
+typedef struct {
+    char text[SR_LINE_CAP];
+    unsigned used;
+    bool ok;
+} SR_Line;
 
-static void SR_Emit(SR_Segment* s, int slot, SR_Sample* v, unsigned events,
+static void SR_Char(SR_Line* b, char c)
+{
+    if (!b->ok) { return; }
+    if (b->used >= sizeof(b->text) - 1) { b->ok = false; return; }
+    b->text[b->used++] = c;
+    b->text[b->used] = 0;
+}
+
+static void SR_Text(SR_Line* b, const char* text)
+{
+    while (*text != 0 && b->ok) { SR_Char(b, *text++); }
+}
+
+static void SR_UInt(SR_Line* b, unsigned n)
+{
+    char digits[10];
+    unsigned count = 0;
+    do { digits[count++] = (char) ('0' + n % 10); n /= 10; } while (n != 0);
+    while (count != 0) { SR_Char(b, digits[--count]); }
+}
+
+static void SR_Int(SR_Line* b, int n)
+{
+    unsigned magnitude = (unsigned) n;
+    if (n < 0) {
+        SR_Char(b, '-');
+        magnitude = 0U - magnitude; /* Defined even for INT_MIN. */
+    }
+    SR_UInt(b, magnitude);
+}
+
+static void SR_F32(SR_Line* b, const float* value)
+{
+    static const char hex[] = "0123456789abcdef";
+    u32 bits;
+    int shift;
+    memcpy(&bits, value, sizeof(bits));
+    SR_Char(b, '"');
+    for (shift = 28; shift >= 0; shift -= 4) {
+        SR_Char(b, hex[(bits >> shift) & 15]);
+    }
+    SR_Char(b, '"');
+}
+
+static void SR_FighterText(SR_Line* b, const SR_Fighter* f)
+{
+    SR_Char(b, '[');
+    SR_Int(b, f->spawn); SR_Char(b, ',');
+    SR_Int(b, f->kind); SR_Char(b, ',');
+    SR_Int(b, f->motion); SR_Char(b, ',');
+    SR_F32(b, &f->anim); SR_Char(b, ',');
+    SR_F32(b, &f->x); SR_Char(b, ',');
+    SR_F32(b, &f->y); SR_Char(b, ',');
+    SR_F32(b, &f->vx); SR_Char(b, ',');
+    SR_F32(b, &f->vy); SR_Char(b, ',');
+    SR_F32(b, &f->ground_v); SR_Char(b, ',');
+    SR_F32(b, &f->percent); SR_Char(b, ',');
+    SR_Int(b, f->stocks); SR_Char(b, ',');
+    SR_F32(b, &f->shield); SR_Char(b, ',');
+    SR_UInt(b, f->flags);
+    SR_Char(b, ']');
+}
+
+static bool SR_Emit(SR_Segment* s, int slot, SR_Sample* v, unsigned events,
                     const u8* reasons)
 {
-    OSReport("SBREC {\"v\":1,\"type\":\"sample\",\"segment\":%u,\"slot\":%d,"
-             "\"frame\":%u,\"ego\":%d,\"action\":%d,\"owns\":%d,\"events\":%u,"
-             "\"gap\":%d,\"self\":" SR_FIGHTER_FMT ",\"rival\":" SR_FIGHTER_FMT
-             ",\"native\":[%d,%d,%d],\"input\":[%u,%d,%d,%d,%d,%d,%d],"
-             "\"reasons\":[%d,%d,%d,%d,%d]}\n",
-             (unsigned) s->id, slot, (unsigned) s->last_frame,
-             v->ego, v->action, v->owns, events,
-             s->gap ? 1 : 0, SR_FIGHTER_ARGS(v->self), SR_FIGHTER_ARGS(v->rival),
-             v->priority, v->cached_attack, v->threat, v->buttons,
-             v->lx, v->ly, v->cx, v->cy, v->lt, v->rt,
-             reasons[0], reasons[1], reasons[2], reasons[3], reasons[4]);
+    SR_Line b;
+    int i;
+    b.used = 0;
+    b.ok = true;
+    b.text[0] = 0;
+    SR_Text(&b, "SBREC {\"v\":2,\"type\":\"sample\",\"segment\":");
+    SR_UInt(&b, s->id);
+    SR_Text(&b, ",\"slot\":"); SR_Int(&b, slot);
+    SR_Text(&b, ",\"frame\":"); SR_UInt(&b, s->last_frame);
+    SR_Text(&b, ",\"ego\":"); SR_Int(&b, v->ego);
+    SR_Text(&b, ",\"action\":"); SR_Int(&b, v->action);
+    SR_Text(&b, ",\"owns\":"); SR_Int(&b, v->owns);
+    SR_Text(&b, ",\"events\":"); SR_UInt(&b, events);
+    SR_Text(&b, ",\"gap\":"); SR_Int(&b, s->gap ? 1 : 0);
+    SR_Text(&b, ",\"float_encoding\":\"ieee754-binary32-hex\",\"self\":");
+    SR_FighterText(&b, &v->self);
+    SR_Text(&b, ",\"rival\":"); SR_FighterText(&b, &v->rival);
+    SR_Text(&b, ",\"native\":[");
+    SR_Int(&b, v->priority); SR_Char(&b, ',');
+    SR_Int(&b, v->cached_attack); SR_Char(&b, ',');
+    SR_Int(&b, v->threat);
+    SR_Text(&b, "],\"input\":[");
+    SR_UInt(&b, v->buttons); SR_Char(&b, ',');
+    SR_Int(&b, v->lx); SR_Char(&b, ','); SR_Int(&b, v->ly); SR_Char(&b, ',');
+    SR_Int(&b, v->cx); SR_Char(&b, ','); SR_Int(&b, v->cy); SR_Char(&b, ',');
+    SR_Int(&b, v->lt); SR_Char(&b, ','); SR_Int(&b, v->rt);
+    SR_Text(&b, "],\"reasons\":[");
+    for (i = 0; i < SBR_TACTICS; ++i) {
+        if (i != 0) { SR_Char(&b, ','); }
+        SR_UInt(&b, reasons[i]);
+    }
+    SR_Text(&b, "]}\n");
+    if (!b.ok) { return false; } /* Never publish a truncated/partial record. */
+    OSReport("%s", b.text);
+    return true;
 }
 
 void ShowboatRecorder_Frame(Fighter* fp, Fighter* target)
@@ -417,7 +510,7 @@ void ShowboatRecorder_Frame(Fighter* fp, Fighter* target)
         s->target_kind = target->kind;
         s->context = context;
         s->last_frame = frame;
-        OSReport("SBREC {\"v\":1,\"type\":\"begin\",\"segment\":%u,\"slot\":%d,"
+        OSReport("SBREC {\"v\":2,\"type\":\"begin\",\"segment\":%u,\"slot\":%d,"
                  "\"frame\":%u,\"stage\":%d,\"mode\":%d,\"match_kind\":%d,"
                  "\"target\":%d,\"interval\":12}\n", (unsigned) s->id, slot,
                  (unsigned) frame,
@@ -462,13 +555,16 @@ void ShowboatRecorder_Frame(Fighter* fp, Fighter* target)
                SR_Changed(&sample, &s->sample))
     {
         if (!state->emitted || state->emitted_frame != frame) {
-            SR_Emit(s, slot, &sample, update.events, update.reasons);
-            s->sample = sample;
-            s->sample_frame = frame;
-            s->have_sample = true;
-            s->gap = false;
-            state->emitted = true;
-            state->emitted_frame = frame;
+            if (SR_Emit(s, slot, &sample, update.events, update.reasons)) {
+                s->sample = sample;
+                s->sample_frame = frame;
+                s->have_sample = true;
+                s->gap = false;
+                state->emitted = true;
+                state->emitted_frame = frame;
+            } else {
+                s->gap = true;
+            }
         } else {
             s->gap = true; /* A second update cannot emit a second row. */
         }

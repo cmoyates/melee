@@ -85,6 +85,8 @@ def main():
     linked_recorder = "build/showboat/GALE01/src/" + recorder_object in link[0].split()
     require(linked_recorder == (not args.no_recorder), "Recorder link option mismatch")
     require((b"SBREC " in data) == (not args.no_recorder), "Recorder DOL marker mismatch")
+    require((b"ieee754-binary32-hex" in data) == (not args.no_recorder),
+            "Recorder v2 transport marker mismatch")
     changed = set()
     for obj in current.rglob("*.o"):
         name = obj.relative_to(current)
@@ -100,6 +102,7 @@ def main():
         bss=[hex(bss), bss_size], valid_sections=sections,
         original_dols_preserved=True, test_unlocks=not args.no_unlocks,
         test_quickstart=not args.no_quickstart, recorder=not args.no_recorder,
+        recorder_schema=2 if not args.no_recorder else None,
         objects_different_from_cstick=sorted(changed),
     )
     (ROOT / "build/showboat/verification.json").write_text(json.dumps(report, indent=2) + "\n")

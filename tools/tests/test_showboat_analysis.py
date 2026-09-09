@@ -7,8 +7,10 @@ Run: python3 -m unittest discover -s tools/tests -p test_showboat_analysis.py
 from dataclasses import replace
 import io
 import json
+import math
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -66,6 +68,24 @@ def complete(segment=1, slot=1, frame=100):
                 for t in range(5)] + [end(frame + 12, segment, slot)]
 
 
+def v2(rows):
+    """Synthetic wire encoder; actual native-writer seam is tested separately."""
+    result = []
+    for source in rows:
+        if not isinstance(source, dict) or source.get('v') == 2:
+            result.append(source)
+            continue
+        row = dict(source, v=2)
+        if row['type'] == 'sample':
+            row['float_encoding'] = analysis.FLOAT_ENCODING
+            for side in ('self', 'rival'):
+                row[side] = list(row[side])
+                for index in analysis.FLOAT_INDICES:
+                    row[side][index] = struct.pack('>f', row[side][index]).hex()
+        result.append(row)
+    return result
+
+
 def encoded(rows, prefix='00:00:01.000 Dolphin OSREPORT: '):
     return ''.join(prefix + 'SBREC ' + json.dumps(row) + '\n' if isinstance(row, dict)
                    else row for row in rows).encode('utf-8')
@@ -75,8 +95,39 @@ def analyze(rows, **kwargs):
     return analysis.analyze_stream(io.BytesIO(encoded(rows)), labels=LABELS, **kwargs)
 
 
+def analyze_v2(rows, **kwargs):
+    """Behavior fixtures exercise native v2 wire encoding, not legacy salvage."""
+    return analyze(v2(rows), **kwargs)
+
+
 def first(rows, **kwargs):
-    return analyze(rows, **kwargs)['segments'][0]
+    return analyze_v2(rows, **kwargs)['segments'][0]
+
+
+def assert_quarantined(test, seg):
+    """All trusted sample fields must be absent/empty/unknown, never plausible totals."""
+    test.assertEqual(seg['integrity']['sample_derived_statistics'], 'quarantined')
+    test.assertEqual(seg['sample_quarantine']['status'], 'quarantined_not_for_statistics')
+    for key in ('first_record_frame', 'last_record_frame',
+                'continuity_supported_observations_lower_bound',
+                'known_continuous_frames', 'explicit_gap_samples'):
+        test.assertIsNone(seg['coverage'][key], key)
+    for key in ('ego_range', 'owns_sample_count', 'timeline_omitted'):
+        test.assertIsNone(seg[key], key)
+    for key in ('native_priorities', 'custom_intents', 'acknowledgment_and_event_samples',
+                'recovery_motion_context_samples'):
+        test.assertEqual(seg[key], {}, key)
+    for side in ('self', 'rival'):
+        test.assertEqual(seg['motions'][side], {})
+        test.assertEqual(seg['fighter_flag_samples'][side], {})
+        test.assertIsNone(seg['position_ranges_at_samples'][side])
+        test.assertTrue(all(v is None for v in seg['observed_changes'][side].values()))
+    test.assertEqual(seg['timeline'], [])
+    for row in seg['sample_quarantine']['diagnostic_raw_timeline']:
+        test.assertEqual(row['type'], 'sample')
+        test.assertIsInstance(row['self'], list)
+        test.assertNotIn('continuous_from_previous', row)
+        test.assertNotIn('reason_labels', row)
 
 
 class ParsingTests(unittest.TestCase):
@@ -85,12 +136,14 @@ class ParsingTests(unittest.TestCase):
         seg = report['segments'][0]
         self.assertEqual(report['scan']['accepted_records'], 9)
         self.assertEqual(report['scan']['rejected_records'], 0)
-        self.assertEqual(seg['coverage']['status'], 'count_consistent_recording')
+        self.assertEqual(seg['coverage']['status'], 'legacy_transport_unvalidated')
         self.assertEqual(seg['coverage']['accepted_sample_records'], 2)
         self.assertEqual(seg['coverage']['recorder_reported_observations'], 13)
-        self.assertFalse(seg['warnings']['counts'])
-        self.assertEqual(len(seg['timeline'][0]['input']), 7)
-        self.assertEqual(len(seg['timeline'][0]['native']), 3)
+        self.assertEqual(seg['warnings']['counts'], {analysis.LEGACY_WARNING: 1})
+        assert_quarantined(self, seg)
+        raw = seg['sample_quarantine']['diagnostic_raw_timeline'][0]
+        self.assertEqual(len(raw['input']), 7)
+        self.assertEqual(len(raw['native']), 3)
 
     def test_unprefixed_and_varied_transport(self):
         for prefix in ('', '[CPU 1] ', '12:13:14.567 OSReport: ', 'Dolphin:'):
@@ -150,10 +203,12 @@ class ParsingTests(unittest.TestCase):
             actor[11] = maximum
             report = analyze([begin(), sample(self=actor, rival=fighter(spawn=0x7FFFFFFF))])
             self.assertEqual(report['scan']['rejected_records'], 0)
-            snap = report['segments'][0]['timeline'][0]
-            self.assertEqual(snap['self']['spawn'], -0x80000000)
-            self.assertEqual(snap['rival']['spawn'], 0x7FFFFFFF)
-            self.assertEqual(snap['self']['x'], -maximum)
+            seg = report['segments'][0]
+            assert_quarantined(self, seg)
+            raw = seg['sample_quarantine']['diagnostic_raw_timeline'][0]
+            self.assertEqual(raw['self'][0], -0x80000000)
+            self.assertEqual(raw['rival'][0], 0x7FFFFFFF)
+            self.assertEqual(raw['self'][4], -maximum)
             json.dumps(report, allow_nan=False)
         for spawn in (-0x80000001, 0x80000000, 0xFFFFFFFF, -1.0, True):
             for side in ('self', 'rival'):
@@ -176,7 +231,7 @@ class ParsingTests(unittest.TestCase):
                         [0, 0, 0, 0, [1]]):
             with self.subTest(reasons=reasons):
                 self.assertEqual(analyze([begin(), sample(reasons=reasons)])['scan']['rejected_records'], 1)
-        report = analyze([begin(), sample(reasons=[0, 3, 4, 15, 99])])
+        report = analyze_v2([begin(), sample(reasons=[0, 3, 4, 15, 99])])
         self.assertEqual(report['scan']['rejected_records'], 0)
         seg = report['segments'][0]
         self.assertEqual(seg['timeline'][0]['reason_labels']['lcancel'], 'unknown_reason_99')
@@ -208,7 +263,7 @@ class ParsingTests(unittest.TestCase):
                 self.assertIn('nonfinite_number', report['warnings']['counts'])
 
     def test_unknown_version_type_missing_field_and_truncated(self):
-        rows = [dict(sample(), v=2), dict(sample(), type='result'),
+        rows = [dict(sample(), v=3), dict(sample(), type='result'),
                 {key: val for key, val in sample().items() if key != 'rival'},
                 'SBREC {"v":1,\n', 'SBREC \n']
         report = analyze(rows)
@@ -269,7 +324,399 @@ class ParsingTests(unittest.TestCase):
             self.assertNotIn('9999', serialized)
             self.assertNotIn('winner', report['segments'][0])
             self.assertIn('unknown_fields_ignored_not_outcome_evidence', report['warnings']['counts'])
-            self.assertIn('not a win', analysis.markdown(report))
+            self.assertIn('Sample summaries withheld', analysis.markdown(report))
+
+
+class ProtocolV2Tests(unittest.TestCase):
+    def test_exact_v2_shapes_normalize_to_same_numeric_analysis(self):
+        rows = complete()
+        rows[1]['reasons'] = [0, 3, 4, 15, 13]
+        for row in rows:
+            if row['type'] == 'gate':
+                row['batch'] = 1
+        legacy = analyze(rows)['segments'][0]
+        assert_quarantined(self, legacy)
+        wire = v2(rows)
+        original = json.dumps(wire)
+        report = analyze(wire)
+        seg = report['segments'][0]
+        self.assertEqual(report['analysis_schema'], 2)
+        self.assertEqual(report['scan']['accepted_records'], 9)
+        self.assertEqual(report['scan']['rejected_records'], 0)
+        self.assertEqual(seg['protocol_version'], 2)
+        self.assertEqual(seg['coverage']['status'], 'count_consistent_recording')
+        self.assertEqual(report['integrity']['status'], 'validated_v2_records_not_runtime_verified')
+        self.assertFalse(report['warnings']['counts'])
+        self.assertFalse(seg['warnings']['counts'])
+        for source, record in zip(rows, wire):
+            old, _ = analysis.validate(source)
+            current, _ = analysis.validate(record)
+            self.assertEqual({k: v for k, v in old.items() if k != 'v'},
+                             {k: v for k, v in current.items() if k not in ('v', 'float_encoding')})
+        self.assertEqual(seg['gates'], legacy['gates'])
+        self.assertEqual(seg['coverage']['known_continuous_frames'], 12)
+        self.assertEqual(seg['observed_changes']['self']['comparable_percent_pairs'], 1)
+        self.assertEqual(seg['position_ranges_at_samples']['self']['x'], [0, 0])
+        self.assertEqual(seg['motions']['self']['2:14:ftCo_MS_Wait']['known_frames'], 12)
+        normalized, extras = analysis.validate(wire[1])
+        self.assertFalse(extras)
+        for side in ('self', 'rival'):
+            self.assertEqual(len(normalized[side]), 13)
+            for i, value in enumerate(normalized[side]):
+                self.assertIs(type(value), float if i in analysis.FLOAT_INDICES else int)
+        self.assertEqual(json.dumps(wire), original, 'validation must not mutate the wire record')
+        self.assertNotIn('PROVISIONAL', analysis.markdown(report))
+
+    def test_binary32_exact_bits_all_fields_both_fighters_and_signed_spawn(self):
+        row = v2([sample()])[0]
+        # -0, smallest/largest subnormal, smallest normal, both finite extrema,
+        # adjacent-to-1 normal, negative subnormal; percent stays nonnegative.
+        bits = ['80000000', '00000001', '007fffff', '00800000',
+                '7f7fffff', 'ff7fffff', '3f800001', '80000001']
+        for side, spawn in (('self', -0x80000000), ('rival', 0x7FFFFFFF)):
+            row[side][0] = spawn
+            for index, value in zip(analysis.FLOAT_INDICES, bits):
+                row[side][index] = value
+        normalized, _ = analysis.validate(row)
+        for side in ('self', 'rival'):
+            for index, value in zip(analysis.FLOAT_INDICES, bits):
+                self.assertEqual(struct.pack('>f', normalized[side][index]).hex(), value)
+        report = analyze(v2([begin()]) + [row])
+        snap = report['segments'][0]['timeline'][0]
+        self.assertEqual(snap['self']['spawn'], -0x80000000)
+        self.assertEqual(snap['rival']['spawn'], 0x7FFFFFFF)
+        self.assertEqual(math.copysign(1, snap['self']['anim']), -1)
+        self.assertEqual(snap['self']['x'], 2**-149)
+        self.assertEqual(snap['self']['ground_v'], -(2 - 2**-23) * 2**127)
+        self.assertIn('-0.0', json.dumps(report, allow_nan=False))
+        # Negative zero is also legal in the percent position; negative nonzero isn't.
+        row['self'][9] = '80000000'
+        self.assertEqual(math.copysign(1, analysis.validate(row)[0]['self'][9]), -1)
+        row['self'][9] = '80000001'
+        with self.assertRaisesRegex(analysis.Invalid, 'negative_percent'):
+            analysis.validate(row)
+
+    def test_exact_hex_not_decimal_uppercase_whitespace_prefix_or_code(self):
+        bad_values = [0, 0.0, True, None, [], {}, '', '0', '0000000', '000000000',
+                      '0x00000000', 'DEADBEEF', '3f80000A', ' 00000000', '00000000\n',
+                      '00 00 00 00', 'gggggggg', '１２３４５６７８', "__import__('os')"]
+        for side in ('self', 'rival'):
+            for index in analysis.FLOAT_INDICES:
+                for value in bad_values:
+                    with self.subTest(side=side, index=index, value=value):
+                        row = v2([sample()])[0]
+                        row[side][index] = value
+                        report = analyze(v2([begin()]) + [row])
+                        self.assertEqual(report['scan']['rejected_records'], 1)
+                        self.assertIn('invalid_binary32_hex', report['warnings']['counts'])
+                        self.assertEqual(report['segments'][0]['timeline'], [])
+
+    def test_nonfinite_bit_patterns_rejected_in_every_float_position(self):
+        for bits in ('7f800000', 'ff800000', '7fc00000', 'ffc00000', '7f800001', 'ffffffff'):
+            for side in ('self', 'rival'):
+                for index in analysis.FLOAT_INDICES:
+                    row = v2([sample()])[0]
+                    row[side][index] = bits
+                    with self.subTest(bits=bits, side=side, index=index):
+                        report = analyze([row])
+                        self.assertEqual(report['scan']['accepted_records'], 0)
+                        self.assertIn('nonfinite_binary32', report['warnings']['counts'])
+                        json.dumps(report, allow_nan=False)
+
+    def test_float_encoding_required_exact_and_only_v2_samples(self):
+        good = v2([sample()])[0]
+        missing = {k: v for k, v in good.items() if k != 'float_encoding'}
+        self.assertIn('missing_fields', analyze([missing])['warnings']['counts'])
+        for encoding in (None, True, 2, [], {}, '', 'IEEE754-binary32-hex', 'ieee754-binary64-hex'):
+            self.assertIn('invalid_float_encoding',
+                          analyze([dict(good, float_encoding=encoding)])['warnings']['counts'])
+        for row in [sample()] + [begin(), gate(), end()] + v2([begin(), gate(), end()]):
+            row['float_encoding'] = analysis.FLOAT_ENCODING
+            self.assertIn('invalid_float_encoding', analyze([row])['warnings']['counts'])
+        # No implicit upgrade/downgrade based on token shape.
+        self.assertIn('invalid_finite_number',
+                      analyze([dict(missing, v=1)])['warnings']['counts'])
+        self.assertIn('invalid_binary32_hex',
+                      analyze([dict(sample(), v=2, float_encoding=analysis.FLOAT_ENCODING)])['warnings']['counts'])
+
+    def test_v2_array_shapes_and_integer_positions_remain_strict(self):
+        for field, size in (('self', 13), ('rival', 13), ('native', 3), ('input', 7)):
+            for value in (None, {}, 'array', [0] * (size - 1), [0] * (size + 1)):
+                row = v2([sample()])[0]
+                row[field] = value
+                self.assertIn('invalid_array_shape', analyze([row])['warnings']['counts'])
+        for side in ('self', 'rival'):
+            for index in (0, 1, 2, 10, 12):
+                for value in ('00000000', 0.0, True, None):
+                    row = v2([sample()])[0]
+                    row[side][index] = value
+                    self.assertEqual(analyze([row])['scan']['accepted_records'], 0)
+
+    def test_mixed_versions_reject_every_record_kind_and_break_bridge(self):
+        for version in (1, 2):
+            convert = v2 if version == 2 else list
+            other = list if version == 2 else v2
+            for alien in (begin(101), sample(101), gate(101, count=1), end(101, observations=1)):
+                with self.subTest(version=version, kind=alien['type']):
+                    rows = convert([begin(), sample()]) + other([alien]) + convert([sample(112)])
+                    report = analyze(rows)
+                    seg = report['segments'][0]
+                    self.assertEqual(report['scan']['rejected_records'], 1)
+                    assert_quarantined(self, seg)
+                    self.assertEqual(seg['coverage']['accepted_sample_records'], 2)
+                    self.assertIn('mixed_record_versions_in_segment', seg['warnings']['counts'])
+                    self.assertEqual(seg['integrity']['status'], 'corrupted_or_unreliable')
+                    self.assertEqual(report['integrity']['status'], 'corrupted_or_unreliable')
+
+    def test_version_is_segment_local_and_first_orphan_record_establishes_it(self):
+        report = analyze(complete() + v2(complete(segment=2, frame=1)))
+        self.assertEqual(report['scan']['rejected_records'], 0)
+        self.assertEqual([s['protocol_version'] for s in report['segments']], [1, 2])
+        self.assertEqual(report['integrity']['sample_derived_statistics'],
+                         'mixed_v1_quarantined_v2_available_with_coverage_caveats')
+        assert_quarantined(self, report['segments'][0])
+        current = report['segments'][1]
+        self.assertIsNone(current['sample_quarantine'])
+        self.assertEqual(current['coverage']['known_continuous_frames'], 12)
+        text = analysis.markdown(report)
+        old_text, current_text = text.split('## Segment 2')
+        self.assertIn('Sample summaries withheld', old_text)
+        self.assertNotIn('Native priority known frames:', old_text)
+        self.assertIn('Native priority known frames:', current_text)
+        selected = analyze(complete() + v2(complete(segment=2, frame=1)), segment=2)
+        self.assertIsNone(selected['segments'][0]['sample_quarantine'])
+        self.assertIn('Native priority known frames:', analysis.markdown(selected))
+        self.assertEqual(report['integrity']['status'], 'legacy_transport_unvalidated')
+        report = analyze(v2([sample()]) + [sample(112)])
+        self.assertEqual(report['scan']['rejected_records'], 1)
+        self.assertEqual(report['segments'][0]['coverage']['accepted_sample_records'], 1)
+        self.assertIn('missing_begin', report['segments'][0]['warnings']['counts'])
+
+    def test_source_backed_fighter_bounds_both_versions(self):
+        bounds = {0: (-0x80000000, 0x7FFFFFFF), 1: (0, 32), 2: (-1, 543),
+                  10: (-128, 127), 12: (0, 255)}
+        for convert in (list, v2):
+            for side in ('self', 'rival'):
+                for index, (low, high) in bounds.items():
+                    for value in (low, high, low - 1, high + 1):
+                        row = sample()
+                        row[side][index] = value
+                        report = analyze(convert([begin(), row]))
+                        with self.subTest(version=convert.__name__, side=side, index=index, value=value):
+                            self.assertEqual(report['scan']['rejected_records'], int(value < low or value > high))
+        # Motion 4 is a real death state. Constant rival motion 4 is suspicious
+        # in the live reviews, but cannot on its own be rejected as impossible.
+        report = analyze([begin(), sample(rival=fighter(motion=4))])
+        self.assertEqual(report['scan']['rejected_records'], 0)
+        self.assertEqual(report['integrity']['sample_derived_statistics'], 'quarantined')
+
+    def test_bounds_guard_actual_source_not_normal_match_stock_assumptions(self):
+        kinds = analysis.read_enum((ROOT / 'src/melee/ft/forward.h').read_text(), 'FighterKind')
+        self.assertEqual(analysis.FIGHTER_KIND_MAX, kinds['FTKIND_NONE'] - 1)
+        common = analysis.read_enum((ROOT / 'src/melee/ft/kinds/ftCommon/forward.h').read_text(),
+                                    'ftCommon_MotionState')
+        self.assertEqual(common['ftCo_MS_None'], -1)
+        kirby = analysis.read_enum((ROOT / 'src/melee/ft/kinds/ftKirby/forward.h').read_text(),
+                                   'ftKirby_MotionState', common)
+        self.assertEqual(analysis.MOTION_MAX, kirby['ftKb_MS_Count'] - 1)
+        player = (ROOT / 'src/melee/pl/player.c').read_text()
+        self.assertRegex(player, r's32 Player_GetStocks\(int slot\)\s*\{\s*s8 stocks;')
+        self.assertIn('stocks = player->stocks;', player)
+        self.assertEqual((analysis.STOCK_MIN, analysis.STOCK_MAX), (-128, 127))
+
+    def test_live_fault_regression_rejects_impossible_flags_without_reconstructing(self):
+        for convert in (list, v2):
+            rows = complete()
+            damaged = sample(106, self=fighter(percent=9999, flags=0x80000101),
+                             rival=fighter(spawn=4, motion=4, stocks=100))
+            rows.insert(2, damaged)
+            report = analyze(convert(rows))
+            seg = report['segments'][0]
+            self.assertEqual(report['scan']['rejected_records'], 1)
+            self.assertIn('invalid_fighter_flag_bits', report['warnings']['counts'])
+            assert_quarantined(self, seg)
+            self.assertEqual(seg['coverage']['status'], 'corrupted_or_unreliable')
+            self.assertEqual(seg['coverage']['accepted_sample_records'], 2)
+            self.assertTrue(all(g['logged_updates'] == 13 for g in seg['gates']))
+            text = analysis.markdown(report)
+            self.assertIn('do not trust sample-derived totals', text)
+            self.assertIn('Sample summaries withheld', text)
+            self.assertNotIn('comparable net percent increases', text)
+            self.assertNotIn('Native priority known frames:', text)
+            self.assertNotIn('9999', json.dumps(report))
+
+    def test_corrupt_v2_breaks_all_open_bridges_and_later_pairs_are_diagnostic_only(self):
+        rows = v2([begin(), sample(), begin(segment=2, slot=2), sample(segment=2, slot=2)])
+        bad = v2([sample(106)])[0]
+        bad['rival'][11] = '7f800000'
+        rows += [bad] + v2([sample(112), sample(113), sample(112, segment=2, slot=2),
+                           sample(113, segment=2, slot=2)])
+        report = analyze(rows)
+        self.assertEqual(report['scan']['rejected_records'], 1)
+        for seg in report['segments']:
+            assert_quarantined(self, seg)
+            self.assertEqual(seg['coverage']['accepted_sample_records'], 3)
+            raw = seg['sample_quarantine']['diagnostic_raw_timeline']
+            self.assertEqual([s['frame'] for s in raw], [100, 112, 113])
+            self.assertIn('unreadable_or_rejected_record_continuity_unknown', seg['warnings']['counts'])
+        # Preserve the continuity algorithm regression without publishing its
+        # internal post-corruption calculations as trusted report metrics.
+        internal = analysis.Segment(v2([begin()])[0], analysis.Limits(), LABELS, True)
+        internal.accept(analysis.validate(v2([sample()])[0])[0], 1)
+        internal.warn('unreadable_or_rejected_record_continuity_unknown', corrupt=True)
+        for row in v2([sample(112), sample(113)]):
+            internal.accept(analysis.validate(row)[0], 2)
+        self.assertEqual(internal.known_frames, 1)
+        self.assertFalse(internal.timeline[1]['continuous_from_previous'])
+        self.assertTrue(internal.timeline[2]['continuous_from_previous'])
+        assert_quarantined(self, internal.finish())
+
+    def test_v2_duplicate_encoding_keys_and_forged_extras_never_change_protocol(self):
+        row = v2([sample()])[0]
+        raw = json.dumps(row).replace('"float_encoding":', '"float_encoding": "decimal", "float_encoding":')
+        report = analyze(['SBREC ' + raw + '\n'])
+        self.assertIn('duplicate_json_key', report['warnings']['counts'])
+        rows = v2(complete())
+        rows[1]['result'] = {'winner': 'FORGED_WINNER', 'damage': 987654}
+        report = analyze(rows)
+        self.assertEqual(report['scan']['rejected_records'], 0)
+        self.assertIn('unknown_fields_ignored_not_outcome_evidence', report['warnings']['counts'])
+        self.assertNotIn('FORGED_WINNER', json.dumps(report) + analysis.markdown(report))
+        self.assertNotIn('987654', json.dumps(report))
+
+    def test_valid_looking_v1_is_always_quarantined_not_provisional(self):
+        report = analyze(complete())
+        seg = report['segments'][0]
+        self.assertIn(analysis.LEGACY_WARNING, report['warnings']['counts'])
+        self.assertIn(analysis.LEGACY_WARNING, seg['warnings']['counts'])
+        assert_quarantined(self, seg)
+        self.assertEqual(seg['coverage']['accepted_sample_records'], 2)
+        self.assertTrue(all(g['logged_updates'] == 13 for g in seg['gates']))
+        text = analysis.markdown(report)
+        self.assertLess(text.index('QUARANTINED'), text.index('## Segment'))
+        self.assertIn('even when fields look valid', text)
+        self.assertNotIn('provisional', text.lower())
+        self.assertIn('Sample summaries withheld', text)
+        self.assertNotIn('Native priority known frames:', text)
+        self.assertNotIn('count_consistent_recording', json.dumps(report))
+
+    def test_rejected_orphan_and_filtered_out_corruption_cannot_hide_status(self):
+        bad = v2([sample(segment=2, self=fighter(flags=256))])[0]
+        report = analyze(v2(complete()) + [bad], segment=1)
+        self.assertEqual(report['integrity']['scope'], 'entire_scanned_input')
+        self.assertEqual(report['integrity']['status'], 'corrupted_or_unreliable')
+        assert_quarantined(self, report['segments'][0])
+        self.assertIn('Sample summaries withheld', analysis.markdown(report))
+        empty = analyze([bad])
+        self.assertEqual(empty['segments'], [])
+        self.assertEqual(empty['integrity']['status'], 'corrupted_or_unreliable')
+        json.dumps(empty, allow_nan=False)
+
+
+class QuarantinePolicyTests(unittest.TestCase):
+    def test_117_plausible_v1_rows_never_salvaged_by_filtering_with_7324_gates(self):
+        rows = [begin()] + [sample(100 + i, ego=i, action=i, events=i,
+                                  self=fighter(spawn=10 + i, kind=i % 33, motion=i - 1,
+                                               percent=i * 10, stocks=i - 128, flags=i),
+                                  rival=fighter(spawn=20, percent=i * 20, flags=255),
+                                  native=[i, -i, i]) for i in range(117)]
+        rows += flush(frame=216, count=7324, batch=1) + [end(216, observations=7324)]
+        bad = sample(101, self=fighter(flags=256))
+        damaged = rows[:2] + [bad] + rows[2:]
+        filtered = []
+        for row in damaged:
+            try:
+                analysis.validate(row)
+            except analysis.Invalid:
+                continue
+            filtered.append(row)
+        for data, rejected in ((rows, 0), (damaged, 1), (filtered, 0)):
+            with self.subTest(rejected=rejected, filtered=data is filtered):
+                report = analyze(data, limits=replace(analysis.Limits(), timeline=3))
+                seg = report['segments'][0]
+                self.assertEqual(report['scan']['accepted_records'], 124)
+                self.assertEqual(report['scan']['rejected_records'], rejected)
+                self.assertEqual(seg['coverage']['accepted_sample_records'], 117)
+                assert_quarantined(self, seg)
+                self.assertEqual(seg['coverage']['recorder_reported_observations'], 7324)
+                self.assertTrue(all(g['logged_updates'] == 7324 for g in seg['gates']))
+                self.assertTrue(all(g['missing_vs_reported_observations'] == 0 for g in seg['gates']))
+                self.assertEqual(seg['context']['frame'], 100)
+                self.assertEqual(seg['recording_end']['frame'], 216)
+                quarantine = seg['sample_quarantine']
+                self.assertIn('legacy_v1_native_caller_abi_stack_layout_mismatch', quarantine['reasons'])
+                self.assertEqual(len(quarantine['diagnostic_raw_timeline']), 3)
+                self.assertEqual(quarantine['diagnostic_raw_timeline_omitted'], 114)
+                text = analysis.markdown(report)
+                for summary in ('Sampled ego range:', 'Custom intent samples:',
+                                'Acknowledgments/events (not hits):', 'comparable net percent increases',
+                                'sampled positions:', 'Native priority known frames:', 'Timeline (first',
+                                'motions (entries / boundary sightings / known frames)', 'PROVISIONAL'):
+                    self.assertNotIn(summary, text)
+                self.assertIn('| personality | 7324 |', text)
+                json.dumps(report, allow_nan=False)
+
+    def test_v1_never_computes_histograms_identities_or_duration_internally(self):
+        internal = analysis.Segment(begin(), analysis.Limits(), LABELS, True)
+        for row in (sample(), sample(112, self=fighter(percent=80, spawn=99, flags=255))):
+            self.assertTrue(internal.accept(row, 1))
+        self.assertEqual(internal.samples, 2)
+        self.assertEqual(internal.known_frames, 0)
+        self.assertEqual(internal.lower_bound, 0)
+        self.assertIsNone(internal.ego)
+        self.assertFalse(internal.bridge)
+        self.assertEqual(internal.timeline, [])
+        self.assertEqual(internal.priorities.rows, {})
+        for side in ('self', 'rival'):
+            self.assertEqual(internal.motions[side].rows, {})
+            self.assertEqual(internal.flags[side], {})
+            self.assertIsNone(internal.positions[side])
+            self.assertEqual(internal.changes[side]['identity_changes'], 0)
+        assert_quarantined(self, internal.finish())
+
+    def test_quarantine_diagnostics_can_be_disabled_and_never_drive_gates(self):
+        rows = complete()
+        rows[1]['reasons'] = [3] * 5
+        for convert in (list, v2):
+            for cap in (0, 1):
+                data = convert(rows)
+                if convert is v2:
+                    data.insert(2, 'SBREC {truncated\n')
+                report = analyze(data, limits=replace(analysis.Limits(), timeline=cap, warnings=0))
+                seg = report['segments'][0]
+                assert_quarantined(self, seg)
+                self.assertEqual(len(seg['sample_quarantine']['diagnostic_raw_timeline']), cap)
+                self.assertEqual(seg['sample_quarantine']['diagnostic_raw_timeline_omitted'], 2 - cap)
+                self.assertTrue(all(g['reasons'] == {'not_evaluated': 13} for g in seg['gates']))
+                self.assertEqual(seg['warnings']['examples'], [])
+
+    def test_v2_current_statistics_remain_available_with_missing_tail_and_gap_caveats(self):
+        report = analyze_v2([begin(), sample(), sample(112, gap=1),
+                             sample(113, self=fighter(percent=9))])
+        seg = report['segments'][0]
+        self.assertIsNone(seg['sample_quarantine'])
+        self.assertEqual(seg['integrity']['sample_derived_statistics'], 'available_with_coverage_caveats')
+        self.assertEqual(seg['coverage']['known_continuous_frames'], 1)
+        self.assertEqual(seg['observed_changes']['self']['net_percent_increases'], 9)
+        self.assertEqual(seg['native_priorities']['native_priority_1']['known_frames'], 1)
+        self.assertEqual(seg['position_ranges_at_samples']['self']['x'], [0, 0])
+        self.assertEqual(len(seg['timeline']), 3)
+        text = analysis.markdown(report)
+        self.assertIn('Native priority known frames:', text)
+        self.assertIn('missing_end_eof_unflushed_gate_tail_unknown', text)
+        self.assertNotIn('Sample summaries withheld', text)
+
+    def test_corruption_outside_selection_quarantines_previously_closed_v2_segment(self):
+        rows = v2(complete() + complete(segment=2, frame=1))
+        rows[-2]['count'] = 0
+        report = analyze(rows, segment=1)
+        self.assertEqual(report['scan']['rejected_records'], 1)
+        self.assertEqual(len(report['segments']), 1)
+        seg = report['segments'][0]
+        assert_quarantined(self, seg)
+        self.assertEqual(seg['coverage']['status'], 'corrupted_or_unreliable')
+        self.assertEqual(seg['coverage']['accepted_sample_records'], 2)
+        self.assertTrue(all(g['logged_updates'] == 13 for g in seg['gates']))
 
 
 class ContinuityTests(unittest.TestCase):
@@ -310,38 +757,46 @@ class ContinuityTests(unittest.TestCase):
         self.assertIn('sample_interval_exceeded_missing_rows_or_gap', seg['warnings']['counts'])
 
     def test_malformed_line_breaks_continuity_for_all_open_slots(self):
-        report = analyze([begin(), sample(), begin(segment=2, slot=2), sample(segment=2, slot=2),
-                          'SBREC {truncated\n', sample(112), sample(112, segment=2, slot=2)])
+        report = analyze_v2([begin(), sample(), begin(segment=2, slot=2), sample(segment=2, slot=2),
+                             'SBREC {truncated\n', sample(112), sample(112, segment=2, slot=2)])
         for seg in report['segments']:
-            self.assertEqual(seg['coverage']['known_continuous_frames'], 0)
+            assert_quarantined(self, seg)
             self.assertIn('unreadable_or_rejected_record_continuity_unknown', seg['warnings']['counts'])
 
     def test_new_segment_frame_rollback_is_independent(self):
-        report = analyze(complete() + complete(segment=2, frame=1))
+        report = analyze_v2(complete() + complete(segment=2, frame=1))
         self.assertEqual(len(report['segments']), 2)
         for seg in report['segments']:
             self.assertEqual(seg['coverage']['known_continuous_frames'], 12)
-            self.assertFalse(seg['warnings']['counts'])
+            self.assertEqual(seg['warnings']['counts'], {})
         self.assertEqual(report['segments'][1]['timeline'][0]['frame'], 1)
         self.assertEqual(len(analyze(complete() + complete(2), segment=2)['segments']), 1)
 
     def test_in_segment_rollback_rejected_and_no_bridge(self):
         seg = first([begin(), sample(), sample(99, ego=100), sample(101)])
         self.assertEqual(seg['coverage']['accepted_sample_records'], 2)
-        self.assertEqual(seg['ego_range'], [50, 50])
-        self.assertEqual(seg['coverage']['known_continuous_frames'], 0)
+        assert_quarantined(self, seg)
+        self.assertEqual([r['ego'] for r in seg['sample_quarantine']['diagnostic_raw_timeline']], [50, 50])
         self.assertIn('frame_rollback_or_out_of_order_record', seg['warnings']['counts'])
+        internal = analysis.Segment(v2([begin()])[0], analysis.Limits(), LABELS, True)
+        accepted = [internal.accept(analysis.validate(r)[0], 1)
+                    for r in v2([sample(), sample(99, ego=100), sample(101)])]
+        self.assertEqual(accepted, [True, False, True])
+        self.assertEqual(internal.known_frames, 0)
+        self.assertEqual(internal.ego, [50, 50])
 
     def test_duplicate_samples_begin_and_after_end_do_not_count(self):
         rows = complete()
         rows.insert(2, sample(ego=99, events=2))
         rows.insert(1, begin())
         rows += [end(), sample(113)]
-        report = analyze(rows)
+        report = analyze_v2(rows)
         seg = report['segments'][0]
         self.assertEqual(seg['coverage']['accepted_sample_records'], 2)
-        self.assertEqual(seg['ego_range'], [50, 50])
-        self.assertEqual(seg['acknowledgment_and_event_samples'], {})
+        assert_quarantined(self, seg)
+        raw = seg['sample_quarantine']['diagnostic_raw_timeline']
+        self.assertEqual([r['ego'] for r in raw], [50, 50])
+        self.assertEqual([r['events'] for r in raw], [0, 0])
         self.assertEqual(report['scan']['rejected_records'], 4)
         for code in ('duplicate_sample_frame', 'duplicate_begin', 'record_after_end_or_duplicate_end'):
             self.assertIn(code, seg['warnings']['counts'])
@@ -384,7 +839,7 @@ class BehaviorTests(unittest.TestCase):
         rows += [gate(tactic=1, reason=3), gate(tactic=2, reason=4),
                  gate(tactic=3, reason=15), gate(tactic=4, reason=13), end()]
         seg = first(rows)
-        self.assertFalse(seg['warnings']['counts'])
+        self.assertEqual(seg['warnings']['counts'], {})
         personality, combat, movement, defense, lcancel = seg['gates']
         self.assertEqual(personality['logged_updates'], 13)
         self.assertEqual(personality['not_evaluated'], 10)
@@ -432,7 +887,7 @@ class BehaviorTests(unittest.TestCase):
         rows += [gate(frame=170, tactic=t, count=11, start=160) for t in range(5)]
         rows += [end(frame=170, observations=71)]
         seg = first(rows)
-        self.assertFalse(seg['warnings']['counts'])
+        self.assertEqual(seg['warnings']['counts'], {})
         self.assertEqual(seg['coverage']['known_continuous_frames'], 70)
         self.assertEqual(seg['coverage']['accepted_sample_records'], 8)
         for tactic in seg['gates']:
@@ -445,7 +900,7 @@ class BehaviorTests(unittest.TestCase):
         rows = [begin(), sample()] + flush(frame=100, start=100, count=60, batch=1)
         rows += flush(frame=100, start=100, count=60, batch=2)
         rows += [sample(112)] + flush(count=13, batch=3) + [end(observations=133)]
-        report = analyze(rows)
+        report = analyze_v2(rows)
         seg = report['segments'][0]
         self.assertEqual(report['scan']['accepted_records'], 19)
         self.assertEqual(report['scan']['rejected_records'], 0)
@@ -463,7 +918,7 @@ class BehaviorTests(unittest.TestCase):
         rows = [begin(), sample(), sample(112)] + flush(batch=1)
         rows += [sample(124)] + flush(frame=124, start=112, count=13, batch=2)
         rows += [end(124, observations=26)]
-        report = analyze(rows)
+        report = analyze_v2(rows)
         seg = report['segments'][0]
         self.assertEqual(report['scan']['rejected_records'], 0)
         self.assertEqual(seg['coverage']['known_continuous_frames'], 24)
@@ -520,7 +975,7 @@ class BehaviorTests(unittest.TestCase):
         for tactic in range(5):
             rows += [gate(tactic=tactic, batch=1), gate(segment=2, slot=2, tactic=tactic, batch=1)]
         rows += [end(), end(segment=2, slot=2)]
-        report = analyze(rows)
+        report = analyze_v2(rows)
         self.assertEqual(report['scan']['rejected_records'], 0)
         for seg in report['segments']:
             self.assertTrue(all(t['logged_updates'] == 13 for t in seg['gates']))
@@ -541,7 +996,7 @@ class BehaviorTests(unittest.TestCase):
         rows = [begin(), sample()] + flush(frame=100, count=60)
         report = analyze(rows + [end(100, observations=60)])
         self.assertEqual(report['scan']['rejected_records'], 0)
-        self.assertEqual(report['segments'][0]['coverage']['status'], 'count_consistent_recording')
+        self.assertEqual(report['segments'][0]['coverage']['status'], 'legacy_transport_unvalidated')
         report = analyze(rows + flush(frame=100, count=60) + [end(100, observations=120)])
         self.assertEqual(report['scan']['rejected_records'], 5)
         self.assertTrue(all(t['logged_updates'] == 60 for t in report['segments'][0]['gates']))
@@ -562,9 +1017,9 @@ class BehaviorTests(unittest.TestCase):
         before = first(rows)
         rows[1]['reasons'] = [0, 3, 4, 15, 13]
         rows[2]['reasons'] = [1, 2, 6, 9, 0]
-        report = analyze(rows)
+        report = analyze_v2(rows)
         seg = report['segments'][0]
-        self.assertFalse(seg['warnings']['counts'])
+        self.assertEqual(seg['warnings']['counts'], {})
         self.assertNotIn('unknown_fields_ignored_not_outcome_evidence', report['warnings']['counts'])
         self.assertEqual(seg['gates'], before['gates'])
         self.assertEqual(seg['coverage'], before['coverage'])
@@ -646,7 +1101,7 @@ class BehaviorTests(unittest.TestCase):
 
     def test_events_intents_flags_ego_and_positions_are_sampled_context(self):
         falcon_hi = next(k for k, v in LABELS.falcon.items() if v == 'ftCa_MS_SpecialAirHi')
-        actor = fighter(motion=falcon_hi, flags=255 | 512)
+        actor = fighter(motion=falcon_hi, flags=255)
         actor[4:9] = [999, -99, -2, 3, 4]
         seg = first([begin(), sample(ego=20, action=3, owns=True, events=127 | 256, self=actor),
                      sample(101, ego=80, action=3, owns=True, events=2, self=actor)])
@@ -660,9 +1115,8 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(seg['position_ranges_at_samples']['self']['x'], [999, 999])
         self.assertIsNone(seg['offstage'])
         self.assertIsNone(seg['timeline'][0]['self']['offstage'])
-        self.assertIn('unknown_bits_0x200', seg['timeline'][0]['self']['flag_names'])
+        self.assertEqual(set(seg['timeline'][0]['self']['flag_names']), set(analysis.FLAGS.values()))
         self.assertIn('unknown_event_bits', seg['warnings']['counts'])
-        self.assertIn('unknown_fighter_flag_bits', seg['warnings']['counts'])
         text = analysis.markdown(analyze([begin(), sample(self=actor)]))
         self.assertIn('Airborne is not offstage', text)
         self.assertIn('does not prove lag reduction', text)
@@ -673,10 +1127,10 @@ class BehaviorTests(unittest.TestCase):
         falcon_n = next(k for k, v in LABELS.falcon.items() if v == 'ftCa_MS_SpecialN')
         self.assertEqual(LABELS.motion(fighter(motion=falcon_n)), 'ftCa_MS_SpecialN')
         self.assertEqual(LABELS.motion(fighter(kind=25, motion=falcon_n)), 'unknown_motion_' + str(falcon_n))
-        seg = first([begin(), sample(action=999, self=fighter(motion=9999), native=[9999, -1, -1])])
+        seg = first([begin(), sample(action=999, self=fighter(motion=400), native=[9999, -1, -1])])
         self.assertIn('unknown_intent_999', seg['custom_intents'])
         self.assertIn('native_priority_9999', seg['native_priorities'])
-        self.assertEqual(seg['timeline'][0]['self']['motion_label'], 'unknown_motion_9999')
+        self.assertEqual(seg['timeline'][0]['self']['motion_label'], 'unknown_motion_400')
 
     def test_enum_reader_is_safe_and_standalone_fallback_explicit(self):
         good = 'typedef enum E { A = -1, B, C = BASE, D, X = D - C, } E;'
@@ -687,7 +1141,7 @@ class BehaviorTests(unittest.TestCase):
                 analysis.read_enum('typedef enum E { A = ' + expr + ', B } E;', 'E')
         with tempfile.TemporaryDirectory() as directory:
             labels = analysis.Labels(directory)
-            report = analysis.analyze_stream(io.BytesIO(encoded(complete())), labels=labels)
+            report = analysis.analyze_stream(io.BytesIO(encoded(v2(complete()))), labels=labels)
             self.assertEqual(report['segments'][0]['timeline'][0]['self']['motion_label'], 'unknown_motion_14')
             self.assertIn('motion_headers_unavailable_numeric_fallback', report['warnings']['counts'])
 
@@ -734,9 +1188,8 @@ class BoundsAndCLITests(unittest.TestCase):
 
     def test_histogram_timeline_warning_and_gate_key_caps(self):
         limits = replace(analysis.Limits(), keys=5, timeline=3, warnings=2)
-        rows = [begin()] + [sample(100 + i, self=fighter(motion=10000 + i), action=100 + i,
+        rows = [begin()] + [sample(100 + i, self=fighter(motion=400 + i), action=100 + i,
                                   native=[100 + i, 0, 0]) for i in range(30)]
-        rows += [gate(frame=129, tactic=i, reason=i, count=1) for i in range(10)]
         seg = first(rows, limits=limits)
         self.assertLessEqual(len(seg['motions']['self']), 6)
         self.assertLessEqual(len(seg['native_priorities']), 6)
@@ -746,6 +1199,11 @@ class BoundsAndCLITests(unittest.TestCase):
         self.assertEqual(len(seg['warnings']['examples']), 2)
         self.assertGreater(seg['warnings']['examples_omitted'], 0)
         self.assertIn('histogram_key_limit', seg['warnings']['counts'])
+        rows += [gate(frame=129, tactic=i, reason=i, count=1) for i in range(10)]
+        seg = first(rows, limits=limits)
+        assert_quarantined(self, seg)
+        self.assertEqual(len(seg['sample_quarantine']['diagnostic_raw_timeline']), 3)
+        self.assertEqual(seg['sample_quarantine']['diagnostic_raw_timeline_omitted'], 27)
         self.assertIn('gate_key_limit_row_rejected', seg['warnings']['counts'])
         json.dumps(seg, allow_nan=False)
 
@@ -760,7 +1218,7 @@ class BoundsAndCLITests(unittest.TestCase):
                     return b''
                 row = begin() if self.index == -1 else sample(100 + self.index)
                 self.index += 1
-                data = encoded([row])
+                data = encoded(v2([row]))
                 if size < len(data):
                     raise AssertionError('unexpected small read')
                 return data
@@ -796,6 +1254,10 @@ class BoundsAndCLITests(unittest.TestCase):
             self.assertEqual(result.stdout, '')
             report = json.loads(output.read_text())
             self.assertEqual([s['segment'] for s in report['segments']], [2])
+            assert_quarantined(self, report['segments'][0])
+            self.assertIn('Sample summaries withheld', markdown.read_text())
+            self.assertNotIn('Native priority known frames:', markdown.read_text())
+            self.assertNotIn('PROVISIONAL', markdown.read_text())
             self.assertEqual(report['segments'][0]['coverage']['recorder_reported_observations'], 13)
             self.assertFalse(report['metadata']['used_for_statistics'])
             self.assertNotIn('FAKE_WINNER', output.read_text() + markdown.read_text())
@@ -804,6 +1266,33 @@ class BoundsAndCLITests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(result.stdout.startswith('# Showboat recording analysis'))
             self.assertIn('## Segment 1', result.stdout)
+
+    def test_v2_cli_reports_numeric_floats_and_withholds_corrupted_sample_totals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            log, output, text = path / 'runtime.log', path / 'analysis.json', path / 'analysis.md'
+            rows = v2(complete())
+            rows[1]['self'][4] = '80000000'
+            rows[1]['rival'][4] = '00000001'
+            log.write_bytes(encoded(rows))
+            result = self.run_cli(log, '--json', output, '--markdown', text)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(output.read_text())
+            snap = report['segments'][0]['timeline'][0]
+            self.assertEqual(math.copysign(1, snap['self']['x']), -1)
+            self.assertEqual(snap['rival']['x'], 2**-149)
+            self.assertEqual(report['integrity']['status'], 'validated_v2_records_not_runtime_verified')
+            self.assertIn('Native priority known frames:', text.read_text())
+            rows[1]['self'][12] = 256
+            evidence = encoded(rows)
+            log.write_bytes(evidence)
+            result = self.run_cli(log, '--json', output, '--markdown', text)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(log.read_bytes(), evidence)
+            self.assertEqual(json.loads(output.read_text())['integrity']['sample_derived_statistics'],
+                             'quarantined')
+            self.assertIn('Sample summaries withheld', text.read_text())
+            self.assertNotIn('Native priority known frames:', text.read_text())
 
     def test_missing_malformed_and_huge_metadata_remain_warnings(self):
         with tempfile.TemporaryDirectory() as directory:

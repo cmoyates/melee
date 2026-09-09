@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only SBREC v1 analysis (Python stdlib, no emulator dependencies).
+"""Read-only SBREC v1/v2 analysis (Python stdlib, no emulator dependencies).
 
 Usage: python3 tools/analyze_showboat.py runtime.log [--segment N]
        python3 tools/analyze_showboat.py capture/ --json report.json --markdown report.md
@@ -18,8 +18,14 @@ retained, never used for statistics or match results.
 Log text is never executed; reports use validated fields, never raw log lines.
 
 Durations are left-closed intervals [previous sample, current sample), supported
-only by the v1 change/12-frame sampling guarantee, gap=0 and intact ordering and
+only by the change/12-frame sampling guarantee, gap=0 and intact ordering and
 identities. No initial/end extrapolation. Counts are observations, not matches.
+V2 samples use exact finite binary32 hex; legacy v1 mixed-format sample transport
+has a proven native/caller ABI stack-layout mismatch across the eighth double.
+ALL v1 sample-derived statistics are quarantined, including plausible rows; only
+validated integer-only begin/gate/end records remain usable. No filtering salvage.
+Rejected records break continuity; corrupted v2 sample metrics are also withheld.
+Quarantined samples may appear only in a separate bounded raw diagnostic timeline.
 """
 
 import argparse
@@ -29,6 +35,7 @@ import json
 import math
 from pathlib import Path
 import re
+import struct
 import sys
 
 
@@ -49,6 +56,17 @@ REJECTED = {1, 4, 5, 6, 7, 8, 9, 10, 11, 14}
 BASE = {'v', 'type', 'segment', 'slot', 'frame'}
 # Accept decimal roundings of FLT_MAX, including 3.4028235e38, not f32 overflow.
 F32_TEXT_MAX = 3.4028235e38
+FLOAT_ENCODING = 'ieee754-binary32-hex'
+FLOAT_INDICES = (3, 4, 5, 6, 7, 8, 9, 11)
+# Source bounds, not gameplay plausibility heuristics. FighterKind excludes
+# FTKIND_NONE (src/melee/ft/forward.h). Motion uses the widest native enum
+# (ftKirby/forward.h), including ftCo_MS_None=-1, not a Captain-only allowlist.
+# In-range unknown character motions still receive numeric fallback labels.
+FIGHTER_KIND_MAX = 32
+MOTION_MAX = 543
+# Player_GetStocks returns sign-extended s8 (src/melee/pl/player.c), NOT 0..4.
+STOCK_MIN, STOCK_MAX = -128, 127
+LEGACY_WARNING = 'legacy_mixed_format_sample_transport_unvalidated'
 OPTIONAL = {'sample': {'reasons'}, 'gate': {'batch'}}
 FIELDS = {
     'begin': {'stage', 'mode', 'match_kind', 'target', 'interval'},
@@ -60,8 +78,19 @@ FIELDS = {
 NOTES = [
     'Segments are recording intervals, not complete matches. End is a recording '
     'lifecycle event, never a win/loss or match result; metadata is not outcome evidence.',
-    'Sample counts are actual accepted snapshots, not all CPU updates. End totals '
-    'are recorder-reported; continuity lower bounds rely on the v1 emission contract.',
+    'Accepted sample counts are parser bookkeeping, not trusted gameplay observations '
+    'or all CPU updates. End totals are recorder-reported; v2 continuity lower bounds '
+    'rely on the emission contract. Quarantine clears sample-derived frame bounds; '
+    'begin context and recording end retain their integer-only frames.',
+    'V1 legacy mixed-format samples have a proven native/caller ABI stack-layout '
+    'mismatch across the eighth double. ALL v1 sample-derived statistics are '
+    'quarantined even when fields look valid; filtering bad rows cannot validate '
+    'the remainder. Integer-only begin/gate/end records remain separately usable, '
+    'subject to coverage checks.',
+    'V2 validates exact finite IEEE binary32 hex and record structure, not authenticity '
+    'or live target-runtime correctness. Corrupted capture sample metrics are withheld '
+    'in both JSON and Markdown. Separately labeled bounded raw diagnostic rows are '
+    'not trusted observations, identities, state, damage, positions or durations.',
     'Known frames use [previous,current) only with gap=0, at most 12 frames, intact '
     'ordering and identities. Periodic unchanged samples count; gaps and tails do not.',
     'Motion/intent entries are observed continuous transitions, not action totals. '
@@ -79,7 +108,7 @@ NOTES = [
     'or guaranteed attribution; stock changes are not attributed KOs.',
     'Inputs are CPU output before preprocessing, not hardware or opponent inputs. '
     'Both fighters are sampled at the CPU hook, not an atomic world snapshot.',
-    'Recovery context is motion/flag evidence only. Offstage is unknown: v1 has '
+    'Recovery context is motion/flag evidence only. Offstage is unknown: v1/v2 have '
     'no offstage bit or stage geometry. Airborne is not offstage, and sparse '
     'positions do not prove recovery success or useful wavedash displacement.',
 ]
@@ -201,16 +230,32 @@ def number(value):
         raise Invalid('numeric_magnitude_limit')
 
 
+def binary32(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{8}', value):
+        raise Invalid('invalid_binary32_hex')
+    result = struct.unpack('>f', bytes.fromhex(value))[0]
+    if not math.isfinite(result):
+        raise Invalid('nonfinite_binary32')
+    return result
+
+
 def validate(row):
+    """Validate wire records and return a numeric, non-mutating normalization."""
     if not isinstance(row, dict):
         raise Invalid('record_not_object')
     integer(row.get('v'))
-    if row['v'] != 1:
+    if row['v'] not in (1, 2):
         raise Invalid('unknown_version')
     kind = row.get('type')
     if not isinstance(kind, str) or kind not in FIELDS:
         raise Invalid('unknown_record_type')
     expected = BASE | FIELDS[kind]
+    if kind == 'sample' and row['v'] == 2:
+        expected = expected | {'float_encoding'}
+    # Encoding is protocol, not an ignorable extension or downgrade hint.
+    if 'float_encoding' in row and (kind != 'sample' or row['v'] != 2 or
+                                    row['float_encoding'] != FLOAT_ENCODING):
+        raise Invalid('invalid_float_encoding')
     if not expected <= row.keys():
         raise Invalid('missing_fields')
     expected |= OPTIONAL.get(kind, set()) & row.keys()
@@ -223,6 +268,7 @@ def validate(row):
         integer(row['target'], 0, 5)
         integer(row['interval'], 12, 12)
     elif kind == 'sample':
+        row = dict(row)
         integer(row['ego'], -0x80000000, 0x7FFFFFFF)
         for key in ('action', 'events'):
             integer(row[key])
@@ -233,14 +279,20 @@ def validate(row):
             array = row[key]
             if not isinstance(array, list) or len(array) != size:
                 raise Invalid('invalid_array_shape')
-            for value in array:
-                number(value)
         for key in ('self', 'rival'):
-            array = row[key]
+            array = row[key] = list(row[key])
             # anim is cur_anim_frame (fractional), not an animation ID.
+            for i in FLOAT_INDICES:
+                if row['v'] == 2:
+                    array[i] = binary32(array[i])
+                else:
+                    number(array[i])
             integer(array[0], -0x80000000, 0x7FFFFFFF)
-            for i in (1, 2, 10, 12):
-                integer(array[i], -1 if i in (1, 2, 10) else 0)
+            integer(array[1], 0, FIGHTER_KIND_MAX)
+            integer(array[2], -1, MOTION_MAX)
+            integer(array[10], STOCK_MIN, STOCK_MAX)
+            if type(array[12]) is not int or not 0 <= array[12] <= 255:
+                raise Invalid('invalid_fighter_flag_bits')
             if array[9] < 0:
                 raise Invalid('negative_percent')
         for value in row['native']:
@@ -345,10 +397,7 @@ def enum_label(names, value, category):
 
 
 def flag_names(mask):
-    names = [name for bit, name in FLAGS.items() if mask & bit]
-    if mask & ~255:
-        names.append('unknown_bits_0x%x' % (mask & ~255))
-    return names
+    return [name for bit, name in FLAGS.items() if mask & bit]
 
 
 class Histogram:
@@ -389,6 +438,8 @@ def fighter_context(fighter, labels):
 class Segment:
     def __init__(self, row, limits, labels, began):
         self.id = row['segment']
+        self.version = row['v']
+        self.corrupted = False
         self.slot = row['slot']
         self.limits = limits
         self.labels = labels
@@ -405,6 +456,7 @@ class Segment:
         self.ego = None
         self.owns = 0
         self.timeline = []
+        self.raw_timeline = []  # Validated wire shape only, never evidence of safe v1 values.
         self.motions = {side: Histogram(limits.keys, self.warnings) for side in ('self', 'rival')}
         self.priorities = Histogram(limits.keys, self.warnings)
         self.intents = Histogram(limits.keys, self.warnings)
@@ -424,16 +476,30 @@ class Segment:
         self.gate_batch = 0
         self.gate_bounds = None
         self.gate_seen = {}  # Only current flush; never retain a set of all batches.
+        if self.version == 1:
+            self.warn(LEGACY_WARNING, damage=False)
         if not began:
             self.warn('missing_begin')
 
-    def warn(self, code, line=None, damage=True):
+    def warn(self, code, line=None, damage=True, corrupt=False):
         self.warnings.add(code, line)
+        if corrupt:
+            self.corrupted = True
         if damage:
             self.damaged = True
             self.bridge = False
 
     def sample(self, row, line):
+        self.samples += 1
+        if len(self.raw_timeline) < self.limits.timeline:
+            self.raw_timeline.append(row)
+        if self.version == 1:
+            # The ABI mismatch affects the whole sample, not just visibly bad
+            # floats/flags. Do not derive even identities or continuity from
+            # plausible rows. Retain previous solely for duplicate-row checks.
+            self.previous = row
+            self.bridge = False
+            return
         prev = self.previous
         delta = row['frame'] - prev['frame'] if prev else 0
         stable = prev is not None and all(identity(prev[s]) == identity(row[s])
@@ -452,7 +518,6 @@ class Segment:
             self.known_frames += delta
             self.lower_bound += delta - 1
         self.lower_bound += 1
-        self.samples += 1
         self.owns += int(row['owns'])
         self.ego = ([row['ego'], row['ego']] if self.ego is None else
                     [min(self.ego[0], row['ego']), max(self.ego[1], row['ego'])])
@@ -497,9 +562,6 @@ class Segment:
             for bit, name in FLAGS.items():
                 if now[12] & bit:
                     self.flags[side][name] += 1
-            if now[12] & ~255:
-                self.flags[side]['unknown_bits_samples'] += 1
-                self.warn('unknown_fighter_flag_bits', line, damage=False)
             context = contexts[side] = fighter_context(now, self.labels)
             self.recovery[side] += int(context['recovery_motion_context'])
             position = self.positions[side]
@@ -619,6 +681,9 @@ class Segment:
 
     def accept(self, row, line):
         kind = row['type']
+        if row['v'] != self.version:
+            self.warn('mixed_record_versions_in_segment', line, corrupt=True)
+            return False
         if row['slot'] != self.slot:
             self.warn('slot_identity_mismatch', line)
             return False
@@ -646,16 +711,17 @@ class Segment:
         self.last_frame = row['frame']
         return True
 
-    def finish(self):
+    def finish(self, capture_corrupted=False):
         self.finish_gate_batch()
+        corrupted = self.corrupted or capture_corrupted
         observations = self.end['observations'] if self.end else None
         if self.end is None:
             self.warn('missing_end_eof_unflushed_gate_tail_unknown')
         if self.samples == 0:
             self.warn('missing_samples')
-        if self.end and self.previous and self.end['frame'] > self.previous['frame']:
+        if self.version == 2 and self.end and self.previous and self.end['frame'] > self.previous['frame']:
             self.warn('unsampled_end_tail_duration_unknown', damage=False)
-        if observations is not None:
+        if self.version == 2 and observations is not None:
             if observations < self.lower_bound:
                 self.warn('end_observation_count_inconsistent')
             elif observations > self.lower_bound:
@@ -686,11 +752,15 @@ class Segment:
                           'coverage': ('count_consistent_not_independently_verified'
                                        if observations is not None and total == observations
                                        else 'partial_or_unknown')})
-        return {'segment': self.id, 'slot': self.slot,
-                'context': ({k: self.begin[k] for k in ('stage', 'mode', 'match_kind', 'target', 'interval')}
+        report = {'segment': self.id, 'slot': self.slot, 'protocol_version': self.version,
+                'integrity': integrity(corrupted, self.version == 1, self.damaged),
+                'context': ({k: self.begin[k] for k in ('frame', 'stage', 'mode', 'match_kind', 'target', 'interval')}
                             if self.begin else None),
                 'coverage': {'begin_seen': self.begin is not None, 'end_seen': self.end is not None,
-                             'status': 'partial_or_inconsistent' if self.damaged else 'count_consistent_recording',
+                             'status': ('corrupted_or_unreliable' if corrupted else
+                                        'partial_or_inconsistent' if self.damaged else
+                                        'legacy_transport_unvalidated' if self.version == 1 else
+                                        'count_consistent_recording'),
                              'first_record_frame': self.first_frame, 'last_record_frame': self.last_frame,
                              'accepted_sample_records': self.samples,
                              'recorder_reported_observations': observations,
@@ -709,7 +779,62 @@ class Segment:
                 'fighter_flag_samples': {s: dict(v) for s, v in self.flags.items()},
                 'recovery_motion_context_samples': dict(self.recovery), 'offstage': None,
                 'timeline': self.timeline, 'timeline_omitted': self.samples - len(self.timeline),
-                'warnings': self.warnings.export()}
+                'warnings': self.warnings.export(), 'sample_quarantine': None}
+        reasons = []
+        if self.version == 1:
+            reasons.append('legacy_v1_native_caller_abi_stack_layout_mismatch')
+        if corrupted:
+            reasons.append('corrupted_or_rejected_records_in_scanned_input')
+        if reasons:
+            quarantine_samples(report, reasons, self.raw_timeline)
+        return report
+
+
+def quarantine_samples(report, reasons, raw_timeline):
+    """Fail closed at the JSON boundary as well as in Markdown.
+
+    Accepted counts describe parsing, not trusted gameplay samples. No aggregate
+    salvage is exported; bounded raw rows are explicitly separated from metrics.
+    Begin context, gate bins and recorder-reported end counts are integer-only.
+    """
+    count = report['coverage']['accepted_sample_records']
+    report['sample_quarantine'] = {
+        'status': 'quarantined_not_for_statistics', 'reasons': reasons,
+        'accepted_sample_records': count,
+        'diagnostic_raw_timeline': raw_timeline,
+        'diagnostic_raw_timeline_omitted': count - len(raw_timeline),
+        'interpretation': 'Untrusted normalized wire rows only; no inferred labels, '
+                          'continuity or salvaged metrics. Plausibility is not validation.',
+    }
+    for key in ('first_record_frame', 'last_record_frame',
+                'continuity_supported_observations_lower_bound',
+                'known_continuous_frames', 'explicit_gap_samples'):
+        report['coverage'][key] = None
+    for key in ('ego_range', 'owns_sample_count', 'timeline_omitted'):
+        report[key] = None
+    for key in ('native_priorities', 'custom_intents', 'acknowledgment_and_event_samples',
+                'recovery_motion_context_samples'):
+        report[key] = {}
+    for key in ('motions', 'fighter_flag_samples'):
+        report[key] = {side: {} for side in ('self', 'rival')}
+    report['position_ranges_at_samples'] = {side: None for side in ('self', 'rival')}
+    report['observed_changes'] = {
+        side: {key: None for key in changes}
+        for side, changes in report['observed_changes'].items()}
+    report['timeline'] = []
+
+
+def integrity(corrupted, legacy, partial):
+    """Trust is separate from counts: balanced totals cannot validate transport."""
+    return {'status': ('corrupted_or_unreliable' if corrupted else
+                       'legacy_transport_unvalidated' if legacy else
+                       'partial_or_unreliable' if partial else
+                       'validated_v2_records_not_runtime_verified'),
+            'legacy_sample_transport_unvalidated': legacy,
+            'legacy_sample_transport_abi_mismatch': legacy,
+            'sample_derived_statistics': ('quarantined' if corrupted or legacy else
+                                          'available_with_coverage_caveats' if partial else
+                                          'validated_records_not_independently_verified')}
 
 
 def analyze_stream(stream, limits=None, labels=None, segment=None):
@@ -730,7 +855,7 @@ def analyze_stream(stream, limits=None, labels=None, segment=None):
         # open bridges, not merely the segment claimed by untrusted JSON.
         for value in segments.values():
             if value.end is None:
-                value.warn('unreadable_or_rejected_record_continuity_unknown', line)
+                value.warn('unreadable_or_rejected_record_continuity_unknown', line, corrupt=True)
 
     while consumed < limits.file_bytes:
         chunk = stream.readline(min(limits.line_bytes + 1, limits.file_bytes - consumed))
@@ -802,12 +927,25 @@ def analyze_stream(stream, limits=None, labels=None, segment=None):
         warnings.add('no_structured_records_partial_legacy' if legacy else 'no_structured_records')
     if not labels.sources:
         warnings.add('motion_headers_unavailable_numeric_fallback')
-    reports = [value.finish() for value in segments.values()]
+    # Apply input-wide corruption before export/selection, including rejected
+    # orphan rows or rows after end. JSON and Markdown use the same trust policy.
+    reports = [value.finish(capture_corrupted=bool(rejected)) for value in segments.values()]
+    # Input-wide status is computed before --segment filtering; rejected orphan
+    # rows and errors outside a selected segment must not disappear from trust.
+    legacy_transport = any(value.version == 1 for value in segments.values())
+    if legacy_transport:
+        warnings.add(LEGACY_WARNING)
+    capture_integrity = integrity(bool(rejected), legacy_transport,
+                                  limited or not reports or any(v.damaged for v in segments.values()))
+    capture_integrity['scope'] = 'entire_scanned_input'
+    if legacy_transport and not rejected and any(v.version == 2 for v in segments.values()):
+        capture_integrity['sample_derived_statistics'] = 'mixed_v1_quarantined_v2_available_with_coverage_caveats'
     if segment is not None:
         reports = [value for value in reports if value['segment'] == segment]
         if not reports:
             warnings.add('requested_segment_not_found_in_scanned_records')
-    return {'analysis_schema': 1, 'scope': 'recording_segments_not_match_results',
+    return {'analysis_schema': 2, 'scope': 'recording_segments_not_match_results',
+            'integrity': capture_integrity,
             'scan': {'bytes': consumed, 'lines': line, 'structured_candidates': structured,
                      'accepted_records': accepted, 'rejected_records': rejected,
                      'limited': limited, 'segments_seen': len(segments)},
@@ -898,10 +1036,29 @@ def markdown(report):
     def counts(values):
         return ', '.join('%s=%s' % (k, v) for k, v in values.items()) or 'none logged'
 
+    def gate_table(seg):
+        lines = ['', '| Tactic | Logged updates | Not evaluated | Rejected | Reasons | Missing vs end |',
+                 '|---|---:|---:|---:|---|---:|']
+        for gate in seg['gates']:
+            lines += ['| %s | %d | %d | %d | %s | %s |' %
+                      (gate['label'], gate['logged_updates'], gate['not_evaluated'], gate['rejected_logged_updates'],
+                       counts(gate['reasons']), display(gate['missing_vs_reported_observations']))]
+        return lines
+
     lines = ['# Showboat recording analysis', '',
              'Recording segments only; **no match result or KO attribution**.',
              'Scanned %d bytes; %d accepted / %d rejected records.' %
              (report['scan']['bytes'], report['scan']['accepted_records'], report['scan']['rejected_records'])]
+    lines += ['', '**Capture integrity: %s. Sample-derived statistics: %s.**' %
+              (report['integrity']['status'], report['integrity']['sample_derived_statistics'])]
+    if report['integrity']['legacy_sample_transport_unvalidated']:
+        lines += ['**Legacy v1 mixed-format sample transport has a proven native/caller ABI '
+                  'mismatch, even when fields look valid. ALL v1 sample-derived statistics '
+                  'are QUARANTINED; filtering bad rows cannot make them safe.**']
+    if report['integrity']['status'] == 'corrupted_or_unreliable':
+        lines += ['**Corrupted/unreliable capture: do not trust sample-derived totals. '
+                  'Sample summaries are withheld in Markdown and JSON trusted fields. '
+                  'Integer-only gate/end counts require separate coverage review.**']
     if report.get('metadata', {}).get('capture_status'):
         lines += ['Capture metadata: %s (%s); context only, never a match outcome.' %
                   (report['metadata']['capture_status'], report['metadata']['source'] or 'unavailable')]
@@ -913,7 +1070,23 @@ def markdown(report):
     for seg in report['segments']:
         cov = seg['coverage']
         lines += ['', '## Segment %d · CPU slot %d' % (seg['segment'], seg['slot']),
-                  'Context: ' + (counts(seg['context']) if seg['context'] else 'unknown (missing begin)'),
+                  '**SBREC v%d: %s; sample-derived statistics %s.**' %
+                  (seg['protocol_version'], seg['integrity']['status'],
+                   seg['integrity']['sample_derived_statistics'])]
+        if seg['sample_quarantine'] is not None:
+            lines += ['Sample summaries withheld (quarantined). Accepted sample-shaped records: %d '
+                      '(NOT trusted gameplay samples). Recorder-reported updates: %s '
+                      '(not independently verified).' %
+                      (cov['accepted_sample_records'], display(cov['recorder_reported_observations'])),
+                      'Context: ' + (counts(seg['context']) if seg['context'] else 'unknown (missing begin)'),
+                      'End: ' + ('recording event `%s`, not a win.' % seg['recording_end']['lifecycle_reason_token']
+                                if seg['recording_end'] else 'missing; EOF and unflushed gate tail unknown.'),
+                      'Integer-only gate logged updates (coverage must be checked): ' +
+                      counts({g['label']: g['logged_updates'] for g in seg['gates']})]
+            lines += gate_table(seg)
+            lines += ['Warnings: ' + counts(seg['warnings']['counts'])]
+            continue
+        lines += ['Context: ' + (counts(seg['context']) if seg['context'] else 'unknown (missing begin)'),
                   'Coverage: %s; %d actual sample records; reported updates %s; '
                   'continuity-supported lower bound %d; known continuous frames %d.' %
                   (cov['status'], cov['accepted_sample_records'], display(cov['recorder_reported_observations']),
@@ -938,13 +1111,8 @@ def markdown(report):
                       (side, display(seg['position_ranges_at_samples'][side]), counts(seg['fighter_flag_samples'][side]),
                        seg['recovery_motion_context_samples'].get(side, 0))]
         lines += ['Native priority known frames: ' + counts({k: v.get('known_frames', 0)
-                                                           for k, v in seg['native_priorities'].items()}),
-                  '', '| Tactic | Logged updates | Not evaluated | Rejected | Reasons | Missing vs end |',
-                  '|---|---:|---:|---:|---|---:|']
-        for gate in seg['gates']:
-            lines += ['| %s | %d | %d | %d | %s | %s |' %
-                      (gate['label'], gate['logged_updates'], gate['not_evaluated'], gate['rejected_logged_updates'],
-                       counts(gate['reasons']), display(gate['missing_vs_reported_observations']))]
+                                                           for k, v in seg['native_priorities'].items()})]
+        lines += gate_table(seg)
         lines += ['', 'Timeline (first %d snapshots; %d omitted):' % (len(seg['timeline']), seg['timeline_omitted'])]
         # The complete bounded timeline is in JSON; keep default Markdown concise.
         for snap in seg['timeline'][:8]:

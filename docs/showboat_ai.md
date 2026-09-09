@@ -9,8 +9,10 @@ Initial working tree was clean; that mod is retained.
 **Recorder v2 replaces the faulty v1 serialization path.** A bounded buffer and
 exact float-bit encoding replace the large mixed integer/double formatting call;
 only a string is passed to OSReport. See the [repair analysis](../research/showboat_recorder_repair.md).
-Native build/codegen checks and host transport tests are offline evidence; a
-new tester-approved live capture is still required to validate retail output.
+The [first approved v2 live capture](../research/showboat_recorder_playtest_3.md)
+now passes encoding/field checks: 2,760 records, zero rejections, coherent fighter
+identities and motions. Coverage gaps still limit statistics; logging overhead
+is not measured. Historical v1 data remains quarantined.
 
 Old v1 snapshots remain untrusted, including plausible-looking rows. The
 [first](../research/showboat_recorder_playtest_1.md) and
@@ -122,10 +124,13 @@ noted above; the following historical checkpoint predates that finding.
   PPC call confirms format/buffer pointers only, with the FP-varargs flag clear.
 - Repaired DOL: **4,515,936 bytes**, SHA-1
   `27db34f9111d37f01ebf83be4c78d9233fef06bb`.
-- Dolphin remains closed. Existing virtual-disc DOL remains the old
-  `690249dfe765ebdfefff6eb861df691c92cc2aca`; controller hash remains
-  `00dc2b7a5339493fe11fcf93e3adba16e93e0451`. The next approved launch will stage
-  v2. No new live-output or runtime-overhead claim is made yet.
+- The subsequent approved live test staged that v2 DOL and passed record
+  encoding/field checks; controller hash remains
+  `00dc2b7a5339493fe11fcf93e3adba16e93e0451`. Dolphin then closed cleanly.
+  See the [live review](../research/showboat_recorder_playtest_3.md): full taunt,
+  actual wavedash displacement, two grab-motion acknowledgments, and a late
+  unsafe native side-B into helpless fall. No gameplay tuning followed.
+  Further launches require readiness; runtime overhead remains unmeasured.
 
 ### Historical v1 recorder offline checkpoint
 

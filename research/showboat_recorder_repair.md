@@ -106,6 +106,19 @@ restored afterward and its decisive linked/DOL instructions rechecked. Stock
 DOLs, the existing virtual-disc v1 DOL and controller mapping remain unchanged.
 Dolphin stayed closed throughout repair work. No gameplay tuning was included.
 
-A new live capture still requires explicit tester readiness. Offline validation
-and target code inspection do not substitute for the retail execution path or
-measure runtime overhead. No emulator launch is part of this repair's offline work.
+Offline validation and target code inspection do not substitute for the retail
+execution path or measure runtime overhead. No emulator launch was part of the
+offline repair work.
+
+## Subsequent approved live validation
+
+The tester then explicitly approved a new launch and shutdown. The
+[first v2 live review](showboat_recorder_playtest_3.md) accepted 2,760 records with
+zero rejected rows: exact finite float encodings, valid flag masks, stable
+Falcon/Kirby identities and coherent changing motions. Independent legacy
+wavedash positions agree with decoded v2 values. The old corruption did not
+reproduce in this capture. Sparse startup/tail coverage and missing Kirby-specific
+motion names remain distinct limitations, not evidence of the former ABI fault.
+Dolphin exited 0 and is closed; any further launch requires fresh readiness.
+This is a live integrity pass for this capture, not an overhead benchmark or
+universal proof of every future snapshot. Historical v1 samples remain quarantined.

@@ -138,5 +138,7 @@ hashes remained unchanged at that offline checkpoint. Subsequent
 [first](showboat_recorder_playtest_1.md) and [second](showboat_recorder_playtest_2.md)
 live tests exposed mixed-format corruption despite those tests. The v2 repair
 replaces that serialization path rather than attempting to reinterpret damaged
-v1 samples. OSReport formatting/I/O may cost runtime: host tests do not establish
+v1 samples. The [first approved v2 live capture](showboat_recorder_playtest_3.md)
+passes encoding/field checks with no recurrence of the defect; it does not make
+historical v1 samples trustworthy. OSReport formatting/I/O may cost runtime: host tests do not establish
 emulator speed, logging overhead or actual retail capture completeness.

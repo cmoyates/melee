@@ -221,9 +221,17 @@ parser.add_argument(
     "--showboat-ai-hud", action="store_true",
     help="show an in-game ego/action readout (requires --showboat-ai)",
 )
+parser.add_argument(
+    "--showboat-unlock-all", action="store_true",
+    help="unlock characters/stages/options after save load (requires --showboat-ai)",
+)
+parser.add_argument(
+    "--no-showboat-unlock-all", dest="showboat_unlock_all", action="store_false",
+    help="leave progression untouched, overriding the test helper's unlock flag",
+)
 args = parser.parse_args()
-if (args.showboat_ai_debug or args.showboat_ai_hud) and not args.showboat_ai:
-    parser.error("showboat debug/HUD options require --showboat-ai")
+if (args.showboat_ai_debug or args.showboat_ai_hud or args.showboat_unlock_all) and not args.showboat_ai:
+    parser.error("showboat debug/HUD/unlock options require --showboat-ai")
 
 if any({args.debug, args.asm, args.linkable}) or args.sym == "on":
     args.non_matching = True
@@ -2035,6 +2043,8 @@ if args.showboat_ai:
         config.extra_dol_objects.append(hud_source)
     for lib in config.libs:
         for obj in lib["objects"]:
+            if args.showboat_unlock_all and obj.name == "melee/gm/gmmain_lib.c":
+                obj.options["extra_cflags"].append("-DSHOWBOAT_UNLOCK_ALL=1")
             if obj.name in {
                 showboat_source, combat_source, "melee/mod/showboat_hud.c",
                 "melee/ft/kinds/ftCommon/ftCo_0A01.c",

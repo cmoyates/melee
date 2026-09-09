@@ -310,6 +310,68 @@ A single render GObj owns no fighter pointers. Slot resets clear rows; live-list
 and callback/userdata validation rejects stale GObjs after scene heap resets.
 No repeated font/archive loads, new gameplay cameras or on-screen asset edits.
 
+## Automatic test-profile unlocks
+
+`tools/build_showboat.sh` now also passes **`--showboat-unlock-all`**. After
+memory-card load/validation, `gmMainLib_8015FA34` executes its existing native
+progression-unlock block regardless of debug level: all 11 hidden-character
+bits, all 11 hidden-stage bits, option flags, and native unlock-notification
+bookkeeping. Starter characters/stages remain available normally. This enables
+Final Destination, Battlefield, the full roster and unlock-gated match options
+without grinding achievements or importing an external save.
+
+It does **not** enable global developer mode, Action Replay/Gecko, combat cheats,
+invulnerability or changed fighter data. It does not fabricate trophies, records
+or event-match completions: this is full gameplay access for AI testing, not a
+claim of a perfect collector's save. Normal autosaves may persist these progress
+flags in the isolated test profile. Original disc/stock DOL/normal Dolphin
+profile are not modified.
+
+The additional flag requires `--showboat-ai` and only defines
+`SHOWBOAT_UNLOCK_ALL` for `melee/gm/gmmain_lib.c`. Ordinary configure builds still
+default off. To test natural progression instead:
+
+```sh
+sh tools/build_showboat.sh --no-showboat-unlock-all
+.venv/bin/python tools/verify_showboat.py --no-unlocks
+```
+
+The default helper build is validated without `--no-unlocks`; it expects the
+one additional save-initialization object. Disabling the flag does not relock
+progress already autosaved—restore the backed-up test save or use a fresh test
+profile. Runtime confirmation prints:
+`SHOWBOAT UNLOCK: characters=07ff stages=07ff options=ff` (higher preexisting bits
+are preserved). This is a real post-load readback, not a cheat-code assumption.
+
+`tools/tests/test_showboat_unlocks.py` compiles the actual post-load function and
+native character/stage mask helpers with the flag absent/0/1 under ASan/UBSan.
+It covers loaded/new/invalid-save branches, preserved native debug behavior,
+unlock-before-finalization ordering and mask readback. Notification helpers are
+explicit spies; it is not a memory-card or UI emulator test.
+
+### Unlock-enabled verification and current runtime
+
+- **99 tests pass**, including the two unlock tests, with existing AI/combat/HUD
+  regressions retained. Default build and validator pass: **4,453,984 bytes**,
+  SHA-1 `d78122c75886b5a0a09e3698f424b90052cd534e`.
+- The explicit opt-out build also passes `verify_showboat.py --no-unlocks` and
+  reproduces the previous V2 DOL **byte-for-byte** (SHA-1
+  `f63c0cfb49c325e9dacb4f040f042e4464972d66`). The only additional changed source
+  object with unlocks enabled is `melee/gm/gmmain_lib.o`.
+- With user authorization, stopped V1, backed up isolated `Config` and `GC`
+  (including its Melee GCI), and launched the unlocked V2 virtual disc. Backup:
+  `build/showboat/profile-backups/20260909-053023-pre-unlocks/`; manifest also at
+  `build/showboat/unlock-profile-backup.json`. Normal profile/saves are untouched.
+- Dolphin boots through Melee initialization and the **actual game** logs
+  `SHOWBOAT UNLOCK: characters=07ff stages=07ff options=ff` after save load.
+  CI also confirms `SDL/0/Nintendo Switch Pro Controller`. The controller mapping
+  was retained, not replaced. Runtime log: `build/showboat/v2-unlocked-stdout.log`.
+- The running virtual-disc DOL matches the verified new build hash. Initial live
+  match logs also show P2 Falcon9 initialization and an analog L-cancel pulse at
+  low ego; that confirms hook execution, not a successful landing cancel.
+  Gameplay strength, hit conversions and visual HUD behavior still require human testing;
+  successful boot/unlock readback is not a competitive-strength benchmark.
+
 ## Manual test procedure
 
 Start from a fresh match, never a stock/C-stick savestate. Use normal 1v1 stock
@@ -406,7 +468,7 @@ CPU proves neither its strength nor its ability to sustain a real lead.
   retry budget; no motion or game input timer is forced.
 - `git diff --check`, Python compilation and shell syntax checks pass. Logs:
   `build/showboat-v2-{tests,build,verify}.log`.
-- **V2 has not yet been booted or played.** The user's existing V1 Dolphin
+- **At the initial V2 checkpoint, V2 had not yet been booted or played.** The user's existing V1 Dolphin
   session/controller profile was deliberately left alone. The running virtual
   disc still contains V1 SHA-1 `f278e0701a97269f929c4386b1344a06c07da402`;
   the new DOL is staged separately until an agreed restart. No V2 win-rate,

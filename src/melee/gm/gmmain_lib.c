@@ -1298,12 +1298,24 @@ void gmMainLib_8015FA34(s32 arg0)
             gm_IncrementPowerCount();
         }
     }
+#if SHOWBOAT_UNLOCK_ALL
+    /* Test profile only: reuse the native progression-unlock block AFTER
+     * memory-card load/reset. Do not enable global debug mode or combat cheats. */
+    {
+#else
     if (DbLevel > DbLKind_DebugDevelop && db_804D6B20 != 0) {
+#endif
         gmMainLib_804D3EE0->thing.x186C = 0xFF;
         gm_80164F18();
         gm_8016468C();
         gm_8017297C();
         gm_801741FC();
+#if SHOWBOAT_UNLOCK_ALL
+        OSReport("SHOWBOAT UNLOCK: characters=%04x stages=%04x options=%02x\n",
+                 (unsigned int) *gmMainLib_GetUnlockedCharactersBitmaskPtr(),
+                 (unsigned int) *gmMainLib_8015EDA4(),
+                 (unsigned int) gmMainLib_804D3EE0->thing.x186C);
+#endif
     }
     lbAudioAx_80028690();
     gmMainLib_8015F500();

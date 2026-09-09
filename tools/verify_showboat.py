@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate the local modified DOL and source-object isolation, not gameplay."""
+import argparse
 import hashlib
 import json
 import struct
@@ -24,6 +25,13 @@ def require(ok, message):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-unlocks", action="store_true",
+                        help="expect a build made with --no-showboat-unlock-all")
+    args = parser.parse_args()
+    expected = EXPECTED_OBJECTS.copy()
+    if not args.no_unlocks:
+        expected.add("melee/gm/gmmain_lib.o")
     path = ROOT / "build/showboat/GALE01/main.dol"
     data = path.read_bytes()
     require(len(data) >= 256, "Truncated DOL")
@@ -63,17 +71,18 @@ def main():
         old = baseline / name
         if not old.exists() or obj.read_bytes() != old.read_bytes():
             changed.add(name.as_posix())
-    require(changed == EXPECTED_OBJECTS, f"Unexpected changed objects: {sorted(changed)}")
+    require(changed == expected, f"Unexpected changed objects: {sorted(changed)}")
     report = dict(
         dol=path.relative_to(ROOT).as_posix(), size=len(data),
         sha1=hashlib.sha1(data).hexdigest(), entry=hex(entry),
         bss=[hex(bss), bss_size], valid_sections=sections,
-        original_dols_preserved=True,
+        original_dols_preserved=True, test_unlocks=not args.no_unlocks,
         objects_different_from_cstick=sorted(changed),
     )
     (ROOT / "build/showboat/verification.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"Validated {report['dol']}: {len(data):,} bytes, SHA-1 {report['sha1']}")
-    print("Stock DOLs unchanged; exactly four hooked objects plus the AI/combat/HUD modules differ from C-stick.")
+    count = 4 if args.no_unlocks else 5
+    print(f"Stock DOLs unchanged; exactly {count} hooked objects plus the AI/combat/HUD modules differ from C-stick.")
 
 
 if __name__ == "__main__":

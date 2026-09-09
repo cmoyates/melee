@@ -2,6 +2,7 @@
  * V2 converts existing free airtime only. Short-hop chasing, forced jumps,
  * DI, SDI and techs remain deferred/vanilla. Predictions are NOT hit guarantees. */
 #include "showboat_combat.h"
+#include "showboat_recorder.h"
 
 #include <melee/ft/fighter.h>
 #include <melee/ft/ftanim.h>
@@ -182,12 +183,15 @@ static bool SC_GrabOpportunity(Fighter* fp, Fighter* target, int frames)
         ftColl_8007B868(fp->gobj) != 0 ||
         ftColl_8007B868(target->gobj) != 0)
     {
+        /* Broad grab admission: target/state/items/support/motion/protection. */
+        ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_PHYSICAL_OR_STATE);
         return false;
     }
     dx = (target->cur_pos.x - fp->cur_pos.x) * fp->facing_dir;
     predicted = dx + (target->pos_delta.x - fp->pos_delta.x) *
                          fp->facing_dir * frames;
     if (dx <= 0.0f || dx > 11.0f || predicted <= 0.0f || predicted > 11.0f) {
+        ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_GEOMETRY_OR_WINDOW);
         return false;
     }
     if (target->motion_id == ftCo_MS_GuardOn ||
@@ -201,8 +205,10 @@ static bool SC_GrabOpportunity(Fighter* fp, Fighter* target, int frames)
     if (target->motion_id >= ftCo_MS_DamageHi1 &&
         target->motion_id <= ftCo_MS_DamageLw3)
     {
+        ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_GEOMETRY_OR_WINDOW);
         return target->x221C_b6 && target->mv.co.damage.x0 >= frames;
     }
+    ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_GEOMETRY_OR_WINDOW);
     lag = (target->motion_id >= ftCo_MS_LandingAirN &&
            target->motion_id <= ftCo_MS_LandingAirLw) ||
           (target->motion_id == ftCo_MS_LandingFallSpecial &&
@@ -412,10 +418,13 @@ static bool SC_AirOpportunity(Fighter* fp, Fighter* target, int action,
         !SC_Range(p_ftCommonData->x204_knockbackFrameDecay, 0.0f, 1.0f) ||
         !SC_Project(target, 0, 0, 0, hit + 1, theirs))
     {
+        /* Broad air admission, including target/state/items and projection. */
+        ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_GEOMETRY_OR_WINDOW);
         return false;
     }
     for (steer = -1; steer <= 1; ++steer) {
         if (!SC_Project(fp, action, delay, steer, hit + 1, ours)) {
+            ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_GEOMETRY_OR_WINDOW);
             return false;
         }
         /* Input age is our sampled neutral/pulse protocol, NEVER anim age.
@@ -427,9 +436,15 @@ static bool SC_AirOpportunity(Fighter* fp, Fighter* target, int action,
             dy = theirs[i].y - ours[i].y;
             if (action == SC_KNEE) {
                 if (!SC_Range(dx, 5.0f, 20.0f) ||
-                    !SC_Range(dy, 0.0f, 9.0f)) { return false; }
+                    !SC_Range(dy, 0.0f, 9.0f)) {
+                    ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_GEOMETRY_OR_WINDOW);
+                    return false;
+                }
             } else if (!SC_Range(dx, -8.0f, 8.0f) ||
-                       !SC_Range(dy, 7.0f, 22.0f)) { return false; }
+                       !SC_Range(dy, 7.0f, 22.0f)) {
+                ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_GEOMETRY_OR_WINDOW);
+                return false;
+            }
         }
     }
     return true;
@@ -483,7 +498,11 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* target)
     SC_State* s = SC_StateFor(fp);
     int action = 0;
     bool sampled, acknowledged;
-    if (s == NULL) { return false; }
+    ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_NO_CANDIDATE);
+    if (s == NULL) {
+        ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_PHYSICAL_OR_STATE);
+        return false;
+    }
     ShowboatCombat_RestoreInput(fp); /* Idempotent with main's FIRST-call hook. */
     if (s->cooldown > 0) { --s->cooldown; }
     if (s->lc_cooldown > 0) { --s->lc_cooldown; }
@@ -507,6 +526,10 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* target)
              * acknowledges acceptance, never a hit. Do not artificially delay
              * the next conversion after a successful action; real animation
              * and actionability, not our retry budget, limit followups. */
+            ShowboatRecorder_Event(fp, acknowledged ?
+                (s->action == SC_GRAB ? SBR_EVENT_GRAB_ACK : SBR_EVENT_AERIAL_ACK) : 0);
+            ShowboatRecorder_Reason(fp, SBR_COMBAT,
+                                   acknowledged ? SBR_COMPLETED : SBR_CANCELLED);
             SC_Stop(fp, s, acknowledged ?
                     "acknowledged motion; release/yield to vanilla" :
                     "cancel: single pulse unconfirmed/replaced");
@@ -514,6 +537,7 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* target)
             return false;
         }
         if (!sampled || s->age != 1) {
+            ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_INPUT_OR_SCRIPT);
             SC_Stop(fp, s, "cancel: lost script ownership/neutral not sampled");
             return false;
         }
@@ -522,6 +546,8 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* target)
         fp->item_gobj != NULL || !SC_LowPriority(fp) || target == NULL ||
         fp->cpu.xA4 != 0)
     {
+        /* Broad eligibility/state/items/native-priority/target/cached group. */
+        ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_PHYSICAL_OR_STATE);
         SC_Stop(fp, s, "cancel: unavailable/native priority or cached attack");
         return false;
     }
@@ -531,6 +557,10 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* target)
             fp->input.lstick[0].x != 0.0f || fp->input.lstick[0].y != 0.0f ||
             fp->input.cstick[0].x != 0.0f || fp->input.cstick[0].y != 0.0f)
         {
+            /* Only the already-evaluated target prefix is distinguished. */
+            ShowboatRecorder_Reason(fp, SBR_COMBAT,
+                s->target != target || s->target_spawn != target->x8_spawnNum ?
+                    SBR_TARGET : SBR_INPUT_OR_SCRIPT);
             SC_Stop(fp, s, "cancel: target changed/neutral input not observed");
             return false;
         }
@@ -543,16 +573,20 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* target)
                 s->action = SC_UPAIR;
                 SC_Log(fp, "KNEE recheck fell back to UPAIR");
             } else {
+                ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_GEOMETRY_OR_WINDOW);
                 SC_Stop(fp, s, "cancel: intercept/punish no longer safe");
                 return false;
             }
         }
+        ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_ACTIVE);
         return SC_ActionInput(fp, s, true);
     }
     if (s->cooldown || SC_TriggerHeld(fp) ||
         (fp->input.held_buttons[0] & SC_CONFLICT) ||
         (fp->cpu.buttons & SC_CONFLICT))
     {
+        ShowboatRecorder_Reason(fp, SBR_COMBAT,
+                               s->cooldown ? SBR_COOLDOWN : SBR_INPUT_OR_SCRIPT);
         return false;
     }
     if (SC_GrabOpportunity(fp, target, 8)) { action = SC_GRAB; }
@@ -567,6 +601,7 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* target)
     SC_Log(fp, action == SC_GRAB ? "start GRAB: neutral then recheck" :
                action == SC_KNEE ? "start KNEE: free-air intercept; neutral first" :
                                    "start UPAIR: vertical intercept; neutral first");
+    ShowboatRecorder_Reason(fp, SBR_COMBAT, SBR_STARTED);
     return SC_ActionInput(fp, s, false);
 }
 
@@ -611,6 +646,7 @@ void ShowboatCombat_PostInput(Fighter* fp)
 {
     SC_State* s = SC_StateFor(fp);
     int eta;
+    ShowboatRecorder_Reason(fp, SBR_LCANCEL, SBR_NO_CANDIDATE);
     if (s == NULL || s->analog_owned || s->lc_cooldown || !SC_Eligible(fp) ||
         SC_Unavailable(fp) || fp->x221C_b6 || fp->ground_or_air != GA_Air ||
         fp->motion_id < ftCo_MS_AttackAirN || fp->motion_id > ftCo_MS_AttackAirLw ||
@@ -618,10 +654,17 @@ void ShowboatCombat_PostInput(Fighter* fp)
         (fp->input.held_buttons[0] & SC_DEFENSE) ||
         128.0f / 255.0f <= p_ftCommonData->analog_shoulder_deadzone)
     {
+        /* Distinguish only the evaluated prefix; the remaining eligibility/
+         * state/aerial-window/input/deadzone checks stay a broad group. */
+        ShowboatRecorder_Reason(fp, SBR_LCANCEL,
+            s == NULL ? SBR_PHYSICAL_OR_STATE :
+            s->analog_owned ? SBR_INPUT_OR_SCRIPT :
+            s->lc_cooldown ? SBR_COOLDOWN : SBR_PHYSICAL_OR_STATE);
         return;
     }
     eta = SC_Touchdown(fp);
     if (!eta || fp->x67F + eta + 1 < p_ftCommonData->xE4) {
+        ShowboatRecorder_Reason(fp, SBR_LCANCEL, SBR_GEOMETRY_OR_WINDOW);
         return; /* An existing LR edge already covers the predicted landing. */
     }
     /* Analog > .30 synthesizes LR during normal input sampling. Digital L/R
@@ -631,6 +674,9 @@ void ShowboatCombat_PostInput(Fighter* fp)
     s->analog_owned = true;
     s->lc_cooldown = 6;
     fp->cpu.ltrigger = 128;
+    /* An emitted sample, NOT confirmation of reduced landing lag. */
+    ShowboatRecorder_Reason(fp, SBR_LCANCEL, SBR_STARTED);
+    ShowboatRecorder_Event(fp, SBR_EVENT_LCANCEL_SAMPLE);
     if (!s->log_cooldown) {
         SC_Log(fp, "L-cancel: one analog-only sample, touchdown <=3 frames");
         s->log_cooldown = 120;

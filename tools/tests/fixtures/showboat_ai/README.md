@@ -9,8 +9,8 @@ python3 tools/tests/test_showboat_ai.py -k attack_weight -v
 ```
 
 Only Python's standard library and clang are needed. `SHOWBOAT_TEST_CC` can name
-another clang executable. Each case runs in a fresh process in both debug modes,
-with ASan/UBSan. Compilation, generated includes, and executables live in a
+another clang executable. Each case runs in a fresh process in all four modes:
+`SHOWBOAT_RECORDER=0/1` × `SHOWBOAT_AI_DEBUG=0/1`, with ASan/UBSan. Compilation, generated includes, and executables live in a
 `TemporaryDirectory` that is cleaned up even after failure. No configure step,
 assets, emulator, production edits, or target build are involved.
 
@@ -32,8 +32,10 @@ assets, emulator, production edits, or target build are involved.
   does not reproduce combat policy. A borrowed-stick fixture and call trace test
   restoration before early gates/reset/taunt, serious-mode-independent delegation,
   flourish handoff without clearing the new combat script, and PostInput gating.
-  GetAction must remain unused with HUD disabled. Combat behavior needs its own
-  tests; a spy returning true during danger proves delegation, not safe combat.
+  GetAction must remain unused only when **both HUD and recording are disabled**;
+  recording legitimately queries the HUD action getter. Its default remains 5,
+  with an explicit configurable result for action-precedence tests. Combat behavior
+  needs its own tests; a spy returning true during danger proves delegation, not safe combat.
 - Four `ShowboatMovement` APIs are explicit orchestration spies using its real
   header. They verify reset/suspend ordering, ego-independent starts after combat
   declines, active movement precedence, no duplicate restart on a cancellation
@@ -49,6 +51,16 @@ assets, emulator, production edits, or target build are involved.
   Tests inject a verified-contact event explicitly, separately from an attempt
   or a PERFECT indicator. The actual defense module is **not linked** here and
   has its own C suite for contact evidence, release and identity policy.
+- All seven `ShowboatRecorder` APIs are explicit, read-only argument/snapshot spies
+  in `recording_spies.c`, using the stable real header. Definitions are guarded by
+  `#if SHOWBOAT_RECORDER` (disabled APIs are argument-erasing macros). The actual
+  recorder implementation is **not linked**; its separate module suite owns
+  sampling, schema/segments, flushing, bounds and identity validation. Spies hold
+  only per-slot last arguments, counters, CPU snapshots and an opt-in **128-entry**
+  trace, independent of legacy `EV_*` events. Setup clears recorder bookkeeping
+  after its own ResetSlot calls; focused tests restart the trace between steps.
+  Saved owners are comparison tokens, never dereferenced. No recorder spy writes
+  game data or reproduces personality/technical policy.
 - Script writers follow the corresponding subset of `ftcmdscript.c`: clear all
   controls and reset buffer; append command/argument; append Done and schedule.
   A separate tiny interpreter handles only Done, PressUp, PressB, SetLstickX/Y.
@@ -64,6 +76,40 @@ assets, emulator, production edits, or target build are involved.
   data. Only the actor's CPU script/input fields and `cpu.xA4` attack-selection
   cache may change. Command weighting must leave all Fighters and archive-table
   bytes unchanged and must not consume personality RNG.
+
+Recorder orchestration (`recording_cases.c`) adds **14 C cases** covering:
+
+- Combat borrowed-input restoration before Begin; Begin before arbitration reasons,
+  Decision after arbitration (including verified-contact ego reward), native VM
+  consumption before CombatPostInput, and Frame strictly after CombatPostInput.
+  `frame()` still means Update + owned VM only; these cases explicitly call
+  `ShowboatAI_PostInput` through a full-Fighter-byte read-only guard.
+- Decision ego/action/ownership, personality > combat > movement > defense >
+  JUGGLE > none action reporting, and both owned and native-fallback samples.
+  Frame captures all buttons, both sticks, both triggers and consumed VM state,
+  not the queued Decision snapshot. Extra native channel values are explicit test
+  inputs; the combat post-input spy remains read-only, not a physical overlay model.
+- No Decision/Frame after Update loses eligibility or its singles target; no
+  CombatPostInput/Frame when PostInput itself loses eligibility/private ownership.
+  **Boundary:** if a target disappears only *after* Update, main forwards NULL to
+  Frame; if replaced, it forwards the newly reacquired entity. The real recorder,
+  not this main suite, owns rejection/segment closure for those late observations.
+- ResetSlot bounds, idempotence and slot isolation; Suspend delegation even on
+  invalid/non-owning actors, with private spy-owner isolation; owner/rival
+  replacement rebaselines and stale identity tokens without dereferencing them.
+  Bookkeeping-only lifecycle scenarios compare every Fighter byte.
+- Taunt/Punch events only after observed native acknowledgment, never at queued
+  or consumed button presses; absent acknowledgments and fresh native selections
+  do not emit events, and successful acknowledgment is not repeated next update.
+- Ordered reason arguments (including cancellation followed by a more specific
+  reason), last-reason overrides for physical/caution/priority/window/cooldown/
+  completion/budget paths, and NOT_EVALUATED after an early technical return.
+  Mock technical modules emit no fabricated recorder reasons or success events.
+
+Every new scenario also executes with recording disabled; gameplay assertions and
+all original physical-write/input-gating assertions remain active in both modes.
+Recorder bookkeeping assertions test main's call contract, not the real recorder's
+implementation. No HUD rendering, DOL build, emulator or analyzer is tested here.
 
 Defense orchestration cases cover:
 
@@ -156,11 +202,12 @@ The whiff helper intentionally selects a non-FD/BF stage to isolate crouch
 swagger from dance. Death counters and native motion frames never advance
 implicitly in a stub; each relevant transition is supplied by the test.
 
-This change adds **14 defense orchestration C cases** and **7 final regressions**,
-retaining all **88 existing cases** (the original 70 plus 18 personality cases),
-for **109 C cases / 218 debug-mode executions** with ASan/UBSan. Case loops also vary styles, sides,
-priorities, bytecode/cursor mutations, physical vetoes and defense handoff/reward
-states. Existing physical-write guards and combat/movement spies remain intact.
+The baseline **109 cases** (88 earlier cases, 14 defense orchestration cases and
+7 final regressions) are all retained. With 14 recorder orchestration cases, the
+suite runs **123 C cases / 492 recorder × debug matrix executions** with ASan/UBSan.
+Case loops also vary styles, sides, priorities, bytecode/cursor mutations, physical
+vetoes, defense handoff/reward states and recorder lifecycle/acknowledgment paths.
+Existing physical-write guards and combat/movement/defense gating remain intact.
 
 `ego_regressions.c` additionally covers normal VS Time KO certificates without
 stocks, elimination/removal/other-mode/final-stock exclusions, pre-press
@@ -189,8 +236,9 @@ PPC layouts, stock/arbitration ordering, or gameplay in Dolphin/hardware.
 
 ## Extending and interpreting failures
 
-Add `test_name()` in `harness.c` and `CASE(name)` in the registry. Python discovers
-those entries automatically. Extend `game.h`, query stubs, or the VM explicitly
+Add `test_name()` in `harness.c` or an included case file (`recording_cases.c`
+for recorder orchestration) and `CASE(name)` in the `harness.c` registry. Python
+discovers those entries automatically. Extend `game.h`, query stubs, or the VM explicitly
 when the production module gains dependencies; missing APIs remain compile
 errors rather than permissive no-ops. Helpers that seed ego/action state isolate
 specific branches; contextual tests also enter actions through real Update events.

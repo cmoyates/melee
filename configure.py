@@ -237,9 +237,18 @@ parser.add_argument(
     "--no-showboat-quickstart", dest="showboat_quickstart", action="store_false",
     help="use the normal opening/title/menu sequence instead of the test shortcut",
 )
+parser.add_argument(
+    "--showboat-recorder", action="store_true",
+    help="record read-only structured CPU telemetry (requires --showboat-ai)",
+)
+parser.add_argument(
+    "--no-showboat-recorder", dest="showboat_recorder", action="store_false",
+    help="disable structured CPU telemetry",
+)
 args = parser.parse_args()
-if (args.showboat_ai_debug or args.showboat_ai_hud or args.showboat_unlock_all or args.showboat_quickstart) and not args.showboat_ai:
-    parser.error("showboat debug/HUD/unlock/quickstart options require --showboat-ai")
+if (args.showboat_ai_debug or args.showboat_ai_hud or args.showboat_unlock_all or
+        args.showboat_quickstart or args.showboat_recorder) and not args.showboat_ai:
+    parser.error("showboat debug/HUD/unlock/quickstart/recorder options require --showboat-ai")
 
 if any({args.debug, args.asm, args.linkable}) or args.sym == "on":
     args.non_matching = True
@@ -2051,6 +2060,10 @@ if args.showboat_ai:
     defense_source = "melee/mod/showboat_defense.c"
     config.libs.append(MeleeLib("Showboat defense", [Object(Matching, defense_source)]))
     config.extra_dol_objects.append(defense_source)
+    recorder_source = "melee/mod/showboat_recorder.c"
+    if args.showboat_recorder:
+        config.libs.append(MeleeLib("Showboat recorder", [Object(Matching, recorder_source)]))
+        config.extra_dol_objects.append(recorder_source)
     if args.showboat_ai_hud:
         hud_source = "melee/mod/showboat_hud.c"
         config.libs.append(MeleeLib("Showboat HUD", [Object(Matching, hud_source)]))
@@ -2065,11 +2078,16 @@ if args.showboat_ai:
                 obj.options["extra_cflags"].append("-DSHOWBOAT_UNLOCK_ALL=1")
             if obj.name in {
                 showboat_source, combat_source, movement_source, defense_source,
-                "melee/mod/showboat_hud.c",
+                recorder_source, "melee/mod/showboat_hud.c",
                 "melee/ft/kinds/ftCommon/ftCo_0A01.c",
                 "melee/ft/ftcpuattack.c", "melee/pl/player.c", "melee/ft/fighter.c",
             }:
                 obj.options["extra_cflags"].append("-DSHOWBOAT_AI=1")
+                if args.showboat_recorder and obj.name in {
+                    showboat_source, combat_source, movement_source, defense_source,
+                    recorder_source,
+                }:
+                    obj.options["extra_cflags"].append("-DSHOWBOAT_RECORDER=1")
                 if args.showboat_ai_debug:
                     obj.options["extra_cflags"].append("-DSHOWBOAT_AI_DEBUG=1")
                 if args.showboat_ai_hud:

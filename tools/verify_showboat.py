@@ -32,8 +32,13 @@ def main():
                         help="expect a build made with --no-showboat-unlock-all")
     parser.add_argument("--no-quickstart", action="store_true",
                         help="expect a build made with --no-showboat-quickstart")
+    parser.add_argument("--no-recorder", action="store_true",
+                        help="expect a build made with --no-showboat-recorder")
     args = parser.parse_args()
     expected = EXPECTED_OBJECTS.copy()
+    recorder_object = "melee/mod/showboat_recorder.o"
+    if not args.no_recorder:
+        expected.add(recorder_object)
     if not args.no_quickstart:
         expected.add("melee/gm/gmboot.o")
     if not args.no_unlocks:
@@ -71,9 +76,20 @@ def main():
     current = ROOT / "build/showboat/GALE01/src"
     baseline = ROOT / "build/cstick/GALE01/src"
     require(baseline.is_dir(), "Need preserved C-stick source objects for isolation check")
+    # An opt-out may leave yesterday's generated recorder.o on disk. Confirm
+    # the current link graph excludes it before ignoring that stale artifact.
+    ninja = (ROOT / "build.ninja").read_text().replace("$\n", "")
+    link = [line for line in ninja.splitlines()
+            if line.startswith("build build/showboat/GALE01/main.elf ")]
+    require(len(link) == 1, "Need current showboat link graph; run build helper")
+    linked_recorder = "build/showboat/GALE01/src/" + recorder_object in link[0].split()
+    require(linked_recorder == (not args.no_recorder), "Recorder link option mismatch")
+    require((b"SBREC " in data) == (not args.no_recorder), "Recorder DOL marker mismatch")
     changed = set()
     for obj in current.rglob("*.o"):
         name = obj.relative_to(current)
+        if args.no_recorder and name.as_posix() == recorder_object:
+            continue
         old = baseline / name
         if not old.exists() or obj.read_bytes() != old.read_bytes():
             changed.add(name.as_posix())
@@ -83,13 +99,14 @@ def main():
         sha1=hashlib.sha1(data).hexdigest(), entry=hex(entry),
         bss=[hex(bss), bss_size], valid_sections=sections,
         original_dols_preserved=True, test_unlocks=not args.no_unlocks,
-        test_quickstart=not args.no_quickstart,
+        test_quickstart=not args.no_quickstart, recorder=not args.no_recorder,
         objects_different_from_cstick=sorted(changed),
     )
     (ROOT / "build/showboat/verification.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"Validated {report['dol']}: {len(data):,} bytes, SHA-1 {report['sha1']}")
     count = 4 + int(not args.no_unlocks) + int(not args.no_quickstart)
-    print(f"Stock DOLs unchanged; exactly {count} hooked objects plus the AI/combat/movement/defense/HUD modules differ from C-stick.")
+    modules = "AI/combat/movement/defense/HUD" + ("/recorder" if not args.no_recorder else "")
+    print(f"Stock DOLs unchanged; exactly {count} hooked objects plus the {modules} modules differ from C-stick.")
 
 
 if __name__ == "__main__":

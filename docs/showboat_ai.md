@@ -4,6 +4,111 @@ Tracking: https://github.com/cmoyates/melee/issues/1
 Branch: `mod/showboat-ai`, based on the existing single-player C-stick mod.
 Initial working tree was clean; that mod is retained.
 
+## Read-only match recorder
+
+The default showboat build now includes structured **SBREC v1** telemetry and an
+[offline analyzer](../tools/analyze_showboat.py). This observes the same legal bot;
+it does not change its decisions, controls, physics, resources, RNG or timers.
+See the [schema and design contract](../research/showboat_recorder.md).
+
+After the tester explicitly approves a launch, the normal launch helper creates
+an exclusive directory under `build/showboat/recordings/` containing:
+
+- `runtime.log`: Dolphin output, structured records and existing diagnostics.
+- `launch.json`: immutable launch-time DOL hash/size, recorder marker, optional
+  controller hash and local Git provenance; written **before** execution.
+- `metadata.json`: completion metadata with return code and UTC times. SIGKILL
+  can prevent this final file, but launch provenance and written logs remain.
+
+The helper refuses a detected running Dolphin **before copying the virtual DOL**.
+No automatic launch/restart, upload, save modification or controller remapping.
+Logs use disk, not an ever-growing RAM buffer; disk retention is manual. Process
+checking is point-in-time, not a cross-application lock.
+
+### What is observed
+
+At the existing post-VM hook, after the combat L-cancel overlay and before game
+input preprocessing, the recorder reads both fighters' native motion/animation,
+position/velocity, percent, stocks, shield health and state flags. It also records
+native CPU priority/cached attack/threat, ego/HUD intent, VM ownership and raw CPU
+buttons/sticks/triggers. These are **CPU outputs**, not human/controller-hardware
+input, and not an atomic end-of-frame world snapshot.
+
+Snapshots occur on important state/input/event changes and every 12 observed
+frames otherwise, capped at one per player/native frame. Tactic probes run at
+actual branches, without rerunning a planner. Per-tactic reason histograms flush
+every 60 observed updates and at segment end. Uncalled layers are
+`not_evaluated`, not failed attempts. Each snapshot also carries the five local
+reason values; these are not extra counts or reasons for unobserved frames.
+Flush IDs distinguish batches sharing the same native clock value. Counts mean
+observed updates, not unique frames or durations. Compound gates remain honest
+branch/group labels, not invented exact predicates.
+
+Separate event bits distinguish taunt/Punch/grab/aerial acknowledgment, wavedash
+landing acknowledgment, custom powershield contact and an L-cancel **sample**.
+The latter does not prove reduced lag; accepted attacks do not prove connected
+hits. Native motion entries are observed transitions, not complete action totals.
+
+### Analyze a capture
+
+```sh
+.venv/bin/python tools/analyze_showboat.py build/showboat/recordings/<capture>
+.venv/bin/python tools/analyze_showboat.py build/showboat/recordings/<capture> \\
+  --json build/showboat/report.json --markdown build/showboat/report.md
+# Focus on one observed segment:
+.venv/bin/python tools/analyze_showboat.py <runtime.log> --segment 1
+```
+
+The report includes coverage/gaps, native state/priority intervals, custom events,
+rejection counts, sampled ego range, comparable net percent increases, stock changes,
+positions and a bounded timeline. It explicitly separates initial sightings,
+continuous transitions and unknown intervals. Percent changes are not attributed
+hit damage; stock changes are not confirmed KOs/wins. Airborne is not offstage:
+v1 has no complete stage geometry or offstage flag. Sparse positions alone do not
+prove useful wavedash displacement or recovery success.
+
+A recording segment is **not necessarily a whole match**. Spawn/identity changes,
+clock rollback, context changes and suspension can split it. End is a recording
+lifecycle event, not a match result; EOF/open segments and unflushed tails are
+reported as incomplete. Old pre-recorder logs remain partial legacy diagnostics;
+nothing can reconstruct unrecorded past frames.
+
+### Opt out / baseline
+
+```sh
+sh tools/build_showboat.sh --no-showboat-recorder
+.venv/bin/python tools/verify_showboat.py --no-recorder
+# Restore default recorder-enabled build, without launching:
+sh tools/build_showboat.sh
+```
+
+Raw configure defaults recording **off**; `--showboat-recorder` requires
+`--showboat-ai` but not debug/HUD. Disabled macros do not evaluate arguments.
+Recorder opt-out reproduces the entire preceding ego-build DOL byte-for-byte
+(SHA-1 `0643071c098d78ab6d3339e3cc931647436b3594`). No new native hooks are added.
+Rebuilding does not alter an already-running game or its virtual-disc DOL.
+Logging/formatting can still cost runtime; offline tests do not establish emulator
+speed or recording overhead. Live SBREC output awaits a tester-approved launch.
+
+### Recorder offline checkpoint
+
+- **364 tests pass**: 235 retained/main-orchestration tests, 45 recorder tests,
+  66 analyzer tests, 16 capture tests and two configuration tests. The 123 main
+  AI cases run under recorder 0/1 × debug 0/1 with sanitizers; recorder C has its
+  own typed read-only guards and actual-C-to-analyzer CLI seam checks.
+- Repeated-clock flushes, sampled reasons, zero-stock Time percent observations,
+  live/crash launch metadata, malformed/truncated input and output-source alias
+  protection have explicit coverage. Host fixtures are not retail gameplay.
+- Native build/verifier pass. Six modules × recorder 0/1 × debug 0/1 pass MWCC
+  `-warn all` without module-local diagnostics; six disabled hooks remain
+  byte-identical to C-stick. Recorder-off full-DOL comparison passes.
+- Recorder-enabled DOL: **4,506,976 bytes**, SHA-1
+  `690249dfe765ebdfefff6eb861df691c92cc2aca`. Stock DOLs remain unchanged.
+- Existing playtest virtual DOL remains
+  `0643071c098d78ab6d3339e3cc931647436b3594`; controller mapping remains
+  `00dc2b7a5339493fe11fcf93e3adba16e93e0451`. No new Dolphin launch or live
+  SBREC verification was performed for this checkpoint.
+
 ## V2 direction: competence before ego
 
 The target is a skilled, infuriating opponent that sometimes prefers keeping a
@@ -58,7 +163,7 @@ launch or restart Dolphin until the tester explicitly confirms. The previous
 quickstart playtest exited cleanly; a new build is not runtime-tested merely
 because compilation or host fixtures pass.
 
-### Current offline checkpoint
+### Ego-build checkpoint (before recorder)
 
 - **221 tests pass:** 109 personality/orchestration, 29 combat, 53 movement,
   24 defense, HUD, two unlock and three quickstart tests. Actual-C debug 0/1

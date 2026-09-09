@@ -2,6 +2,7 @@
 #include "showboat_ai.h"
 #include "showboat_combat.h"
 #include "showboat_defense.h"
+#include "showboat_recorder.h"
 #include "showboat_movement.h"
 
 #if SHOWBOAT_AI_HUD
@@ -147,6 +148,7 @@ void ShowboatAI_ResetSlot(int slot)
         ShowboatCombat_ResetSlot(slot);
         ShowboatMovement_ResetSlot(slot);
         ShowboatDefense_ResetSlot(slot);
+        ShowboatRecorder_ResetSlot(slot);
         memset(&sb_states[slot], 0, sizeof(SB_State));
     }
 }
@@ -329,6 +331,7 @@ static void SB_Forget(SB_State* s)
 static void SB_Stop(Fighter* fp, SB_State* s, char* reason)
 {
     if (s->action != SB_NONE) {
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_CANCELLED);
         SB_Log(fp, s, reason);
         if (SB_ScriptMatches(fp, s)) {
             /* Done leaves sticks held. Release only our exact old VM, never
@@ -407,6 +410,7 @@ static bool SB_Takeover(Fighter* fp)
 void ShowboatAI_Suspend(Fighter* fp)
 {
     SB_State* s;
+    ShowboatRecorder_Suspend(fp);
     if (fp->player_id >= SB_SLOTS) {
         return;
     }
@@ -428,6 +432,7 @@ void ShowboatAI_Suspend(Fighter* fp)
 
 static void SB_Start(Fighter* fp, SB_State* s, SB_Action action, char* reason)
 {
+    ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_STARTED);
     s->action = action;
     s->age = 0;
     s->taunt_settle = 0;
@@ -517,10 +522,16 @@ static bool SB_DanceInput(Fighter* fp, SB_State* s, Fighter* target)
     bool settling = s->offstage_style && s->age == 0 &&
                     (fp->motion_id == ftCo_MS_Run ||
                      fp->motion_id == ftCo_MS_RunBrake);
+#if SHOWBOAT_RECORDER
+    if (s->script_size > 0) {
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_ACTIVE);
+    }
+#endif
     if ((s->script_size ? !SB_Continue(fp, s) : !SB_Takeover(fp)) ||
         (fp->cpu.x18 != 1 && fp->cpu.x18 != 10))
     {
         SB_Stop(fp, s, "dance yields: native VM/cache/priority");
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_INPUT_OR_SCRIPT);
         return false;
     }
     if ((!motion_ok && !settling) || fp->x2219_b5 || SB_Forced(fp) ||
@@ -534,6 +545,7 @@ static bool SB_DanceInput(Fighter* fp, SB_State* s, Fighter* target)
                              SB_NeutralPunish(target)))
     {
         SB_Stop(fp, s, "dance yields: pressure/punish/clearance");
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_GEOMETRY_OR_WINDOW);
         return false;
     }
     if (settling) {
@@ -542,6 +554,7 @@ static bool SB_DanceInput(Fighter* fp, SB_State* s, Fighter* target)
          * safety gate above. Never infer a stance from this private counter. */
         if (s->taunt_settle >= 12) {
             SB_Stop(fp, s, "offstage dance yields: running failed to settle");
+            ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_BUDGET);
             return false;
         }
         ftCo_800B4A78(fp);
@@ -554,6 +567,7 @@ static bool SB_DanceInput(Fighter* fp, SB_State* s, Fighter* target)
          fp->cur_anim_frame >= 3.0f))
     {
         SB_Stop(fp, s, "dance complete; vanilla resumes");
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_COMPLETED);
         return false;
     }
     /* Fresh forward Dash cannot reverse during its first four frames. Hold
@@ -567,6 +581,7 @@ static bool SB_DanceInput(Fighter* fp, SB_State* s, Fighter* target)
     next = fp->cur_pos.x + s->dance_direction * 22.0f;
     if (next <= left.x + 18.0f || next >= right.x - 18.0f) {
         SB_Stop(fp, s, "dance yields: insufficient next-leg runway");
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_GEOMETRY_OR_WINDOW);
         return false;
     }
     ftCo_800B4A78(fp);
@@ -592,11 +607,17 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
     int duration = s->action == SB_SWAGGER ? (s->offstage_style ? 12 : 22) : 3;
     bool compatible = SB_GroundFree(fp);
     float distance = SB_Abs(target->cur_pos.x - fp->cur_pos.x);
+#if SHOWBOAT_RECORDER
+    if (s->script_size > 0) {
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_ACTIVE);
+    }
+#endif
     if (s->action == SB_DANCE) {
         return SB_DanceInput(fp, s, target);
     }
     if (s->script_size ? !SB_Continue(fp, s) : !SB_Takeover(fp)) {
         SB_Stop(fp, s, "flourish yields: native VM/cache/priority");
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_INPUT_OR_SCRIPT);
         return false;
     }
     if (s->action == SB_SWAGGER &&
@@ -612,6 +633,7 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
     }
     if (s->action == SB_TAUNT && s->age < 2 && !SB_TauntSafe(fp, target)) {
         SB_Stop(fp, s, "cancelled: taunt reset budget expired");
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_BUDGET);
         return false;
     }
     if (s->action == SB_TAUNT && s->age == 0 && !SB_GroundFree(fp)) {
@@ -633,12 +655,14 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
                      fp->motion_id == ftCo_MS_AppealSL;
         if (s->age == 2 && compatible) {
             SB_Log(fp, s, "TAUNT acknowledged by normal action state");
+            ShowboatRecorder_Event(fp, SBR_EVENT_TAUNT_ACK);
         }
     }
     if (s->action == SB_PUNCH && s->age >= 2) {
         compatible = fp->motion_id == ftCa_MS_SpecialN;
         if (s->age == 2 && compatible) {
             SB_Log(fp, s, "PUNCH acknowledged by normal action state");
+            ShowboatRecorder_Event(fp, SBR_EVENT_PUNCH_ACK);
         }
     }
     if (!SB_Interior(fp) || !compatible || fp->x2219_b5 ||
@@ -653,6 +677,7 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
     }
     if (s->age >= duration) {
         SB_Stop(fp, s, "input sequence complete; vanilla resumes");
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_COMPLETED);
         return false;
     }
     ftCo_800B4A78(fp);
@@ -895,6 +920,7 @@ static bool SB_Update(Fighter* fp)
     preempted = s->action != SB_NONE && !SB_Continue(fp, s);
     if (preempted) {
         SB_Stop(fp, s, "flourish preempted by native VM/cache/priority");
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_INPUT_OR_SCRIPT);
     }
     /* Finish an already committed technical movement sequence before trying
      * another aerial tactic. It still yields to native safety/priority gates.
@@ -956,7 +982,16 @@ static bool SB_Update(Fighter* fp)
         return true;
     }
     if (preempted) { return false; } /* no same-update personality retake */
+    ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_NO_CANDIDATE);
     offstage = !danger && SB_OffstageWindow(fp, s, target);
+#if SHOWBOAT_RECORDER
+    if (!offstage && target->ground_or_air == GA_Air) {
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_GEOMETRY_OR_WINDOW);
+    }
+    if (offstage && s->offstage_cooldown) {
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_COOLDOWN);
+    }
+#endif
     if (s->offstage_style) {
         if (!offstage) {
             SB_Stop(fp, s, "offstage mockery yields: window closed/recent hit");
@@ -1002,11 +1037,21 @@ static bool SB_Update(Fighter* fp)
           fp->cpu.x18 == 8 || fp->cpu.x18 == 10))
     {
         SB_Stop(fp, s, "cancelled: serious/vanilla priority");
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY,
+            danger || fp->x2219_b5 ? SBR_PHYSICAL_OR_STATE :
+            s->serious ? SBR_EGO_OR_CAUTION : SBR_NATIVE_PRIORITY);
         return false;
     }
     if (s->action != SB_NONE) {
         return SB_Input(fp, s, target);
     }
+#if SHOWBOAT_RECORDER
+    if (s->cooldown) {
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_COOLDOWN);
+    } else if (s->ego < 30) {
+        ShowboatRecorder_Reason(fp, SBR_PERSONALITY, SBR_EGO_OR_CAUTION);
+    }
+#endif
     if (s->cooldown == 0 && s->ego >= 30 && !dead && SB_Takeover(fp) &&
         (SB_Standing(fp) || fp->motion_id == ftCo_MS_Dash) &&
         !SB_NeutralPunish(target) && dy < 24.0f &&
@@ -1061,13 +1106,14 @@ bool ShowboatAI_Update(Fighter* fp)
     /* Restore a prior borrowed analog channel before any slot reset, missing
      * target, eligibility gate or certified-taunt early return can bypass it. */
     ShowboatCombat_RestoreInput(fp);
+    ShowboatRecorder_Begin(fp);
     owns_input = SB_Update(fp);
     if (fp->player_id < SB_SLOTS && sb_states[fp->player_id].owner == fp &&
         ShowboatDefense_TakePerfect(fp))
     {
         SB_Ego(fp, &sb_states[fp->player_id], 8, "verified powershield contact");
     }
-#if SHOWBOAT_AI_HUD
+#if SHOWBOAT_AI_HUD || SHOWBOAT_RECORDER
     if (fp->player_id < SB_SLOTS) {
         SB_State* s = &sb_states[fp->player_id];
         if (s->owner == fp) {
@@ -1082,7 +1128,10 @@ bool ShowboatAI_Update(Fighter* fp)
             if (action == 0 && s->toy_frames > 0) {
                 action = 8; /* JUGGLE: recent control-over-finisher bias */
             }
+            ShowboatRecorder_Decision(fp, s->ego, action, owns_input);
+#if SHOWBOAT_AI_HUD
             ShowboatHUD_Update(fp, s->ego, action, s->serious);
+#endif
         }
     }
 #endif
@@ -1093,6 +1142,16 @@ void ShowboatAI_PostInput(Fighter* fp)
 {
     if (SB_Eligible(fp) && sb_states[fp->player_id].owner == fp) {
         ShowboatCombat_PostInput(fp);
+#if SHOWBOAT_RECORDER
+        {
+            int slot = sb_states[fp->player_id].opponent_slot;
+            Fighter_GObj* other = slot >= 0 && slot < SB_SLOTS ?
+                                  Player_GetEntity(slot) : NULL;
+            ShowboatRecorder_Frame(fp, other != NULL ? GET_FIGHTER(other) : NULL);
+        }
+#endif
+    } else {
+        ShowboatRecorder_Suspend(fp);
     }
 }
 

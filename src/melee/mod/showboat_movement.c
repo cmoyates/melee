@@ -3,6 +3,7 @@
  * own all motion and the unmodified p_ftCommonData->x344 landing lag (10).
  * Geometry/threat predictions are conservative vetoes, NOT hit guarantees. */
 #include "showboat_movement.h"
+#include "showboat_recorder.h"
 
 #include <melee/ft/fighter.h>
 #include <melee/ft/ftanim.h>
@@ -406,6 +407,9 @@ static bool SM_Opportunity(Fighter* fp, Fighter* target, SM_State* s, bool start
 {
     float gap, dx, vx, vy, coast, slide, horizon, closing;
     int toward;
+    /* Reached planner group: motion/protection/support, spacing/commitment,
+     * dodge constants and projected runway. A queued input overrides this. */
+    ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_GEOMETRY_OR_WINDOW);
     if (!SM_NormalMotion(fp, true) || !SM_NormalMotion(target, false) ||
         ftColl_8007B868(fp->gobj) != 0 || ftColl_8007B868(target->gobj) != 0 ||
         !(target->facing_dir == 1.0f || target->facing_dir == -1.0f) ||
@@ -518,6 +522,7 @@ static bool SM_Input(Fighter* fp, SM_State* s, SM_Phase phase)
      * ceases. No R pulse: PressR also writes an analog trigger; L is digital.
      * EscapeAir_CheckInput checks pressed L/R, not merely synthetic LR. */
     if (SM_SCRIPT_MAX > (int) sizeof(fp->cpu.buffer)) {
+        ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_BUDGET);
         SM_Stop(fp, s, false, "script buffer too small");
         return false;
     }
@@ -540,6 +545,8 @@ static bool SM_Input(Fighter* fp, SM_State* s, SM_Phase phase)
     if (s->phase != phase) { s->phase_age = 0; }
     s->phase = phase;
     if (phase == SM_L) { SM_Log(fp, "first Jump; dodge sample queued"); }
+    ShowboatRecorder_Reason(fp, SBR_MOVEMENT,
+                           phase == SM_NEUTRAL ? SBR_STARTED : SBR_ACTIVE);
     return true;
 }
 
@@ -547,9 +554,14 @@ bool ShowboatMovement_Update(Fighter* fp, Fighter* target)
 {
     SM_State* s;
     bool sampled, transition;
+    ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_NO_CANDIDATE);
     /* A nonprimary Falcon must not erase the primary's slot sidecar. */
-    if (fp == NULL || fp->player_id >= SM_SLOTS) { return false; }
+    if (fp == NULL || fp->player_id >= SM_SLOTS) {
+        ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_PHYSICAL_OR_STATE);
+        return false;
+    }
     if (fp->gobj == NULL || Player_GetEntity(fp->player_id) != fp->gobj) {
+        ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_PHYSICAL_OR_STATE);
         ShowboatMovement_Suspend(fp);
         return false;
     }
@@ -567,6 +579,8 @@ bool ShowboatMovement_Update(Fighter* fp, Fighter* target)
             fp->motion_id == ftCo_MS_LandingFallSpecial &&
             fp->ground_or_air == GA_Ground && fp->facing_dir == s->facing)
         {
+            ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_COMPLETED);
+            ShowboatRecorder_Event(fp, SBR_EVENT_WAVEDASH_LANDING_ACK);
             SM_Stop(fp, s, true, "landing acknowledged; release/yield");
             return false;
         }
@@ -576,10 +590,16 @@ bool ShowboatMovement_Update(Fighter* fp, Fighter* target)
          (s->target != target || s->target_spawn != target->x8_spawnNum ||
           fp->facing_dir != s->facing || s->age > SM_BUDGET)))
     {
+        /* Broad constants/eligibility/items/target/priority/facing/age group. */
+        ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_PHYSICAL_OR_STATE);
         SM_Stop(fp, s, false, "eligibility/target/priority/budget");
         return false;
     }
     if (s->phase == SM_IDLE) {
+        /* Fallback for the ground/input/VM admission group. Only a reached
+         * opportunity planner overwrites it with geometry/window. */
+        ShowboatRecorder_Reason(fp, SBR_MOVEMENT,
+            s->cooldown ? SBR_COOLDOWN : SBR_PHYSICAL_OR_STATE);
         if (s->cooldown || !SM_JumpGround(fp) || !SM_ButtonsClear(fp, 0) ||
             !SM_MundaneVM(fp) || !SM_Opportunity(fp, target, s, true)) { return false; }
         s->target = target;
@@ -607,6 +627,8 @@ bool ShowboatMovement_Update(Fighter* fp, Fighter* target)
             (!SM_TargetIdleMotion(target) && !SM_Committed(target, 0.0f)) ||
             !SM_Floor(fp, target, s, false))
         {
+            /* Combined motion/VM/age/input/target/floor cancellation. */
+            ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_CANCELLED);
             SM_Stop(fp, s, false, "dodge unconfirmed/replaced or floor lost");
             return false;
         }
@@ -616,6 +638,8 @@ bool ShowboatMovement_Update(Fighter* fp, Fighter* target)
     transition = (s->phase == SM_X && fp->motion_id == ftCo_MS_KneeBend) ||
                  (s->phase == SM_SQUAT && fp->ground_or_air == GA_Air &&
                   (fp->motion_id == ftCo_MS_JumpF || fp->motion_id == ftCo_MS_JumpB));
+    /* A reached opportunity planner may replace this VM/input group. */
+    ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_INPUT_OR_SCRIPT);
     if ((!sampled && !(transition && SM_ClearedVM(fp))) ||
         !SM_ButtonsClear(fp, s->phase == SM_X ? HSD_PAD_X : 0) ||
         !SM_Opportunity(fp, target, s, false))
@@ -665,6 +689,8 @@ bool ShowboatMovement_Update(Fighter* fp, Fighter* target)
     default:
         break;
     }
+    /* Phase fallthrough: neutral/jump acknowledgment, age or sweep window. */
+    ShowboatRecorder_Reason(fp, SBR_MOVEMENT, SBR_CANCELLED);
     SM_Stop(fp, s, false, "failed transition/late jump; no repeated pulse");
     return false;
 }

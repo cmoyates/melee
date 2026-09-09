@@ -5,8 +5,10 @@ Run: python3 -m unittest discover -s tools/tests -p 'test_showboat_ai.py' -v
 Or:  python3 tools/tests/test_showboat_ai.py -v
 
 Requires clang; no game assets, configure step, target SDK, or Python packages.
-Both debug modes run with AddressSanitizer and UndefinedBehaviorSanitizer. The
-real module is #included, unmodified, so its private state/helpers are exercised.
+The recorder 0/1 x debug 0/1 matrix runs with AddressSanitizer and
+UndefinedBehaviorSanitizer. Explicit recorder spies use the real header; the
+recorder implementation is not linked here (it has a separate suite). The real
+main module is #included, unmodified, so its private state/helpers are exercised.
 Game layouts/queries and a small input-script VM are stubs, not the game engine:
 these tests do NOT prove in-game animation timing, collision, stock arbitration,
 build opt-in wiring, PPC ABI correctness, or behavior in Dolphin/hardware.
@@ -95,13 +97,14 @@ class ShowboatHostTests(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text('#include "sb_test_game.h"\n')
         cls.binaries = []
-        for debug in (0, 1):
-            binary = work / f"showboat-debug-{debug}"
+        for recorder, debug in ((0, 0), (0, 1), (1, 0), (1, 1)):
+            binary = work / f"showboat-recorder-{recorder}-debug-{debug}"
             command = [
                 compiler, "-std=c99", "-O1", "-g", "-Wall", "-Wextra",
                 "-Werror", "-Wno-sign-compare",  # native s32 spawn vs u32 state
                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                 f"-DSHOWBOAT_AI_DEBUG={debug}", "-DSHOWBOAT_AI_HUD=0",
+                f"-DSHOWBOAT_RECORDER={recorder}",
                 "-I", str(include),
                 "-I", str(ROOT / "src/melee/mod"), str(HARNESS),
                 "-o", str(binary),
@@ -109,7 +112,7 @@ class ShowboatHostTests(unittest.TestCase):
             result = subprocess.run(command, capture_output=True, text=True, timeout=60)
             if result.returncode:
                 raise AssertionError(
-                    f"Host compile failed (debug={debug}):\n"
+                    f"Host compile failed (recorder={recorder}, debug={debug}):\n"
                     f"{result.stdout}{result.stderr}"
                 )
             cls.binaries.append(binary)

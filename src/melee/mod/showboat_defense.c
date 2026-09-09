@@ -19,6 +19,7 @@
  *   deliberately favor missed credit over attributing a projectile/retap.
  */
 #include "showboat_defense.h"
+#include "showboat_recorder.h"
 
 #include <melee/ft/fighter.h>
 #include <melee/ft/ftcmdscript.h>
@@ -209,6 +210,9 @@ static bool SD_Threat(Fighter* fp, Fighter* target)
     bool intersects = false;
     float radius = fp->cpu.x568 * 0.5f;
     Vec3 body = fp->cur_pos;
+    /* Reached threat group: cached target/attack, physical/interior limits,
+     * supported capsules and intersection. Not an atomic collision miss. */
+    ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_GEOMETRY_OR_WINDOW);
     /* Grounded common normals only: no aerials, grabs, getup/ledge attacks,
      * character specials (including BB768's heuristics), items or throws. */
     if (fp->cpu.xF8_b12 != 1 || fp->cpu.xF0 != target ||
@@ -276,10 +280,15 @@ static void SD_Handoff(Fighter* fp, SD_State* s)
 bool ShowboatDefense_Update(Fighter* fp, Fighter* target)
 {
     SD_State* s;
-    if (fp == NULL || fp->player_id >= SD_SLOTS) { return false; }
+    ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_NO_CANDIDATE);
+    if (fp == NULL || fp->player_id >= SD_SLOTS) {
+        ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_PHYSICAL_OR_STATE);
+        return false;
+    }
     s = SD_Find(fp);
     if (s == NULL) {
         if (SD_Owner(fp) != NULL) {
+            ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_CANCELLED);
             ShowboatDefense_Suspend(fp);
             return false; /* Respawn cleanup cannot also start a new attempt. */
         }
@@ -289,12 +298,15 @@ bool ShowboatDefense_Update(Fighter* fp, Fighter* target)
         s->spawn = fp->x8_spawnNum;
     }
     if (!SD_Live(fp, target)) {
+        /* Live self/target identities and singles eligibility as one group. */
+        ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_TARGET);
         ShowboatDefense_Suspend(fp);
         return false;
     }
     if (s->opponent != NULL && (s->opponent != target ||
                                s->opponent_spawn != target->x8_spawnNum))
     {
+        ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_TARGET);
         ShowboatDefense_Suspend(fp);
         return false;
     }
@@ -303,7 +315,11 @@ bool ShowboatDefense_Update(Fighter* fp, Fighter* target)
     if (s->toast > 0) { --s->toast; }
     if (!s->active) {
         if (!SD_Shield(fp) || s->toast == 0) { s->action = 0; }
-        if (s->cooldown > 0) { --s->cooldown; return false; }
+        if (s->cooldown > 0) {
+            ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_COOLDOWN);
+            --s->cooldown;
+            return false;
+        }
     } else {
         ++s->age; /* Bounded updates, NOT fabricated game/hitlag timers. */
         /* Observe BEFORE the hitlag exclusion: shield contact often IS in
@@ -318,6 +334,8 @@ bool ShowboatDefense_Update(Fighter* fp, Fighter* target)
             s->pending = true;
             s->action = 11;
             s->toast = SD_TOAST;
+            ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_SUCCESS);
+            ShowboatRecorder_Event(fp, SBR_EVENT_POWERSHIELD_CONTACT);
 #if SHOWBOAT_AI_DEBUG
             OSReport("SHOWBOAT DEFENSE P%d: fighter PS contact\n", fp->player_id + 1);
 #endif
@@ -329,6 +347,11 @@ bool ShowboatDefense_Update(Fighter* fp, Fighter* target)
                      fp->player_id + 1, fp->motion_id);
 #endif
         }
+        /* Preserve owned contact through its mandatory handoff. Otherwise
+         * default to the combined VM/input/priority/state/items/age group;
+         * only a reached threat planner can replace it with geometry/window. */
+        ShowboatRecorder_Reason(fp, SBR_DEFENSE,
+                               s->action == 11 ? SBR_SUCCESS : SBR_CANCELLED);
         if (!SD_OldVM(fp, s) || fp->cpu.csP == NULL ||
             (fp->cpu.csP == fp->cpu.buffer + SD_RESUME && !SD_HeldR(fp)) ||
             fp->cpu.x18 != 7 || fp->cpu.xA4 != 0 ||
@@ -341,12 +364,17 @@ bool ShowboatDefense_Update(Fighter* fp, Fighter* target)
             SD_Handoff(fp, s);
             return false;
         }
+        ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_ACTIVE);
         return true;
     }
     /* FRESH EMPTY defense7 only. No running/built script, A4, native R delay,
      * GuardOff cancel, or held shield release/repress for a new PS window.
      * Fighter input[0] is the previous naturally sampled output at this hook.
      * Exact zero analog is conservative, including synthesized digital L/R. */
+    /* First priority gate is atomic; otherwise use the fresh-VM/input/state/
+     * shield/items group until the threat planner is actually reached. */
+    ShowboatRecorder_Reason(fp, SBR_DEFENSE,
+        fp->cpu.x18 != 7 ? SBR_NATIVE_PRIORITY : SBR_INPUT_OR_SCRIPT);
     if (fp->cpu.x18 != 7 || fp->cpu.csP != NULL ||
         fp->cpu.command_duration != 0 || fp->cpu.write_pos != fp->cpu.buffer ||
         fp->cpu.xA4 != 0 || !SD_Standing(fp) || SD_Forced(fp) ||
@@ -366,6 +394,7 @@ bool ShowboatDefense_Update(Fighter* fp, Fighter* target)
     s->toast = 0;
     s->age = 0;
     s->action = 10;
+    ShowboatRecorder_Reason(fp, SBR_DEFENSE, SBR_STARTED);
 #if SHOWBOAT_AI_DEBUG
     OSReport("SHOWBOAT DEFENSE P%d: hardshield onset queued\n", fp->player_id + 1);
 #endif

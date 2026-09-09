@@ -40,6 +40,7 @@ static struct {
     Fighter* borrower;
     s8 saved_x;
     int resets[SB_SLOTS], restores, updates, aborts, posts, actions;
+    int reported_action; /* configurable HUD/recorder query, not combat policy */
     Fighter* last_actor;
     Fighter* last_target;
 } combat;
@@ -86,6 +87,8 @@ static unsigned char air_table[32], ground_table[32];
 static Fighter* const self = &fighters[0];
 static Fighter* const target = &fighters[1];
 static SB_State* const state = &sb_states[0];
+
+#include "recording_spies.c"
 
 static void valid_slot(int slot) { CHECK(slot >= 0 && slot < SB_SLOTS); }
 StKind Stage_80225194(void) { event(EV_QUERY); return world.stage; }
@@ -184,6 +187,7 @@ static void interpret(Fighter* fp)
         case CpuCmd_Done:
             CHECK(cpu->csP == cpu->write_pos);
             cpu->csP = NULL;
+            recording_mark(REC_VM, fp, 0, 0);
             return;
         default: CHECK(!"unimplemented input opcode (extend stub explicitly)");
         }
@@ -207,6 +211,7 @@ void ShowboatCombat_RestoreInput(Fighter* fp)
         fp->cpu.lstick.x = combat.saved_x;
         combat.borrowed = false;
     }
+    recording_mark(REC_RESTORE, fp, 0, 0);
 }
 bool ShowboatCombat_Update(Fighter* fp, Fighter* rival)
 {
@@ -217,6 +222,7 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* rival)
         event(EV_ABORT); ++combat.aborts; return false;
     }
     event(EV_COMBAT); ++combat.updates;
+    recording_mark(REC_COMBAT, fp, 0, 0);
     combat.last_actor = fp; combat.last_target = rival;
     if (!combat.owns_input) { return false; }
     ftCo_800B4A78(fp);
@@ -228,10 +234,13 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* rival)
 void ShowboatCombat_PostInput(Fighter* fp)
 {
     CHECK(fp != NULL); event(EV_POST); ++combat.posts; combat.last_actor = fp;
+    memcpy(&recording.post_cpu, &fp->cpu, sizeof(fp->cpu));
+    recording_mark(REC_POST, fp, 0, 0);
 }
 int ShowboatCombat_GetAction(Fighter* fp)
 {
-    CHECK(fp != NULL); event(EV_ACTION); ++combat.actions; return 5;
+    CHECK(fp != NULL); event(EV_ACTION); ++combat.actions;
+    return combat.reported_action;
 }
 
 /* Movement is an explicit orchestration spy here, not a fake wavedash engine.
@@ -253,6 +262,7 @@ int ShowboatMovement_GetAction(Fighter* fp)
 bool ShowboatMovement_Update(Fighter* fp, Fighter* rival)
 {
     CHECK(fp && rival && fp != rival); event(EV_MOVE); ++movement.updates;
+    recording_mark(REC_MOVEMENT, fp, 0, 0);
     movement.active = movement.owns_input;
     if (!movement.owns_input) { return false; }
     movement.owner = fp; movement.owner_slot = fp->player_id;
@@ -291,6 +301,7 @@ bool ShowboatDefense_Update(Fighter* fp, Fighter* rival)
 {
     CHECK(fp && rival && fp != rival); valid_slot(fp->player_id);
     ++defense.updates; defense.update_order = ++defense.clock;
+    recording_mark(REC_DEFENSE, fp, 0, 0);
     defense.update_events = event_count;
     defense.update_combat = combat.updates;
     defense.update_movement = movement.updates;
@@ -358,7 +369,9 @@ static bool update(Fighter* fp)
     result = ShowboatAI_Update(fp);
     tracing = false;
     CHECK(event_count > 0 && events[0] == EV_RESTORE);
-    CHECK(combat.actions == 0); /* personality suite explicitly disables HUD */
+#if !SHOWBOAT_RECORDER
+    CHECK(combat.actions == 0); /* HUD off; recording legitimately queries action */
+#endif
     CHECK(memcmp(&old_common, &common_data, sizeof(common_data)) == 0);
     CHECK(memcmp(&old_entities, &entities, sizeof(entities)) == 0);
     for (int i = 0; i < SB_SLOTS; ++i) {
@@ -416,7 +429,9 @@ static void dirty_input(Fighter* fp)
 static void setup(void)
 {
     tracing = false; event_count = 0;
+    memset(&recording, 0, sizeof(recording));
     memset(&combat, 0, sizeof(combat));
+    combat.reported_action = 5;
     memset(&movement, 0, sizeof(movement));
     memset(&defense, 0, sizeof(defense));
     memset(&test_taunt_rules, 0, sizeof(test_taunt_rules));
@@ -463,6 +478,8 @@ static void setup(void)
     memset(ground_table, 0x5A, sizeof(ground_table));
     fighter_data.x8[FTKIND_CAPTAIN] = air_table;
     clears = scripts = writes = 0;
+    /* Setup's bookkeeping resets must not leak into recorder observations. */
+    memset(&recording, 0, sizeof(recording));
 }
 static void init(void)
 {
@@ -2584,9 +2601,24 @@ static void test_defense_reset_slot_isolated_bounds_and_bookkeeping_only(void)
 }
 
 #include "ego_regressions.c"
+#include "recording_cases.c"
 
 #define CASE(name) { #name, test_##name }
 static const struct { const char* name; void (*run)(void); } cases[] = {
+    CASE(recording_begin_decision_vm_post_frame_order),
+    CASE(recording_output_channels_after_native_vm),
+    CASE(recording_decision_action_precedence),
+    CASE(recording_decision_after_verified_reward),
+    CASE(recording_no_frame_after_lost_eligibility),
+    CASE(recording_no_frame_after_lost_target),
+    CASE(recording_postinput_late_target_resolution),
+    CASE(recording_reset_slot_private_and_bounds),
+    CASE(recording_suspend_private_owner_lifecycle),
+    CASE(recording_owner_replacement_and_rebaseline),
+    CASE(recording_taunt_ack_not_queued),
+    CASE(recording_punch_ack_not_queued),
+    CASE(recording_last_reason_and_not_evaluated),
+    CASE(recording_reason_override_paths),
     CASE(normal_time_ko_taunt_without_stocks),
     CASE(time_ko_certificate_excludes_other_routes),
     CASE(time_ko_rechecks_certificate_before_up),

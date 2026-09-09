@@ -34,6 +34,12 @@ assets, emulator, production edits, or target build are involved.
   flourish handoff without clearing the new combat script, and PostInput gating.
   GetAction must remain unused with HUD disabled. Combat behavior needs its own
   tests; a spy returning true during danger proves delegation, not safe combat.
+- Four `ShowboatMovement` APIs are explicit orchestration spies using its real
+  header. They verify reset/suspend ordering, ego-independent starts after combat
+  declines, active movement precedence, no duplicate restart on a cancellation
+  update, and preservation of the new movement script when a flourish yields.
+  The actual wavedash sequence/geometry has a separate module suite; these spies
+  do not simulate jump or landing physics.
 - Script writers follow the corresponding subset of `ftcmdscript.c`: clear all
   controls and reset buffer; append command/argument; append Done and schedule.
   A separate tiny interpreter handles only Done, PressUp, PressB, SetLstickX/Y.

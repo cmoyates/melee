@@ -15,7 +15,8 @@ enum ShowboatHUD_Action {
     SHOWBOAT_HUD_GRAB = 5,
     SHOWBOAT_HUD_KNEE = 6,
     SHOWBOAT_HUD_UPAIR = 7,
-    SHOWBOAT_HUD_JUGGLE = 8
+    SHOWBOAT_HUD_JUGGLE = 8,
+    SHOWBOAT_HUD_WDASH = 9
 };
 
 /* Call on the game thread, after the normal scene/DevText setup, for a live

@@ -202,9 +202,43 @@ grab priorities still veto it. It never calls action-entry or CheckInput helpers
   it cancels. No digital L/R, airdodge, tech-counter write or landing-lag edit.
   Native DI/SDI/techs and recovery remain intact.
 
-Short-hop chasing, a full punish planner and learned opponent prediction are
-not implemented. Floor/ECB projections use current geometry and can be wrong;
+Offensive short-hop chasing, a full punish planner and learned opponent prediction
+are not implemented (the separate wavedash uses a hop only for grounded movement). Floor/ECB projections use current geometry and can be wrong;
 state acknowledgment proves acceptance, not connection or competitive strength.
+
+### Wavedash movement
+
+`showboat_movement.c/.h` adds an independent six-slot controller sequence; it is
+not an ego roll or an animation/physics patch. New starts are considered after
+combat declines. An active sequence is serviced before other aerial tactics or
+personality, while still yielding to native safety/priority changes. Suspend and
+slot/stock/target resets cancel only its own script; fresh native selections and
+replacement scripts are retained. The HUD label is `WDASH` (9).
+
+The sequence uses a real sampled neutral → single X → observed KneeBend with
+both jump buttons released → first actual Jump → digital shoulder plus diagonal
+down → observed EscapeAir or direct LandingFallSpecial. A same-frame landing can
+hide EscapeAir between CPU hooks; it must not be mistaken for failure. The
+engine's ordinary jumpsquat, airdodge and ten-frame landing lag remain intact.
+No input-counter repair, forced facing, position/velocity writes, or mutating
+CheckInput/Enter helpers. Missing acknowledgments/timeouts yield to vanilla.
+
+The intent is frequent useful repositioning, not a slower substitute for every
+run: approach at 65–110 units and committed-attack retreat at 45–65, initially
+on FD/Battlefield static main floors. Entry needs 40 units of edge clearance;
+22 must remain after the entire conservative coast/dodge/landing projection.
+Bounds use verified flat main-floor chains; the rival may occupy a coplanar outer
+strip, but our touchdown stays on its admitted line. Coast is an interval—friction
+cannot be assumed to preserve helpful momentum.
+Fast retreating rivals and momentum toward the rival during a retreat are vetoed.
+The diagonal is X=±90/Y=−64. An 18-update attempt budget and 30-update failed
+retry bound attempts; there is no success cooldown beyond engine actionability.
+Long-distance running, real punishes, defense, recovery, platforms and unsafe
+contexts retain vanilla behavior. No out-of-shield variant yet. Low ego and
+serious-mode personality suppression do not disable this technical movement.
+
+See [source/data research](../research/showboat_wavedash.md) for native state
+flags, input normalization, floor/landing behavior and verification limits.
 
 ### Implemented personality actions / tuning
 
@@ -290,7 +324,7 @@ runs the retail apploader and successfully reaches Melee initialization. The
 C-stick ISO baseline also initializes successfully.
 
 Debug prints include ego deltas/reasons, input action IDs (0 vanilla, 1 taunt,
-2 swagger, 3 Punch, 4 dance, 5 grab, 6 Knee, 7 up-air), age,
+2 swagger, 3 Punch, 4 dance, 5 grab, 6 Knee, 7 up-air, 9 wavedash), age,
 start/acknowledgment/exit/cancellation reasons and throttled eligible
 Knee/Stomp weighting messages. These weighting messages do not claim a move
 was selected or hit. Logs: `build/showboat/dolphin-user/Logs/dolphin.log`.
@@ -351,8 +385,8 @@ explicit spies; it is not a memory-card or UI emulator test.
 
 ### Unlock-enabled verification and current runtime
 
-- **99 tests pass**, including the two unlock tests, with existing AI/combat/HUD
-  regressions retained. Default build and validator pass: **4,453,984 bytes**,
+- At the unlock-only V2 checkpoint, **99 tests passed**, including the two unlock
+  tests and AI/combat/HUD regressions. Default build/validator: **4,453,984 bytes**,
   SHA-1 `d78122c75886b5a0a09e3698f424b90052cd534e`.
 - The explicit opt-out build also passes `verify_showboat.py --no-unlocks` and
   reproduces the previous V2 DOL **byte-for-byte** (SHA-1
@@ -386,8 +420,11 @@ and set level 9. Leave other slots NONE.
    landing-cancel logs and actual landing behavior, including at low ego.
 3. **Conversions:** watch for direct KNEE/UPAIR acknowledgment during aerial
    hitstun followups. Inputs/accepted action states do not alone prove hits.
-4. **Dance:** leave a medium neutral gap on FD/Battlefield's main floor. Look
-   for DANCE, real direction reversals, and immediate pressure/punish yielding.
+4. **Movement:** leave a medium neutral gap on FD/Battlefield's main floor.
+   Look for WDASH, a real short jump/down-diagonal airdodge and landing slide;
+   input logs alone do not prove displacement. Test that long gaps still use run
+   and real punishes/defense interrupt movement attempts. DANCE remains a separate
+   personality flourish with actual direction reversals.
    Test near edges and on platforms: no custom dashdance there.
 5. **KO:** let him take a stock while grounded centrally with time left in
    the death reset. Expect the real full TAUNT even at high percent/residual
@@ -418,7 +455,7 @@ CPU proves neither its strength nor its ability to sustain a real lead.
 - Long poses and dashdance support FD/Battlefield main floors with no existing
   items; no prediction of future item spawns. Other stages retain landing-cancel,
   standing-grab and existing conservative personality behavior, but no new
-  direct aerial interception, dance or KO-reset taunt.
+  direct aerial interception, wavedash, dance or KO-reset taunt.
   No intentional offstage style.
 - A started taunt/Punch cannot be magically cancelled by input ownership ending.
   Cancellation means vanilla controls resume, not forced escape from animation.
@@ -443,7 +480,33 @@ CPU proves neither its strength nor its ability to sustain a real lead.
 5. Tune frequent, interruptible disrespect from human feedback; a reckless
    flourish or a weak bot's missed punish is not the intended personality.
 
-## V2 verification and runtime status
+## Wavedash checkpoint verification and runtime
+
+- **155 tests pass**: 70 personality/orchestration cases, 29 combat groups,
+  53 movement cases, HUD and two unlock tests. Actual C, debug 0/1 and
+  ASan/UBSan; no synthetic input-age-to-motion or physics simulation.
+- Build and isolation validator pass: **4,472,992 bytes**, SHA-1
+  `e01be10808e5027b7eb87e6316d8a80f563c63b9`. Exactly five hooked objects plus
+  AI/combat/movement/HUD differ from C-stick. All five native hook units compiled
+  without showboat defines remain byte-identical to the C-stick baseline.
+- Four mod modules compile with MWCC `-warn all`, debug 0/1, without module-local
+  diagnostics (existing upstream header warnings remain). Python compilation,
+  shell syntax and `git diff --check` pass. Logs:
+  `build/showboat-wavedash-{tests,build,verify,checks}.log`.
+- Review fixes: bound the whole coast interval instead of crediting beneficial
+  momentum; veto interruptible attacks as retreat commitment; clear an exact old
+  movement VM after priority-only changes without losing the new priority/A4;
+  verify scaled stage geometry and connected coplanar rival supports.
+- Launched via the existing isolated virtual-disc helper, with the Switch Pro
+  controller detected and `DbLevel 0`. Post-load unlock readback remains
+  `characters=07ff stages=07ff options=ff`. Staged and virtual-disc DOLs match.
+  Runtime log: `build/showboat/v2-wavedash-stdout.log`.
+- **Boot is verified, actual wavedash displacement/frequency is not yet verified
+  in a human match.** Look for WDASH and confirm jump/dodge/landing logs, real
+  sliding, and useful pressure versus lost neutral frames. No strength claim
+  follows from a successful host suite or boot.
+
+## Historical V2 pre-wavedash verification
 
 - `sh tools/build_showboat.sh` succeeds. HUD/debug DOL:
   **4,453,920 bytes**, SHA-1 `f63c0cfb49c325e9dacb4f040f042e4464972d66`.

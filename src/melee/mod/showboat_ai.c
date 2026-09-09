@@ -1,6 +1,7 @@
 /* A personality, not a replacement CPU. All actions use the stock input VM. */
 #include "showboat_ai.h"
 #include "showboat_combat.h"
+#include "showboat_movement.h"
 
 #if SHOWBOAT_AI_HUD
 #include "showboat_hud.h"
@@ -121,8 +122,15 @@ void ShowboatAI_ResetSlot(int slot)
         ShowboatHUD_ResetSlot(slot);
 #endif
         ShowboatCombat_ResetSlot(slot);
+        ShowboatMovement_ResetSlot(slot);
         memset(&sb_states[slot], 0, sizeof(SB_State));
     }
+}
+
+static void SB_CancelTech(Fighter* fp)
+{
+    ShowboatMovement_Suspend(fp);
+    ShowboatCombat_Update(fp, NULL);
 }
 
 static bool SB_Eligible(Fighter* fp)
@@ -270,7 +278,7 @@ void ShowboatAI_Suspend(Fighter* fp)
         return;
     }
     ShowboatCombat_RestoreInput(fp);
-    ShowboatCombat_Update(fp, NULL); /* abort only a still-owned combat script */
+    SB_CancelTech(fp); /* abort only still-owned technical scripts */
     ShowboatCombat_ResetSlot(fp->player_id);
     SB_Stop(fp, s, "cancelled: CPU control suspended");
     s->celebration = 0;
@@ -463,6 +471,7 @@ static bool SB_Update(Fighter* fp)
     bool stock_match;
     bool stock_lost;
     bool spawned;
+    bool movement_active;
 
     if (fp->player_id >= SB_SLOTS) {
         return false;
@@ -470,7 +479,7 @@ static bool SB_Update(Fighter* fp)
     s = &sb_states[fp->player_id];
     if (!SB_Eligible(fp)) {
         if (s->owner == fp) {
-            ShowboatCombat_Update(fp, NULL);
+            SB_CancelTech(fp);
             SB_Stop(fp, s, "disabled: CPU configuration changed");
             ShowboatAI_ResetSlot(fp->player_id);
         }
@@ -483,14 +492,14 @@ static bool SB_Update(Fighter* fp)
          Player_GetEntityAtIndex(slot, 1) != target_gobj &&
          !GET_FIGHTER(Player_GetEntityAtIndex(slot, 1))->x221F_b3))
     {
-        ShowboatCombat_Update(fp, NULL);
+        SB_CancelTech(fp);
         SB_Stop(fp, s, "cancelled: lost singles opponent");
         ShowboatAI_ResetSlot(fp->player_id);
         return false;
     }
     target = GET_FIGHTER(target_gobj);
     if (ftCo_IsAlly(fp, target)) {
-        ShowboatCombat_Update(fp, NULL);
+        SB_CancelTech(fp);
         SB_Stop(fp, s, "disabled: ally only");
         ShowboatAI_ResetSlot(fp->player_id);
         return false;
@@ -501,7 +510,7 @@ static bool SB_Update(Fighter* fp)
     stock_match = gm_8016B094();
     if (s->owner != fp || s->opponent_slot != slot) {
         if (s->owner == fp) {
-            ShowboatCombat_Update(fp, NULL);
+            SB_CancelTech(fp);
             SB_Stop(fp, s, "cancelled: opponent identity changed");
         }
         ShowboatAI_ResetSlot(fp->player_id);
@@ -546,8 +555,9 @@ static bool SB_Update(Fighter* fp)
             s->stock_loss_pending = !s->spawn_loss_pending;
             s->spawn_loss_pending = false;
         }
-        ShowboatCombat_Update(fp, NULL);
+        SB_CancelTech(fp);
         ShowboatCombat_ResetSlot(fp->player_id);
+        ShowboatMovement_ResetSlot(fp->player_id);
         SB_Stop(fp, s, "cancelled: new life");
         s->serious = 120;
         s->celebration = 0;
@@ -643,6 +653,13 @@ static bool SB_Update(Fighter* fp)
     if (!vulnerable) {
         s->vulnerable = false;
     }
+    /* Finish an already committed technical movement sequence before trying
+     * another aerial tactic. It still yields to native safety/priority gates.
+     * Never start a second movement attempt on the same cancellation update. */
+    movement_active = ShowboatMovement_GetAction(fp) != 0;
+    if (movement_active && ShowboatMovement_Update(fp, target)) {
+        return true;
+    }
     /* A certified KO reset overrides emotional caution, NEVER physical
      * danger. It has its own cooldown, so a tiny shuffle cannot suppress it. */
     if (!danger && !fp->x2219_b5 &&
@@ -667,6 +684,15 @@ static bool SB_Update(Fighter* fp)
         if (s->action != SB_NONE) {
             SB_Log(fp, s, "flourish yields to combat conversion");
             s->action = SB_NONE; /* preserve the new combat script */
+        }
+        return true;
+    }
+    if (!movement_active && s->action != SB_TAUNT && s->action != SB_PUNCH &&
+        ShowboatMovement_Update(fp, target))
+    {
+        if (s->action != SB_NONE) {
+            SB_Log(fp, s, "flourish yields to technical wavedash");
+            s->action = SB_NONE; /* preserve the new movement script */
         }
         return true;
     }
@@ -752,6 +778,9 @@ bool ShowboatAI_Update(Fighter* fp)
         if (s->owner == fp) {
             int action = s->action != SB_NONE ? s->action :
                          ShowboatCombat_GetAction(fp);
+            if (action == 0) {
+                action = ShowboatMovement_GetAction(fp);
+            }
             if (action == 0 && s->toy_frames > 0) {
                 action = 8; /* JUGGLE: recent control-over-finisher bias */
             }

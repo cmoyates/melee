@@ -31,7 +31,8 @@ struct TestCommonData* p_ftCommonData = &common_data;
 static struct TestEntities entities;
 struct TestEntities* HSD_GObj_Entities = &entities;
 
-enum { EV_RESTORE, EV_RESET, EV_COMBAT, EV_ABORT, EV_POST, EV_ACTION, EV_QUERY, EV_CLEAR };
+enum { EV_RESTORE, EV_RESET, EV_COMBAT, EV_ABORT, EV_POST, EV_ACTION, EV_QUERY, EV_CLEAR,
+       EV_MOVE, EV_MOVE_SUSPEND, EV_MOVE_RESET };
 static int events[512], event_count;
 static bool tracing;
 static struct {
@@ -42,6 +43,11 @@ static struct {
     Fighter* last_actor;
     Fighter* last_target;
 } combat;
+static struct {
+    bool owns_input, active;
+    Fighter* owner;
+    int owner_slot, updates, suspends, resets[SB_SLOTS];
+} movement;
 static void event(int kind)
 {
     if (tracing) {
@@ -211,6 +217,34 @@ int ShowboatCombat_GetAction(Fighter* fp)
     CHECK(fp != NULL); event(EV_ACTION); ++combat.actions; return 5;
 }
 
+/* Movement is an explicit orchestration spy here, not a fake wavedash engine.
+ * Actual jump/dodge/landing sequences and cleanup have a separate C suite. */
+void ShowboatMovement_ResetSlot(int slot)
+{
+    valid_slot(slot); event(EV_MOVE_RESET); ++movement.resets[slot];
+    if (movement.owner_slot == slot) { movement.active = false; movement.owner = NULL; }
+}
+void ShowboatMovement_Suspend(Fighter* fp)
+{
+    CHECK(fp); event(EV_MOVE_SUSPEND); ++movement.suspends;
+    if (movement.owner == fp) { movement.active = false; }
+}
+int ShowboatMovement_GetAction(Fighter* fp)
+{
+    CHECK(fp); return movement.active && movement.owner == fp ? 9 : 0;
+}
+bool ShowboatMovement_Update(Fighter* fp, Fighter* rival)
+{
+    CHECK(fp && rival && fp != rival); event(EV_MOVE); ++movement.updates;
+    movement.active = movement.owns_input;
+    if (!movement.owns_input) { return false; }
+    movement.owner = fp; movement.owner_slot = fp->player_id;
+    ftCo_800B4A78(fp); fp->cpu.xA4 = 0;
+    ftCo_800B46B8(fp, CpuCmd_SetLstickX, 66); /* distinguish from combat's B */
+    ftCo_800B49F4(fp);
+    return true;
+}
+
 /* Compare EVERY exposed Fighter field, allowing ONLY CPU script/input writes
  * and invalidation of the cached vanilla attack selection (cpu.xA4).
  * This includes motion, position, velocities, facing, damage, animation frame,
@@ -298,6 +332,7 @@ static void setup(void)
 {
     tracing = false; event_count = 0;
     memset(&combat, 0, sizeof(combat));
+    memset(&movement, 0, sizeof(movement));
     memset(&common_data, 0, sizeof(common_data));
     memset(&entities, 0, sizeof(entities));
     memset(fighters, 0, sizeof(fighters));
@@ -1586,6 +1621,54 @@ static void test_combat_postinput_gating_and_suspend_reset(void)
     resets = combat.resets[0]; ShowboatAI_ResetSlot(-1); ShowboatAI_ResetSlot(SB_SLOTS);
     CHECK(combat.resets[0] == resets);
 }
+static void test_movement_starts_after_combat_independent_of_ego(void)
+{
+    init(); state->ego = 0; state->serious = 100; movement.owns_input = true;
+    CHECK(frame()); CHECK(self->cpu.lstick.x == 66 && state->action == SB_NONE);
+    CHECK(first_event(EV_COMBAT) >= 0 && first_event(EV_COMBAT) < first_event(EV_MOVE));
+    CHECK(state->serious == 99 && movement.active);
+    dance_context(true); CHECK(frame()); CHECK(state->action == SB_DANCE);
+    movement.owns_input = true; CHECK(frame());
+    CHECK(state->action == SB_NONE && self->cpu.lstick.x == 66);
+    CHECK(self->cpu.buttons == 0); /* no SB_Stop after movement's new script */
+    init(); combat.owns_input = true; movement.owns_input = true;
+    int calls = movement.updates;
+    CHECK(frame()); CHECK(movement.updates == calls && self->cpu.buttons == HSD_PAD_B);
+    taunt_context(true); movement.owns_input = true; CHECK(frame());
+    CHECK(state->action == SB_TAUNT && !movement.active);
+}
+static void test_active_movement_precedes_other_techniques(void)
+{
+    init(); movement.owns_input = true; CHECK(frame());
+    combat.owns_input = true;
+    int calls = combat.updates;
+    CHECK(frame()); CHECK(combat.updates == calls && self->cpu.lstick.x == 66);
+    movement.owns_input = false;
+    calls = movement.updates;
+    CHECK(frame()); CHECK(movement.updates == calls + 1);
+    CHECK(!movement.active && self->cpu.buttons == HSD_PAD_B);
+    /* No second movement call/start on the cancellation update. */
+}
+static void test_movement_suspend_and_reset_orchestration(void)
+{
+    for (variant = 0; variant < 4; ++variant) {
+        init(); movement.owns_input = true; CHECK(frame());
+        movement.owns_input = false;
+        int suspends = movement.suspends, resets = movement.resets[0];
+        if (variant == 0) { world.cpu[0] = false; }
+        if (variant == 1) { world.entity[1] = NULL; }
+        if (variant == 2) { ++self->x8_spawnNum; }
+        if (variant == 3) {
+            event_count = 0; tracing = true; suspend(self); tracing = false;
+        } else { CHECK(!update(self)); }
+        CHECK(!movement.active && movement.suspends == suspends + 1);
+        CHECK(first_event(EV_RESTORE) < first_event(EV_MOVE_SUSPEND));
+        if (variant != 3) {
+            CHECK(movement.resets[0] == resets + 1);
+            CHECK(first_event(EV_MOVE_SUSPEND) < first_event(EV_MOVE_RESET));
+        }
+    }
+}
 static void mercy_context(void)
 {
     weight_context(); state->ego = 90;
@@ -1705,6 +1788,9 @@ static const struct { const char* name; void (*run)(void); } cases[] = {
     CASE(combat_restore_before_early_gates),
     CASE(combat_independent_of_serious_and_flourish_priority),
     CASE(combat_postinput_gating_and_suspend_reset),
+    CASE(movement_starts_after_combat_independent_of_ego),
+    CASE(active_movement_precedes_other_techniques),
+    CASE(movement_suspend_and_reset_orchestration),
     CASE(selective_mercy_commands_and_style_retained),
     CASE(selective_mercy_guard_fallbacks),
     CASE(selective_mercy_indicator_lifecycle),

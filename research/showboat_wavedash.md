@@ -95,6 +95,39 @@ leave very long travel to Falcon's fast run. Avoid idle forward/backward loops,
 wave inputs during a real hitstun/knockdown punish, or overriding defense/recovery.
 Inputs cannot make the committed jumpsquat/airdodge/landing lag freely cancelable.
 
+### Implemented policy after review
+
+- Deterministic eligible approach at 65–110 units; retreat at 45–65 only
+  against a facing-toward, committed normal grounded attack. Do not wavedash
+  after a rapidly retreating rival (>1 unit/update) or retreat while carrying
+  >0.5 units/update of momentum toward them. Preserve observed facing.
+- Neutral + one X, release both X/Y throughout acknowledged KneeBend, then
+  **X=±90, Y=−64 and digital L** on first Jump (roughly 35° down, about 2.28
+  horizontal/−1.61 vertical units on first normal dodge physics). The ±80
+  example above is the mechanical reference, not the shipped byte choice.
+- 40-unit entry clearance; at least **22 units remain after** conservative
+  prejump coast plus the entire undecayed dodge/landing projection. Using 40
+  at the projected endpoint as well needlessly excluded center Battlefield.
+  Coast is bounded between zero and its maximum; do not credit beneficial coast
+  that friction can remove. Animation remaining alone is not commitment: retreat
+  also vetoes the native `allow_interrupt` flag.
+- Native archive/scale verification: Battlefield is **GrNBa.dat**, not GrOp
+  (Dream Land). BF's middle line is ±60, chain ledges ±68.4; FD (GrNLa) is ±75
+  with chain ledges ±85.5657. Their outer strips are coplanar. Reserve against
+  the chain ledges; our touchdown must remain on its admitted middle line.
+  A rival may occupy an outer strip only when its chain endpoints match and its
+  actual segment is coplanar/non-platform. A 65-unit approach minimum now permits
+  center BF starts against the outer strip, with worst-case opponent reserve 28.
+- 18-update global budget, bounded phase ages, 30-update retry after failure,
+  no success cooldown beyond ordinary engine actionability. No ego/random gate.
+- Bounded decoding admits mundane remaining locomotion scripts, not future
+  queued attacks. Retake a native-cleared VM only during confirmed jump/dodge continuation,
+  low priority, no A4, empty/reset cursors and neutral controls. Never replace a
+  fresh defense/attack/unknown script.
+- Debug logs distinguish start, KneeBend, first-Jump dodge sample, EscapeAir and
+  landing, with observed motion/position/velocity. A queued sample is not an
+  acknowledgment, and an initial landing is not measurement of the full slide.
+
 ## Ownership and integration
 
 Start after combat declines; finish an active movement chain before considering
@@ -104,10 +137,11 @@ Suspend movement before slot/control/opponent resets.
 
 Bounded scripts need waits separating samples and explicit release tails.
 `Done` alone releases nothing; `ReleaseAll` releases buttons but not axes/triggers.
-Compare script bytes, length/cursors and priority—not just a pointer inside the
-shared CPU buffer. Release an old owned script while preserving a fresh native
-cached attack. Never restore an old native script snapshot. Unexpected priority
-or state transitions must yield rather than erase replacement defense/recovery.
+Compare script bytes and length/cursors—not just a pointer inside the shared
+CPU buffer. Continuation requires the original priority. Cleanup releases the
+exact old script even after a priority-only change, retaining the new priority
+and cached attack so native dispatch need not wait behind our release tail.
+Never restore an old native script snapshot or erase replacement bytecode.
 
 ## Verification limits
 

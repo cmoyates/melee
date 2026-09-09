@@ -4,7 +4,7 @@ Tracking: https://github.com/cmoyates/melee/issues/1
 Branch: `mod/showboat-ai`, based on the existing single-player C-stick mod.
 Initial working tree was clean; that mod is retained.
 
-## Current gameplay update: native side-B ledge safeguard
+## Current gameplay update: platform-origin side-B safeguard
 
 The valid v2 trace exposed an unsafe side-B queued inside a native throw
 follow-up. The new `showboat_safety.c/.h` filter examines that actual B output
@@ -12,8 +12,17 @@ before controller processing, independently of ego. It is limited to uncached
 native priority 9, grounded Wait/Walk and verified normal FD/Battlefield floors.
 It checks **both** the backward windup and forward rush runway, using a rounded
 animation envelope plus an explicit margin. Central and sufficiently inward
-side-B choices remain available; other priorities and airborne/in-progress
-specials, recovery, throws, physics and game input timers are untouched.
+**main-floor** side-B choices remain available; other priorities and
+airborne/in-progress specials, recovery, throws, physics and game input timers
+are untouched.
+
+The [platform extension](../research/showboat_platform_side_b_safety.md) applies
+that same footprint to Battlefield's three verified static platforms. Each is
+37.6 units wide versus the required81.84, so **all otherwise eligible priority9
+throw-follow-up side-B pulses there are rejected, either direction**. This
+intentionally forgoes potentially safe inward drops/lower-floor landings; it does
+not model them or ban ordinary priority2 side-B choices. Current native map,
+static-joint, source-line and support checks exclude unknown/moving geometry.
 
 Only an unsafe B press and its accompanying horizontal input are suppressed.
 **The native VM and its 55-update wait/later follow-up inputs are retained**;
@@ -23,23 +32,26 @@ legacy diagnostic retains the requested direction. No ego reward is added.
 See [native research, scope and limitations](../research/showboat_side_b_safety.md).
 The [first safeguard live review](../research/showboat_recorder_playtest_4.md)
 confirms one actual veto and a retained jump/Knee follow-up that returns to a
-platform without recorded damage. It also exposes the next gap: the same native
-side-B chain can start on a raised platform, outside the current main-floor
-scope, and carry Falcon into a fatal fall. No universal saved-stock claim.
+platform without recorded damage. It also exposed the platform departure that
+motivated this extension: a raised-platform side-B led to a fatal fall at9.6%.
+That capture used the preceding main-floor-only binary; the extension still
+needs its own live validation. No universal saved-stock claim.
 
-**Offline checkpoint:** 442 tests pass (242 retained/main, 33 safety, 56 recorder,
-92 analyzer, 16 capture, three config/verifier). This includes 2,768 complete
-Fighter write guards, 130 main cases across four recorder/debug combinations,
-and native-overlap/seam tests. Native build/verifier, 28 warning configurations
-and six disabled-hook comparisons pass. Safety's object is identical with the
-recorder off/on. Only AI, recorder event-mask and the new safety object differ
-from the prior live build; no jab, shield or recovery tuning was included.
+**Offline checkpoint:** 452 tests pass (242 retained/main, 43 safety, 56 recorder,
+92 analyzer, 16 capture, three config/verifier). This includes **12,122 complete
+Fighter write guards** (all2,768 legacy guards retained), all-platform/direction
+and static-map rejection matrices, the explicitly stubbed f5302 replay, and
+130 main cases across four recorder/debug combinations. Native build/verifier,
+28 warning configurations and six disabled-hook comparisons pass. Safety's
+object is identical with the recorder off/on. **Only the safety object differs
+from the last live build**; no jab, shield, recovery or recorder tuning.
+Independent native/asset review found no actionable implementation defects.
 
-Ready DOL: **4,522,176 bytes**, SHA-1
-`463a5a435aa5241f943fd21bfc87a4612c9eb2d7`. The approved live test staged this
-same DOL and then closed cleanly. Controller mapping is unchanged. Host tests
-alone do not prove live admission; the review documents one actual veto, not a
-counterfactual prevented-death count.
+Ready DOL: **4,522,912 bytes**, SHA-1
+`7384b2f1dadc18b996e324a4c3add40221963290`. Dolphin is closed; the virtual disc
+still holds the preceding tested `463a5a435aa5241f943fd21bfc87a4612c9eb2d7`
+DOL until an approved launch. Controller mapping is unchanged. Host/static
+checks do not prove platform admission or a prevented death in Dolphin.
 
 ## Read-only match recorder
 
@@ -754,7 +766,11 @@ and set level 9. Leave other slots NONE.
     Look for `SIDE-B VETO` / event128, not a claimed saved stock. Verify the B
     pulse is actually absent and normal side-B remains available with runway.
     A retained native wait after veto is expected; watch the later follow-up
-    rather than assuming the entire native chain has been redesigned.
+    rather than assuming the entire native chain has been redesigned. On
+    Battlefield, also allow throw follow-ups on each raised platform and check
+    both directions: eligible priority9 pulses should be suppressed there.
+    Observe the retained jump/attack/up-B tail and subsequent landing, not just
+    the veto event. Ordinary priority2/aerial specials should still occur.
 
 Use HUD and logs to distinguish native moves from custom input starts. Play
 several fair matches as well as staged observations: deliberately feeding the
@@ -785,10 +801,10 @@ CPU proves neither its strength nor its ability to sustain a real lead.
 ## Best next improvements
 
 The main-floor side-B veto has one live activation with a useful retained
-follow-up. Next investigate platform-side-B commitments: the live review records
-a fatal platform departure at9.6% with no intervening sampled damage. Preserve
-legal controller decisions and validate the platform edge/air-coast/lower-floor
-path before expanding scope. Further controlled tests should check central/inward
+follow-up. First validate the new conservative platform veto and its retained
+native continuation. Allowing selected inward platform drops would require a
+separate supported air-coast/lower-floor landing analysis; it is deliberately
+not assumed here. Further controlled tests should check main-floor central/inward
 allowances and retained follow-up behavior before script ownership changes. The valid v2 capture also
 motivates jab-conversion and defense-admission investigation, not more reckless
 flourishes.

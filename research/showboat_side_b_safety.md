@@ -1,5 +1,10 @@
 # Native throw-follow-up side-B safety
 
+This records the original main-floor-only checkpoint and its first live result.
+The subsequent [platform extension](showboat_platform_side_b_safety.md) applies
+the same conservative current-floor footprint to verified static Battlefield
+platforms; its scope, trade-offs and verification are documented separately.
+
 ## Motivation and native path
 
 The [first valid v2 capture](showboat_recorder_playtest_3.md) exposed Falcon's

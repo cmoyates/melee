@@ -9,6 +9,10 @@
  * Ground startup zeros normal velocity and ground physics consumes TransN;
  * empty IASAs cannot cancel the whiff. Round OUT to +61/-11 model units,
  * scale by normal physical/model scale, then reserve 6 world units EACH side.
+ * Require this footprint on the CURRENT floor, including BF's three static
+ * platforms. Each platform is only 37.6 wide, so all eligible canned followup
+ * pulses there yield. Potentially safe inward drops/lower-floor landings are
+ * deliberately NOT modeled. Priority-2 choices and aerial recovery are intact.
  * This bounded vanilla FD/BF policy is an engineering margin, not a universal
  * exact-physics proof, hit prediction, or claim of live prevention. */
 #include "showboat_safety.h"
@@ -76,6 +80,36 @@ static bool SS_MainLine(int line, int stage)
            line == (stage == St_Kind_Battle ? 5 : 2);
 }
 
+static bool SS_StaticPlatform(int line)
+{
+    MapCollData* map = mpLib_8004D164();
+    CollJoint* joint;
+    CollLine* lines;
+    MapLine* source;
+    /* Called only for BF lines 2..4. Certify the native static collision
+     * domain, not PLATFORM == static. No bound joint, callbacks, dynamic
+     * ranges or unexpected adjacency. Getters return current map objects;
+     * no saved pointer, list traversal, transform or collision update. */
+    if (map == NULL || map->joint_count != 1 || map->joints == NULL ||
+        map->lines == NULL || map->line_count < 6 ||
+        map->floor_start != 0 || map->floor_count != 6 ||
+        map->dynamic_count != 0) { return false; }
+    joint = mpGetGroundCollJoint();
+    lines = mpGetGroundCollLine();
+    if (joint == NULL || lines == NULL || joint->inner != map->joints ||
+        joint->flags != CollJoint_Enabled || joint->x20 != NULL ||
+        joint->cb_0 != NULL || joint->cb_1 != NULL ||
+        joint->inner->floor_start != 0 || joint->inner->floor_count != 6 ||
+        joint->inner->dynamic_count != 0 ||
+        lines[line].flags != (CollLine_Floor | LINE_FLAG_ENABLED) ||
+        lines[line].x0 != &map->lines[line]) { return false; }
+    source = lines[line].x0;
+    return source->hi_flags == CollLine_Floor &&
+           source->lo_flags == LINE_FLAG_PLATFORM &&
+           source->prev_id0 == -1 && source->next_id0 == -1 &&
+           source->prev_id1 == -1 && source->next_id1 == -1;
+}
+
 static bool SS_FloorLine(int line, const Vec3* left, const Vec3* right,
                          const Vec3* root)
 {
@@ -116,7 +150,8 @@ static bool SS_UnsafeFloor(Fighter* fp)
     u32 flags;
     int line = -1;
     int stage = Stage_80225194();
-    float extent, forward, backward;
+    float expected_left, expected_right, expected_y, forward, backward;
+    bool platform;
     float scale = fp->x34_scale.y * fp->co_attrs.model_scaling;
     if (stage != St_Kind_Battle && stage != St_Kind_Last) { return false; }
     if (!mpCheckFloor(fp->cur_pos.x, fp->cur_pos.y + 2.0f,
@@ -124,26 +159,44 @@ static bool SS_UnsafeFloor(Fighter* fp)
                       &contact, &line, &flags, &normal, -1,
                       fp->coll_data.joint_id_skip,
                       fp->coll_data.joint_id_only, NULL, NULL) ||
-        !SS_MainLine(line, stage) ||
-        !SS_MainLine(fp->coll_data.floor.index, stage) ||
-        (flags & LINE_FLAG_PLATFORM) ||
         !SS_Range(normal.x, -0.001f, 0.001f) ||
         !SS_Range(normal.y, 0.999f, 1.001f) ||
         !SS_Range(normal.z, -0.001f, 0.001f)) { return false; }
 
+    platform = (flags & LINE_FLAG_PLATFORM) != 0;
+    if (platform) {
+        if (stage != St_Kind_Battle || line < 2 || line > 4 ||
+            line != fp->coll_data.floor.index ||
+            flags != LINE_FLAG_PLATFORM || !SS_StaticPlatform(line)) {
+            return false;
+        }
+        /* GrNBa collision coordinates * native stage scale .8. Platforms
+         * are isolated: their actual endpoints, NOT the lower main floor,
+         * bound the ground-whiff footprint. */
+        expected_left = line == 2 ? -57.6f : (line == 3 ? -18.8f : 20.0f);
+        expected_right = line == 2 ? -20.0f : (line == 3 ? 18.8f : 57.6f);
+        expected_y = line == 3 ? 54.4f : 27.2f;
+    } else {
+        if (!SS_MainLine(line, stage) ||
+            !SS_MainLine(fp->coll_data.floor.index, stage)) { return false; }
+        expected_right = stage == St_Kind_Battle ? 68.4f : 85.5657f;
+        expected_left = -expected_right;
+        expected_y = 0.0f;
+    }
+
     /* mpCheckFloor verifies enabled, nonempty floor contact (its returned
-     * flags are lo_flags, NOT the line-kind/enable bits). Same read-only
-     * query as SM_Floor. Use ACTUAL CONNECTED ledges, not segment endpoints.
-     * Sanity-check known flat vanilla geometry; modified stages, platforms,
-     * slopes, stale support and nonfinite geometry deliberately yield. */
+     * flags are lo_flags, NOT the line-kind/enable bits). Same native query
+     * as SM_Floor; it may refresh broad-phase caches, not fighter physics.
+     * Use ACTUAL CONNECTED endpoints, not an individual
+     * main-chain segment. Modified/unknown geometry, slopes, stale support
+     * and nonfinite geometry deliberately yield, not certify safety. */
     mpFloorGetLeft(line, &left);
     mpFloorGetRight(line, &right);
-    extent = stage == St_Kind_Battle ? 68.4f : 85.5657f;
     if (!SS_Vector(&contact, 100.0f) || !SS_Vector(&left, 100.0f) ||
         !SS_Vector(&right, 100.0f) ||
-        !SS_Range(left.x + extent, -0.1f, 0.1f) ||
-        !SS_Range(right.x - extent, -0.1f, 0.1f) ||
-        !SS_Range(left.y, -0.1f, 0.1f) ||
+        !SS_Range(left.x - expected_left, -0.1f, 0.1f) ||
+        !SS_Range(right.x - expected_right, -0.1f, 0.1f) ||
+        !SS_Range(left.y - expected_y, -0.1f, 0.1f) ||
         right.y != left.y ||
         !SS_Range(contact.y - left.y, -0.1f, 0.1f) ||
         !SS_Range(contact.x - fp->cur_pos.x, -0.1f, 0.1f) ||

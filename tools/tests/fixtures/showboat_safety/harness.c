@@ -9,6 +9,13 @@
 static CollLine groundCollLine[6];
 static CollVtx groundCollVtx[12];
 static MapLine map_lines[6];
+static MapCollData map_data;
+static MapJoint map_joint, foreign_joint;
+static CollJoint coll_joint;
+static struct {
+    bool allowed, missing_map, missing_joint, missing_lines;
+    int map_calls, joint_calls, line_calls;
+} certificate;
 static CollLine* mpLineGetCollLine(int line);
 #include "native_functions.h"
 
@@ -80,6 +87,24 @@ Gm_PKind Player_8003248C(s32 slot, bool secondary)
     return kinds[slot];
 }
 StKind Stage_80225194(void) { ++stage_queries; return stage; }
+MapCollData* mpLib_8004D164(void)
+{
+    CHECK(certificate.allowed); /* EVERY legacy main-floor case forbids this. */
+    ++certificate.map_calls;
+    return certificate.missing_map ? NULL : &map_data;
+}
+CollJoint* mpGetGroundCollJoint(void)
+{
+    CHECK(certificate.allowed);
+    ++certificate.joint_calls;
+    return certificate.missing_joint ? NULL : &coll_joint;
+}
+CollLine* mpGetGroundCollLine(void)
+{
+    CHECK(certificate.allowed);
+    ++certificate.line_calls;
+    return certificate.missing_lines ? NULL : groundCollLine;
+}
 bool mpCheckFloor(float ax, float ay, float bx, float by, float offset,
                   Vec3* contact, int* line, u32* flags, Vec3* normal,
                   int skip, int joint_skip, int joint_only,
@@ -95,12 +120,16 @@ bool mpCheckFloor(float ax, float ay, float bx, float by, float offset,
         int i, last = stage == St_Kind_Battle ? 5 : 2;
         float closest = 1000000.0f;
         bool hit = false;
-        /* Vanilla floor iteration order: left strip, center, right strip.
+        /* Vanilla BF order: left strip, center, platforms 2/3/4, right strip.
+         * FD has just the three main strips. Platforms have NO adjacency,
+         * so the native helper supplies their unextended endpoints.
          * Same native extension and intersection bodies as mpCheckFloor.
          * Its min_dist2 > dist2 is crucial: NEVER replace an equal hit. */
         for (i = 0; i <= last; ++i) {
             float x0, y0, x1, y1, px, py, dist2;
-            if (i != 0 && i != 1 && i != last) continue;
+            if (!(groundCollLine[i].flags & CollLine_Floor) ||
+                !(groundCollLine[i].flags & LINE_FLAG_ENABLED) ||
+                (groundCollLine[i].flags & LINE_FLAG_EMPTY)) continue;
             mpLib_8004ED5C(i, &x0, &y0, &x1, &y1);
             CHECK(y0 == y1); /* This fixture scan covers flat native floors. */
             if (ay >= by && mpLineIntersectionH(&px, &py, x0, y0, x1,
@@ -112,6 +141,7 @@ bool mpCheckFloor(float ax, float ay, float bx, float by, float offset,
                     closest = dist2;
                     floor_stub.contact = (Vec3) { px, py, 0 };
                     floor_stub.line = i;
+                    floor_stub.flags = map_lines[i].lo_flags;
                     hit = true;
                 }
             }
@@ -143,6 +173,8 @@ static void position(float x)
     memset(groundCollVtx, 0, sizeof(groundCollVtx));
     for (i = 0; i < 6; ++i) {
         groundCollLine[i].x0 = &map_lines[i];
+        groundCollLine[i].flags = CollLine_Floor | LINE_FLAG_ENABLED;
+        map_lines[i].hi_flags = CollLine_Floor;
         map_lines[i].v0_idx = 2 * i; map_lines[i].v1_idx = 2 * i + 1;
         map_lines[i].prev_id1 = map_lines[i].next_id1 = -1;
         map_lines[i].prev_id0 = map_lines[i].next_id0 = -1;
@@ -158,6 +190,18 @@ static void position(float x)
     map_lines[0].prev_id0 = 3; map_lines[0].next_id0 = 1;
     map_lines[1].prev_id0 = 0; map_lines[1].next_id0 = last;
     map_lines[last].prev_id0 = 1; map_lines[last].next_id0 = 4;
+    if (stage == St_Kind_Battle) {
+        static const float lefts[] = { -57.6f, -18.8f, 20.0f };
+        static const float rights[] = { -20.0f, 18.8f, 57.6f };
+        for (i = 2; i <= 4; ++i) {
+            float y = i == 3 ? 54.4f : 27.2f;
+            segments[i].left = segments[i].v0 =
+                (Vec3) { lefts[i - 2], y, 0 };
+            segments[i].right = segments[i].v1 =
+                (Vec3) { rights[i - 2], y, 0 };
+            map_lines[i].lo_flags = LINE_FLAG_PLATFORM;
+        }
+    }
     self.cur_pos.x = x;
     floor_stub.contact = (Vec3) { x, 0, 0 };
     floor_stub.left = (Vec3) { -edge, 0, 0 };
@@ -194,6 +238,11 @@ static void setup(void)
     memset(kinds, 0, sizeof(kinds));
     memset(&entities, 0, sizeof(entities));
     memset(&floor_stub, 0, sizeof(floor_stub));
+    memset(&certificate, 0, sizeof(certificate));
+    memset(&map_data, 0, sizeof(map_data));
+    memset(&map_joint, 0, sizeof(map_joint));
+    memset(&foreign_joint, 0, sizeof(foreign_joint));
+    memset(&coll_joint, 0, sizeof(coll_joint));
     player_queries = stage_queries = 0;
     objects[0].user_data = &self;
     objects[1].user_data = &rival;
@@ -938,6 +987,429 @@ static void cheap_gate_ordering(void)
     CHECK(player_queries > 0 && stage_queries == 0 && floor_stub.calls == 0);
 }
 
+/* Static-platform fixtures certify only the CURRENT floor, never a safe drop
+ * onto the main chain. All three widths are 37.6: less than 61*.97+6 even
+ * before the independent backward reserve. Thus EVERY eligible position and
+ * direction yields a veto. These controlled maps are not loaded stage assets. */
+static void platform_setup(int line, float fraction, int dir, bool native_scan)
+{
+    setup();
+    CHECK(line >= 2 && line <= 4);
+    certificate.allowed = true;
+    map_data.lines = map_lines;
+    map_data.line_count = 6;
+    map_data.floor_count = 6;
+    map_data.joints = &map_joint;
+    map_data.joint_count = 1;
+    map_joint.floor_count = 6;
+    coll_joint.inner = &map_joint;
+    coll_joint.flags = CollJoint_Enabled;
+    select_query(line);
+    self.cur_pos.x = segments[line].left.x + fraction *
+        (segments[line].right.x - segments[line].left.x);
+    self.cur_pos.y = segments[line].left.y;
+    floor_stub.contact = self.cur_pos;
+    floor_stub.flags = LINE_FLAG_PLATFORM;
+    floor_stub.native_scan = native_scan;
+    self.coll_data.floor.index = line;
+    self.coll_data.joint_id_skip = self.coll_data.joint_id_only = -1;
+    self.cpu.lstick.x = dir * 127;
+}
+
+static void platform_all_positions_directions(void)
+{
+    int line, dir, sample, scan;
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2)
+    for (scan = 0; scan < 2; ++scan)
+    for (sample = 0; sample <= 32; ++sample) {
+        platform_setup(line, sample / 32.0f, dir, scan);
+        /* Both facing choices, including inward requests near each edge. */
+        self.facing_dir = sample & 1 ? dir : -dir;
+        CHECK(segments[line].right.x - segments[line].left.x < 61*.97f+6);
+        VETO();
+        CHECK(certificate.map_calls > 0 && certificate.joint_calls > 0 &&
+              certificate.line_calls > 0);
+        if (scan) {
+            CHECK(floor_stub.line == line && floor_stub.hits == 1 &&
+                  floor_stub.ties == 0 && floor_stub.flags == LINE_FLAG_PLATFORM);
+        }
+    }
+}
+
+static void platform_exact_edges_no_extension(void)
+{
+    int line, dir, side, delta, scan;
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2)
+    for (side = -1; side <= 1; side += 2)
+    for (delta = -1; delta <= 1; ++delta)
+    for (scan = 0; scan < 2; ++scan) {
+        float edge, x0, y0, x1, y1;
+        platform_setup(line, side < 0 ? 0 : 1, dir, scan);
+        mpLib_8004ED5C(line, &x0, &y0, &x1, &y1);
+        CHECK(x0 == segments[line].left.x && x1 == segments[line].right.x);
+        CHECK(y0 == segments[line].left.y && y1 == y0);
+        edge = self.cur_pos.x;
+        self.cur_pos.x = delta ? adjacent_float(edge, delta) : edge;
+        floor_stub.contact.x = self.cur_pos.x;
+        verify(&self, &rival, delta * side <= 0);
+        if (scan) CHECK(floor_stub.hit == (delta * side <= 0));
+    }
+    /* A stale contact just INSIDE cannot certify a root just OUTSIDE. Native
+     * platform lines have no +/-1 extension, even toward a lower safe floor. */
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2)
+    for (side = -1; side <= 1; side += 2) {
+        platform_setup(line, side < 0 ? 0 : 1, dir, false);
+        self.cur_pos.x = adjacent_float(self.cur_pos.x, side);
+        PASS();
+    }
+}
+
+static void observed_platform_f5302(void)
+{
+    /* Exact binary32 source: playtest_4 capture 20260909T185848...,
+     * segment3/slot1/f5302. OBSERVED self [spawn4,kind2,Wait14,anim13,
+     * x=c2331c81,y=41d999ce,vx=vy=grvel=0,percent=41199999,shield60,flags0];
+     * rival [spawn3,kind4,DamageFlyTop90,anim29,x=c2a29e4f,y=4266331f,
+     * vx=0,vy=bfcccccd,grvel=0,percent=42d06149,shield=4265a3da,flags3].
+     * Native9/cache0/threat0, B512/-127/0, other outputs zero, action0/owns0/events0.
+     * Stocks3 and main-owned action/owns are not module inputs.
+     * UNKNOWN -> explicit stubs: line2/certificate and all floor query data,
+     * rootZ, facing -1, normal physical/model scale 1/.97, sampled input,
+     * identity bindings/readiness, unrecorded forced-state/velocity and
+     * item/protection details, VM cursor/timer. Not a complete physics replay. */
+    platform_setup(2, .5f, -1, true);
+    CHECK(ftCo_MS_Wait == 14 && ftCo_MS_DamageFlyTop == 90 && HSD_PAD_B == 512);
+    self.player_id = 1; rival.player_id = 0;
+    primary[1] = self.gobj; primary[0] = rival.gobj;
+    self.cpu.xF8_b12 = 0;
+    self.x8_spawnNum = 4; rival.x8_spawnNum = 3;
+    self.cur_anim_frame = special_float(0x41500000U);
+    self.cur_pos.x = special_float(0xC2331C81U);
+    self.cur_pos.y = special_float(0x41D999CEU);
+    self.dmg.x1830_percent = special_float(0x41199999U);
+    self.shield_health = special_float(0x42700000U);
+    rival.cur_anim_frame = special_float(0x41E80000U);
+    rival.cur_pos = (Vec3) { special_float(0xC2A29E4FU),
+                            special_float(0x4266331FU), 0 };
+    rival.self_vel = (Vec3) { 0, special_float(0xBFCCCCCDU), 0 };
+    rival.gr_vel = 0;
+    rival.dmg.x1830_percent = special_float(0x42D06149U);
+    rival.shield_health = special_float(0x4265A3DAU);
+    VETO();
+    CHECK(floor_stub.line == 2 && floor_stub.hits == 1);
+    PASS(); /* No remembered B restoration. */
+    self.cpu.x18 = 2; self.cpu.buttons = HSD_PAD_B; self.cpu.lstick.x = -127;
+    PASS(); /* Same observed location, ordinary priority2 remains native. */
+}
+
+static void platform_scope_and_future_inputs(void)
+{
+    int line, dir, motion, gate;
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2) {
+        for (motion = 0; motion <= ftCa_MS_SpecialAirLwEnd; ++motion) {
+            platform_setup(line, .5f, dir, true);
+            self.motion_id = motion;
+            verify(&self, &rival, motion >= ftCo_MS_Wait && motion <= ftCo_MS_WalkFast);
+        }
+        for (gate = 0; gate < 16; ++gate) {
+            platform_setup(line, .5f, dir, true);
+            switch (gate) {
+            case 0: self.cpu.x18 = 2; break;
+            case 1: self.ground_or_air = GA_Air; break;
+            case 2: self.cpu.xA4 = 1; break;
+            case 3: self.input.held_buttons[0] = HSD_PAD_B; break;
+            case 4: self.cpu.buttons |= HSD_PAD_A; break;
+            case 5: self.cpu.lstick.y = 1; break;
+            case 6: self.cpu.cstick.x = 1; break;
+            case 7: self.cpu.ltrigger = 1; break;
+            case 8: self.cpu.buttons = 0; self.cpu.lstick.x = 0; break;
+            case 9: self.cpu.buttons = HSD_PAD_X; break;
+            case 10: self.cpu.buttons = HSD_PAD_A; break;
+            case 11: self.x221C_b6 = 1; break;
+            case 12: self.x74_anim_vel.x = .01f; break;
+            case 13: self.co_attrs.model_scaling = 1; break;
+            case 14: self.x34_scale.y = 2; break;
+            case 15: self.self_vel.x = 2.5001f; break;
+            }
+            PASS();
+            CHECK(floor_stub.calls == 0 && certificate.map_calls == 0 &&
+                  certificate.joint_calls == 0 && certificate.line_calls == 0);
+        }
+        platform_setup(line, .5f, dir, true);
+        self.cpu.lstick.x = dir < 0 ? -128 : 127;
+        self.cpu.csP = (s8*) 1; self.cpu.write_pos = (s8*) 3;
+        VETO(); PASS();
+        self.cpu.buttons = HSD_PAD_X; PASS();
+        self.cpu.buttons = HSD_PAD_A; PASS();
+        self.cpu.buttons = HSD_PAD_B; self.cpu.lstick.x = dir * 127; VETO();
+    }
+}
+
+static void platform_query_identity_and_flags(void)
+{
+    int line, dir, stored, mutation, bit;
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2) {
+        for (stored = -1; stored <= 6; ++stored) {
+            if (stored == line) continue;
+            platform_setup(line, .5f, dir, false);
+            self.coll_data.floor.index = stored;
+            PASS();
+        }
+        for (mutation = 0; mutation < 8; ++mutation) {
+            platform_setup(line, .5f, dir, false);
+            switch (mutation) {
+            case 0: stage = St_Kind_Last; break;
+            case 1: stage = St_Kind_Castle; break;
+            case 2: floor_stub.hit = false; break;
+            case 3: floor_stub.line = self.coll_data.floor.index = -1; break;
+            case 4: floor_stub.line = self.coll_data.floor.index = 6; break;
+            case 5: floor_stub.line = self.coll_data.floor.index = 99; break;
+            case 6: floor_stub.line = self.coll_data.floor.index = 0; break;
+            case 7: floor_stub.flags = 0; break;
+            }
+            PASS();
+        }
+        for (bit = 0; bit < 32; ++bit) {
+            if ((1U << bit) == LINE_FLAG_PLATFORM) continue;
+            platform_setup(line, .5f, dir, false);
+            floor_stub.flags |= 1U << bit;
+            PASS();
+        }
+    }
+    /* Same known geometry is insufficient: query and stored platform IDs
+     * must be identical even if controlled endpoint stubs alias perfectly. */
+    for (line = 2; line <= 4; ++line)
+    for (stored = 2; stored <= 4; ++stored) {
+        if (stored == line) continue;
+        platform_setup(line, .5f, -1, false);
+        segments[stored] = segments[line];
+        self.coll_data.floor.index = stored;
+        PASS();
+    }
+}
+
+static void unexpected_callback(void* data, int joint, CollData* coll, int x50,
+                                mpLib_GroundEnum kind, float delta_y)
+{
+    (void) data; (void) joint; (void) coll; (void) x50; (void) kind; (void) delta_y;
+    CHECK(false); /* Certificate checks must NEVER execute these callbacks. */
+}
+
+static void platform_static_certificate_rejections(void)
+{
+    int line, dir, mutation, bit;
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2) {
+        for (mutation = 0; mutation < 32; ++mutation) {
+            platform_setup(line, .5f, dir, false);
+            switch (mutation) {
+            case 0: certificate.missing_map = true; break;
+            case 1: map_data.joint_count = 0; break;
+            case 2: map_data.joint_count = 2; break;
+            case 3: map_data.joints = NULL; break;
+            case 4: map_data.lines = NULL; break;
+            case 5: map_data.line_count = 5; break;
+            case 6: map_data.line_count = -1; break;
+            case 7: map_data.floor_start = 1; break;
+            case 8: map_data.floor_count = 5; break;
+            case 9: map_data.floor_count = 7; break;
+            case 10: map_data.dynamic_count = 1; break;
+            case 11: certificate.missing_joint = true; break;
+            case 12: coll_joint.inner = NULL; break;
+            case 13: foreign_joint = map_joint; coll_joint.inner = &foreign_joint; break;
+            case 14: coll_joint.flags = 0; break;
+            case 15: coll_joint.x20 = (HSD_JObj*) 1; break;
+            case 16: coll_joint.cb_0 = unexpected_callback; break;
+            case 17: coll_joint.cb_1 = unexpected_callback; break;
+            case 18: map_joint.floor_start = 1; break;
+            case 19: map_joint.floor_count = 5; break;
+            case 20: map_joint.floor_count = 7; break;
+            case 21: map_joint.dynamic_count = 1; break;
+            case 22: certificate.missing_lines = true; break;
+            case 23: groundCollLine[line].x0 = NULL; break;
+            case 24: groundCollLine[line].x0 = &map_lines[line == 2 ? 3 : 2]; break;
+            case 25: groundCollLine[line].flags = CollLine_Floor; break;
+            case 26: groundCollLine[line].flags = LINE_FLAG_ENABLED; break;
+            case 27: map_lines[line].hi_flags = 0; break;
+            case 28: map_lines[line].lo_flags = 0; break;
+            case 29: map_data.dynamic_count = -1; break;
+            case 30: map_joint.dynamic_count = -1; break;
+            case 31: map_data.joint_count = -1; break;
+            }
+            PASS();
+        }
+        /* Exact equality, not a selected denylist: every alien bit rejected. */
+        for (bit = 0; bit < 32; ++bit) {
+            if ((1U << bit) != CollJoint_Enabled) {
+                platform_setup(line, .5f, dir, false);
+                coll_joint.flags |= 1U << bit; PASS();
+            }
+            if (!((1U << bit) & (CollLine_Floor | LINE_FLAG_ENABLED))) {
+                platform_setup(line, .5f, dir, false);
+                groundCollLine[line].flags |= 1U << bit; PASS();
+            }
+            if (bit < 16 && (1U << bit) != CollLine_Floor) {
+                platform_setup(line, .5f, dir, false);
+                map_lines[line].hi_flags |= 1U << bit; PASS();
+            }
+            if (bit < 16 && (1U << bit) != LINE_FLAG_PLATFORM) {
+                platform_setup(line, .5f, dir, false);
+                map_lines[line].lo_flags |= 1U << bit; PASS();
+            }
+        }
+    }
+}
+
+static void platform_adjacency_rejections(void)
+{
+    int line, dir, field, id;
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2)
+    for (field = 0; field < 4; ++field)
+    for (id = -2; id <= 6; ++id) {
+        s16* ids[4];
+        if (id == -1) continue;
+        platform_setup(line, .5f, dir, false);
+        ids[0] = &map_lines[line].prev_id0; ids[1] = &map_lines[line].next_id0;
+        ids[2] = &map_lines[line].prev_id1; ids[3] = &map_lines[line].next_id1;
+        *ids[field] = id;
+        PASS();
+    }
+}
+
+static void platform_geometry_rejections(void)
+{
+    int line, dir, mutation;
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2)
+    for (mutation = 0; mutation < 34; ++mutation) {
+        platform_setup(line, .5f, dir, false);
+        switch (mutation) {
+        case 0: floor_stub.left.x -= .101f; break;
+        case 1: floor_stub.right.x += .101f; break;
+        case 2: floor_stub.left.y += .101f; break;
+        case 3: floor_stub.right.y += .001f; break;
+        case 4: floor_stub.v0.x = floor_stub.v1.x; break;
+        case 5: floor_stub.v0.x = floor_stub.v1.x + 1; break;
+        case 6: floor_stub.v0.x -= .001f; break;
+        case 7: floor_stub.v1.x += .001f; break;
+        case 8: floor_stub.v0.y += .001f; break;
+        case 9: floor_stub.v1.y += .001f; break;
+        case 10: floor_stub.contact.x += .101f; break;
+        case 11: floor_stub.contact.y += .101f; break;
+        case 12: self.cur_pos.y += .251f; break;
+        case 13: self.cur_pos.y -= .251f; break;
+        case 14: self.cur_pos.z = 1.001f; break;
+        case 15: floor_stub.contact.z = .001f; break;
+        case 16: floor_stub.left.z = .001f; break;
+        case 17: floor_stub.right.z = .001f; break;
+        case 18: floor_stub.v0.z = .001f; break;
+        case 19: floor_stub.v1.z = .001f; break;
+        case 20: floor_stub.normal.x = .0011f; break;
+        case 21: floor_stub.normal.y = .9989f; break;
+        case 22: floor_stub.normal.y = 1.0011f; break;
+        case 23: floor_stub.normal.z = .0011f; break;
+        case 24: floor_stub.normal.y = -1; break;
+        case 25: floor_stub.left.x = -68.4f; floor_stub.right.x = 68.4f; break;
+        case 26: floor_stub.left.y = floor_stub.right.y = 0; break;
+        case 27: self.cur_pos.y = 0; break;
+        /* Coherent modified geometry: all contact/flatness/source checks
+         * still agree, leaving only the KNOWN SHAPE tolerance to reject. */
+        case 28: case 29:
+            floor_stub.left.y += mutation == 28 ? -.101f : .101f;
+            floor_stub.right.y = floor_stub.v0.y = floor_stub.v1.y =
+                self.cur_pos.y = floor_stub.contact.y = floor_stub.left.y;
+            break;
+        case 30: case 31:
+            floor_stub.left.x += mutation == 30 ? -.101f : .101f;
+            floor_stub.v0.x = floor_stub.left.x;
+            break;
+        case 32: case 33:
+            floor_stub.right.x += mutation == 32 ? -.101f : .101f;
+            floor_stub.v1.x = floor_stub.right.x;
+            break;
+        }
+        PASS();
+    }
+}
+
+static void platform_geometry_tolerances(void)
+{
+    int line, dir, shift, side, delta;
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2)
+    for (shift = -1; shift <= 1; shift += 2) {
+        platform_setup(line, .5f, dir, false);
+        floor_stub.left.x += shift * .05f; floor_stub.right.x += shift * .05f;
+        floor_stub.v0 = floor_stub.left; floor_stub.v1 = floor_stub.right;
+        floor_stub.left.y += shift * .05f; floor_stub.right.y = floor_stub.left.y;
+        floor_stub.v0.y = floor_stub.v1.y = floor_stub.left.y;
+        self.cur_pos.y = floor_stub.contact.y = floor_stub.left.y;
+        VETO(); /* Known-shape tolerance, not hardcoded exact coordinates. */
+    }
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2)
+    for (side = -1; side <= 1; side += 2)
+    for (delta = -1; delta <= 1; ++delta) {
+        float y;
+        platform_setup(line, .5f, dir, true);
+        y = self.cur_pos.y + side * .25f;
+        self.cur_pos.y = delta ? adjacent_float(y, delta) : y;
+        verify(&self, &rival, delta * side <= 0);
+    }
+}
+
+static void platform_nonfinite_and_stale_source(void)
+{
+    int line, dir, value, field, component, mutation;
+    float bad[] = { special_float(0x7FC00000U), special_float(0x7F800000U),
+                    special_float(0xFF800000U) };
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2)
+    for (value = 0; value < 3; ++value)
+    for (field = 0; field < 7; ++field)
+    for (component = 0; component < 3; ++component) {
+        Vec3* v[7];
+        platform_setup(line, .5f, dir, false);
+        v[0] = &floor_stub.contact; v[1] = &floor_stub.normal;
+        v[2] = &floor_stub.left; v[3] = &floor_stub.right;
+        v[4] = &floor_stub.v0; v[5] = &floor_stub.v1; v[6] = &self.cur_pos;
+        if (component == 0) v[field]->x = bad[value];
+        if (component == 1) v[field]->y = bad[value];
+        if (component == 2) v[field]->z = bad[value];
+        PASS();
+    }
+    /* Current vertex query looks good; native helper's source is stale/bad.
+     * Exercise the REAL extension body, not a fabricated helper result. */
+    for (line = 2; line <= 4; ++line)
+    for (dir = -1; dir <= 1; dir += 2)
+    for (mutation = 0; mutation < 10; ++mutation) {
+        struct FloorGeometry* g;
+        platform_setup(line, .5f, dir, false);
+        g = &segments[line]; g->native_override = true;
+        g->native_v0 = g->v0; g->native_v1 = g->v1;
+        switch (mutation) {
+        case 0: g->native_v0.y += .001f; break;
+        case 1: g->native_v1.y += .001f; break;
+        case 2: g->native_v0.y = g->native_v1.y = 0; break;
+        case 3: g->native_v0.x = bad[0]; break;
+        case 4: g->native_v1.x = bad[1]; break;
+        case 5: g->native_v0.y = bad[0]; break;
+        case 6: g->native_v1.y = bad[2]; break;
+        case 7: g->native_v0.x += .001f; break;
+        case 8: g->native_v1.x -= .001f; break;
+        case 9: g->native_v0.x = 99; g->native_v1.x = -99; break;
+        }
+        PASS();
+        CHECK(floor_stub.native_calls[line] >= 1);
+    }
+}
+
 #define CASE(name) { #name, name }
 static const struct { const char* name; void (*run)(void); } cases[] = {
     CASE(observed_left_hitstun),
@@ -970,11 +1442,28 @@ static const struct { const char* name; void (*run)(void); } cases[] = {
     CASE(native_helper_return_validation),
     CASE(nonfinite_stored_seam_geometry),
     CASE(cheap_gate_ordering),
+    CASE(platform_all_positions_directions),
+    CASE(platform_exact_edges_no_extension),
+    CASE(observed_platform_f5302),
+    CASE(platform_scope_and_future_inputs),
+    CASE(platform_query_identity_and_flags),
+    CASE(platform_static_certificate_rejections),
+    CASE(platform_adjacency_rejections),
+    CASE(platform_geometry_rejections),
+    CASE(platform_geometry_tolerances),
+    CASE(platform_nonfinite_and_stale_source),
 };
 int main(int argc, char** argv)
 {
     unsigned i;
     CHECK(argc == 2);
+    if (!strcmp(argv[1], "footprint")) {
+        printf("Fighter=%lu CpuFighter=%lu guarded_bytes=%lu cases=%lu\n",
+               (unsigned long) sizeof(Fighter), (unsigned long) sizeof(self.cpu),
+               (unsigned long) (3 * sizeof(Fighter) + sizeof(objects) + sizeof(entities)),
+               (unsigned long) (sizeof(cases) / sizeof(cases[0])));
+        return 0;
+    }
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         if (!strcmp(argv[1], cases[i].name)) {
             cases[i].run();

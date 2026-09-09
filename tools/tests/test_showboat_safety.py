@@ -11,7 +11,13 @@ unchanged on host (longs/pointers/layout differ from PPC); host builds do NOT
 assert PPC offsets. Separate freestanding PPC syntax checks enable native layout
 assertions with LINT. Map/player queries are controlled stubs; read-only native
 eligibility, extension/adjacency and horizontal intersection bodies are extracted
-verbatim. The overlap fixture models mpCheckFloor's strict first-hit tie scan. This proves bounded policy/output
+verbatim. The overlap fixture models mpCheckFloor's strict first-hit tie scan,
+including all three isolated BF platforms without adjacent extension. Platform
+certificates use controlled native MapCollData/CollJoint/CollLine declarations;
+legacy main-floor cases prohibit those new getters. The 37.6-wide platforms
+intentionally veto both directions: safe inward drops are NOT modeled. The
+f5302 fixture separates recorded binary32 fields from explicit unknown stubs.
+This proves bounded policy/output
 immutability under those inputs, NOT native physics, actual VM execution, hook
 placement, a universal animation proof or live prevention. Main's ready singles,
 team/custom/spawn gates and telemetry are tested by its independently owned suite.
@@ -74,6 +80,8 @@ class SafetyTests(unittest.TestCase):
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
         cls.binaries, cls.symbols = [], []
         cls.guard_counts = {}
+        cls.legacy_guard_counts = {}
+        cls.footprints = {}
         protected = {p: p.read_bytes() for p in (MODULE, HEADER)}
         for debug in (0, 1):
             binary = work / f"safety-debug-{debug}"
@@ -81,6 +89,11 @@ class SafetyTests(unittest.TestCase):
             run(cls.base + flags + ["-fsanitize=address,undefined",
                 "-fno-omit-frame-pointer", str(MODULE), str(HARNESS), "-lm", "-o", str(binary)])
             cls.binaries.append(binary)
+            footprint = run([str(binary), "footprint"], env=cls.env).stdout.strip()
+            if not re.fullmatch(r"Fighter=[1-9][0-9]* CpuFighter=[1-9][0-9]* "
+                                r"guarded_bytes=[1-9][0-9]* cases=[1-9][0-9]*", footprint):
+                raise AssertionError(f"Invalid footprint: {footprint}")
+            cls.footprints[binary.name] = footprint
             obj = work / f"safety-debug-{debug}.o"
             run(cls.base + flags + ["-c", str(MODULE), "-o", str(obj)])
             cls.symbols.append(run(["nm", str(obj)]).stdout)
@@ -92,13 +105,19 @@ class SafetyTests(unittest.TestCase):
             with self.subTest(debug=binary.name):
                 output = run([str(binary), name], env=self.env).stdout.strip()
                 self.assertRegex(output, rf"^PASS {name} [1-9][0-9]*$")
-                self.guard_counts[binary.name] = (
-                    self.guard_counts.get(binary.name, 0) + int(output.rsplit(" ", 1)[1]))
+                count = int(output.rsplit(" ", 1)[1])
+                self.guard_counts[binary.name] = self.guard_counts.get(binary.name, 0) + count
+                if not name.startswith("platform_") and name != "observed_platform_f5302":
+                    self.legacy_guard_counts[binary.name] = (
+                        self.legacy_guard_counts.get(binary.name, 0) + count)
 
     @classmethod
     def tearDownClass(cls):
         counts = ", ".join(f"{name}={count}" for name, count in sorted(cls.guard_counts.items()))
-        print(f"Full-Fighter guards: {counts}; total={sum(cls.guard_counts.values())}")
+        print(f"Full-Fighter guards: {counts}; total={sum(cls.guard_counts.values())}; "
+              f"legacy={sum(cls.legacy_guard_counts.values())}")
+        for name, footprint in sorted(cls.footprints.items()):
+            print(f"Host diagnostic footprint ({name}): {footprint}")
 
     def test_native_ppc_header_syntax(self):
         # All REAL headers, native LINT layout assertions, no host fixture shim.
@@ -112,7 +131,8 @@ class SafetyTests(unittest.TestCase):
         expected = {"Player_GetPlayerState", "Player_GetEntity", "ftCo_800A2040",
                     "ftColl_8007B868", "HSD_GObj_Entities", "Stage_80225194",
                     "mpCheckFloor", "mpFloorGetLeft", "mpFloorGetRight",
-                    "mpLineGetV0Pos", "mpLineGetV1Pos", "mpLib_8004ED5C"}
+                    "mpLineGetV0Pos", "mpLineGetV1Pos", "mpLib_8004ED5C",
+                    "mpLib_8004D164", "mpGetGroundCollJoint", "mpGetGroundCollLine"}
         for symbols in self.symbols:
             undefined = {line.split()[-1].removeprefix("_")
                          for line in symbols.splitlines()

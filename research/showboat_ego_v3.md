@@ -29,6 +29,23 @@ camera/offscreen flags, and recheck every update.
 Source: `showboat_ai.c`, `ftCo_Dash.c`, `ftCo_Squat.c`, `ftCo_AppealS.c`,
 `ftCo_CliffWait.c`, `ft_0D4D.c`, `mplib.c`, and prior wavedash/stage research.
 
+### Important default-Time correction
+
+Quickstart preserves normal Versus rules, whose fresh default is a two-minute
+Time match. The old stock-only certificate therefore prohibited every full KO
+taunt in that mode. Normal `GM_VS` + `MatchKind_Time`, excluding `gm_8016B0E8`
+elimination behavior and `Player_GetFlagsBit1` removal routing, follows the same
+mandatory Rebirth as stocks. A primary opponent's actual death counter plus
+`(int)p_ftCommonData->x5D0` can certify the same >=80-update window without
+requiring positive stocks in Time. Other modes, final stock, subcharacters and
+actionable RebirthWait do not gain a certificate.
+
+Trace: death Anim -> `ftCo_800BFD9C` -> `gm_80167320` -> `fn_8016719C` ->
+`Player_80032070` -> normal spawn routing -> `ftCo_800D4FF4` (Rebirth);
+`ftCo_Rebirth_IASA` is empty and `ftCo_Rebirth_Anim` waits for the mandatory
+counter before entering actionable RebirthWait. Match-end freezing does not
+create an earlier actionable opponent.
+
 ## Shield inputs and actual powershields
 
 `fighter.c` input preprocessing synthesizes LR and full trigger pressure from
@@ -95,6 +112,21 @@ onsets; no claim of perfect blocking of every attack.
 Source: `fighter.c` input preprocessing; `ftCo_Guard.c`; `ftcoll.c`;
 `ftcpuattack.c:ftCo_800B9F90`, `ftCo_800BA9A0`, `ftCo_800BB104`,
 `ftCo_800BB9B4`; `ftCo_0A01.c` arbitration/dispatch; `ftcmdscript.c`.
+
+## Closed prior-build playtest
+
+The closed `bt-27` quickstart log contains 294 SHOWBOAT rows, two acknowledged
+custom grabs and one acknowledged KO taunt; no DANCE starts or WDASH rows were
+found. This is the **previous** build, not runtime evidence for this update.
+There are no per-rejecting-gate traces sufficient to attribute the missing
+movement to one cause. Acknowledged actions do not establish connected hits,
+useful displacement or comparative strength.
+
+Review found native locomotion can contain two terminal Done bytes (its builder
+and the final commit both append one). Personality takeover now accepts only
+Done-only terminal padding; queued buttons/unknown commands remain rejected.
+A running offstage winner can settle with at most 12 neutral samples before
+state-confirmed dancing, rather than mistaking Run for Dash.
 
 ## Evidence needed
 

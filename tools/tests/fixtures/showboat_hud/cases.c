@@ -22,6 +22,8 @@ int main(void) {
  ShowboatHUD_Update(&fp[0],90,SHOWBOAT_HUD_UPAIR,0);expect_row(0,"FALCON P1 EGO  90 /100 (UPAIR) SERIOUS 0f");
  ShowboatHUD_Update(&fp[0],90,SHOWBOAT_HUD_JUGGLE,0);expect_row(0,"FALCON P1 EGO  90 /100 (JUGGLE) SERIOUS 0f");
  ShowboatHUD_Update(&fp[0],90,SHOWBOAT_HUD_WDASH,0);expect_row(0,"FALCON P1 EGO  90 /100 (WDASH) SERIOUS 0f");
+ ShowboatHUD_Update(&fp[0],90,SHOWBOAT_HUD_BLOCK,0);expect_row(0,"FALCON P1 EGO  90 /100 (BLOCK) SERIOUS 0f");
+ ShowboatHUD_Update(&fp[0],90,SHOWBOAT_HUD_PERFECT,0);expect_row(0,"FALCON P1 EGO  90 /100 (PERFECT) SERIOUS 0f");
  HUD_Draw(hud_gobj,0);assert(draws==0);HUD_Draw(hud_gobj,2);assert(draws==12);assert(hud_rows[0].text.x==22&&hud_rows[0].text.y==72);
  fp[1].gobj=NULL;ShowboatHUD_Update(&fp[1],1,1,1);assert(hud_rows[1].ego==100);fp[1].gobj=players[1];
  fp[1].kind=0;ShowboatHUD_Update(&fp[1],1,1,1);assert(!hud_rows[1].active);fp[1].kind=FTKIND_CAPTAIN;

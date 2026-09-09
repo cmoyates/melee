@@ -40,17 +40,55 @@ assets, emulator, production edits, or target build are involved.
   update, and preservation of the new movement script when a flourish yields.
   The actual wavedash sequence/geometry has a separate module suite; these spies
   do not simulate jump or landing physics.
+- Five `ShowboatDefense` APIs are explicit orchestration spies using the real
+  header: ResetSlot, Suspend, Update, GetAction (0/10/11), and TakePerfect. They
+  default to declining without input writes or rewards. Per-slot owner/action/
+  pending state and independent counters leave existing combat/movement event
+  traces unchanged. A distinctive `SetLstickY 47; Done` VM identifies ownership;
+  it does **not** emulate R, shield timing, collisions, or native defense7.
+  Tests inject a verified-contact event explicitly, separately from an attempt
+  or a PERFECT indicator. The actual defense module is **not linked** here and
+  has its own C suite for contact evidence, release and identity policy.
 - Script writers follow the corresponding subset of `ftcmdscript.c`: clear all
   controls and reset buffer; append command/argument; append Done and schedule.
   A separate tiny interpreter handles only Done, PressUp, PressB, SetLstickX/Y.
   Unknown opcodes fail loudly. Done intentionally leaves held input untouched.
-- Successful updates must produce at most five script bytes. Cancellation is
-  checked **before** interpreting anything, including both sticks, both triggers,
-  buttons, pending script, and vanilla attack-selection cache invalidation.
+- Successful updates must produce at most five script bytes. Owned-VM cancellation
+  is checked **before** interpreting anything, including both sticks, both triggers,
+  buttons and pending script. Fresh vanilla `xA4` selections are always preserved.
+  Replacement native VMs must retain their **entire CPU snapshot** instead of being
+  blindly neutralized. The old cancellation cases now dirty held channels without
+  replacing the owned bytecode; replacement cases test the distinct preservation
+  contract. No physical-write masks or original case registrations were removed.
 - Every update snapshots all exposed Fighter fields and all fixture player/query
   data. Only the actor's CPU script/input fields and `cpu.xA4` attack-selection
   cache may change. Command weighting must leave all Fighters and archive-table
   bytes unchanged and must not consume personality RNG.
+
+Defense orchestration cases cover:
+
+- Fresh defense only after combat declines and before **new** movement, without
+  ego/serious gating. Active movement remains first; cancellation gets one
+  movement call before combat/defense. Certified KO taunts still precede fresh
+  defense. These are delegation tests, not assertions that a mock attempt is safe.
+- Existing action 10 serviced before new combat; both true ownership and false
+  native handoff return directly. False handoff cannot restart movement or any
+  of the six personality contexts, even at low native priorities 1/10 and with
+  an idle VM that would otherwise permit takeover. Action 11 alone neither
+  blocks new combat nor awards ego.
+- Yielding dance/swagger/Punch/offstage styles forget old ownership without
+  clearing or changing **any byte of the newly scheduled defense CPU snapshot**.
+- Owned attempts and GuardReflect motion grant no confidence. A pending verified
+  event produced during an Update returning false is polled afterward, consumed
+  once, and grants exactly +8 ego (including zero-ego and upper-clamp cases).
+  Rewards are slot/owner private; stale owner tokens are never dereferenced.
+- Eligibility loss, lost singles target, rival slot/entity replacement and
+  suspension discard pending events before any reward poll. Reset follows
+  Suspend where main reinitializes the slot; self spawn/stock loss uses Suspend
+  without requiring a defense Reset. Owner replacement resets bookkeeping without
+  suspending/dereferencing a stale owner. Reset bounds, isolation and idempotence
+  preserve every Fighter byte. The spy does not reproduce physical release or
+  the real defense module's own rival-spawn checks.
 
 Coverage retains configuration/singles/partner exclusions, identity/reset/suspend
 lifecycle, stock/death deduplication (including delayed/reversed observation order),
@@ -63,20 +101,52 @@ V2-specific cases cover:
 - Certified taunts: actual death states 0–10, positive death counter plus mandatory
   rebirth budget >=80, stock mode/live rival stocks, FD/BF main floor/no items,
   separate 180-update cooldown, no RNG roll, and safe high-percent/low-ego/serious
-  override. Running winners can settle with bounded neutral input, only proceeding
+  override (not within the new 30-update actual-hit/stock-loss safety interval). Running winners can settle with bounded neutral input, only proceeding
   after a real free-stance observation. Late death, Rebirth/RebirthWait, unsafe
   court, failure to settle and pre-press budget expiry veto.
 - Three-update taunt/punch scripts with explicit native-state acknowledgment and
-  cancellation when the press is not acknowledged; unchanged 22-update swagger
-  pulses. Swagger starts only in idle/far-whiff (>=70) contexts without an active
-  vanilla script; Punch requires Furafura with grab_timer >300, not knockdown.
+  cancellation when the press is not acknowledged; unchanged 22-update far-whiff
+  swagger pulses. Far-whiff swagger starts only in idle/>=70 contexts; Punch
+  requires Furafura with grab_timer >300, not knockdown. All styles now require
+  no cached attack and a verified mundane/idle VM at initial takeover.
 - DANCE state 4: neutral first update, world-direction sticks, actual Dash frame
   >5/facing confirmation before reversals, delayed initial opposite flick during
   early unturnable Dash, Turn handling, two-turn termination,
   and a hard 24-update bound even without animation progression. Signed floor
   bounds enforce strict >40 starting / >30 active clearance, 24 displacement,
   next-leg runway, no items/platforms, and floor identity. Native priorities and
-  real punish opportunities cancel; priority yields preserve fresh `xA4`.
+  real punish opportunities cancel; all exits preserve fresh `xA4`.
+- Frequent neutral dance: ego >=30 (was 40), horizontal gap 55–130 (was 55–115),
+  vertical gap <24 (was <20), 90% roll (was 75%), 24-update failed retry (was 45),
+  successful start cooldown 48 / 36 at ego >=80 (was 90 / 60). Target must now be
+  grounded, without hitstun, knockdown, landing lag or protection; no near-ledge
+  airborne recovery can sneak through the neutral branch. Technical combat and
+  wavedash remain first, independent of ego.
+- Deterministic offstage mockery at **any ego**, including zero and residual
+  emotional caution: live airborne rival horizontally beyond the main-floor
+  ledge by **strictly >30**, separated by **>=100**. FD/BF main floor only, signed
+  self runway >30, self grounded/free of capture/hitlag/hitstun, no held/global
+  items or projectiles, bounded observed self velocity, and no damage/hitlag/
+  hitstun or stock-loss observation within **30 updates**. A four-update closing
+  reserve uses the larger inward self-velocity/observed position delta and must
+  still satisfy both gap/ledge margins. Below-stage or offscreen alone is NOT
+  sufficient. Far target hitstun/hitlag and return invulnerability do not veto a
+  geometrically clear window. Return toward stage/pressure cancels immediately.
+- Offstage bouts: normal dance mechanics, max **24 updates**, then **18 updates**
+  before another qualified bout; no RNG roll or shared-style cooldown suppression.
+  If dance admission cannot accept but a slow grounded free/crouch stance can,
+  one short crouch uses **12 updates** (8 down, 4 neutral), the same retry, signed
+  runway and floor/displacement checks. RunBrake is not faked into a dash/crouch.
+  Full D-pad-Up taunts remain certified-KO-only; no guessed 80-frame recoveries.
+- Exact personality script ownership: saved bytes/length and only scheduled-start
+  or fully consumed cursors allow cleanup; continuation additionally requires a
+  consumed sample, original priority and zero `xA4`. Fresh bytecode, malformed or
+  alien cursors, duration changes, selected attacks, and even 1->10 priority
+  changes preempt. Never restart personality on that preemption update. A bounded
+  remaining-bytecode allowlist admits initial native locomotion, scanning past
+  waits to reject queued attacks/jumps/taunts, unknown commands and priority writes.
+  Tests cover every style, pending/consumed VM, lifecycle/suspend exits, post-press
+  taunt/Punch preemption, same-slot rival replacement and opponent spawn changes.
 - Selective mercy only at the huge-lead central FD/BF hitstun opportunity: eligible
   air script 6 gets 4x and script 8 gets .35x. Guard failures retain normal Knee/
   Stomp style weighting; common safety vetoes still win, zero stays zero, and
@@ -85,6 +155,32 @@ V2-specific cases cover:
 The whiff helper intentionally selects a non-FD/BF stage to isolate crouch
 swagger from dance. Death counters and native motion frames never advance
 implicitly in a stub; each relevant transition is supplied by the test.
+
+This change adds **14 defense orchestration C cases** and **7 final regressions**,
+retaining all **88 existing cases** (the original 70 plus 18 personality cases),
+for **109 C cases / 218 debug-mode executions** with ASan/UBSan. Case loops also vary styles, sides,
+priorities, bytecode/cursor mutations, physical vetoes and defense handoff/reward
+states. Existing physical-write guards and combat/movement spies remain intact.
+
+`ego_regressions.c` additionally covers normal VS Time KO certificates without
+stocks, elimination/removal/other-mode/final-stock exclusions, pre-press
+revalidation, actual native double-Done locomotion padding, character-local
+Zelda/Mewtwo/Sheik teleport guards on admission/continuation, and bounded
+Run -> observed RunBrake/Wait settling (12 neutral samples, never a forced dash).
+The extra game queries default to Title and are reset between setups. Native
+GameMode/MatchKind and the three teleport-character enums are extracted, not
+invented numeric constants. All new scenarios retain physical-write guards.
+
+Limitations: no full recovery-time, hitbox, knockback/ground-velocity or future
+projectile model. The four-update projection is a conservative current-observation
+veto, not proof of safety against teleporting/fast-changing specials. Short inputs
+remain interruptible only through retail rules; a started taunt/Punch animation
+cannot be cancelled by ending ownership. Byte-identical native replacements with
+identical cursors/priority are inherently indistinguishable without an engine VM
+generation token. These tiny scripts have no autonomous release tail; update or
+suspend clears an exactly owned consumed VM. ResetSlot is bookkeeping-only and
+relies on the existing native reset lifecycle. No shield-pulse policy is modeled
+here, and the spies do not establish real combat/wavedash/defense integration strength.
 
 Native animation progression is supplied explicitly between frames; an emitted
 B or D-pad-Up is not evidence that the game actually executed a punch or taunt.

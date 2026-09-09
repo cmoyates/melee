@@ -15,6 +15,7 @@ EXPECTED_OBJECTS = {
     "melee/mod/showboat_ai.o",
     "melee/mod/showboat_combat.o",
     "melee/mod/showboat_movement.o",
+    "melee/mod/showboat_defense.o",
     "melee/mod/showboat_hud.o",
     "melee/pl/player.o",
 }
@@ -88,7 +89,7 @@ def main():
     (ROOT / "build/showboat/verification.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"Validated {report['dol']}: {len(data):,} bytes, SHA-1 {report['sha1']}")
     count = 4 + int(not args.no_unlocks) + int(not args.no_quickstart)
-    print(f"Stock DOLs unchanged; exactly {count} hooked objects plus the AI/combat/movement/HUD modules differ from C-stick.")
+    print(f"Stock DOLs unchanged; exactly {count} hooked objects plus the AI/combat/movement/defense/HUD modules differ from C-stick.")
 
 
 if __name__ == "__main__":

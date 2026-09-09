@@ -115,7 +115,7 @@ void ShowboatHUD_Update(Fighter* fp, int ego, int action, int serious)
 {
     static char* const names[] = {
         "VANILLA", "TAUNT", "SWAGGER", "PUNCH", "DANCE", "GRAB", "KNEE",
-        "UPAIR", "JUGGLE", "WDASH"
+        "UPAIR", "JUGGLE", "WDASH", "BLOCK", "PERFECT"
     };
     HUD_Row* row;
     DevText* text;
@@ -152,7 +152,7 @@ void ShowboatHUD_Update(Fighter* fp, int ego, int action, int serious)
     } else if (ego > 100) {
         ego = 100;
     }
-    if (action < SHOWBOAT_HUD_VANILLA || action > SHOWBOAT_HUD_WDASH) {
+    if (action < SHOWBOAT_HUD_VANILLA || action > SHOWBOAT_HUD_PERFECT) {
         action = SHOWBOAT_HUD_VANILLA;
     }
     if (serious < 0) {

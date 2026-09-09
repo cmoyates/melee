@@ -13,6 +13,18 @@ typedef int32_t s32;
 typedef float f32;
 #include "sb_native_enums.h"
 
+/* Explicit normal-Time respawn queries. Defaults deliberately describe Title,
+ * not VS, so non-stock legacy fixtures do not acquire a Time certificate. */
+struct StartMeleeRules { MatchKind match_kind; };
+static struct StartMeleeRules test_taunt_rules;
+static u8 test_taunt_mode;
+static bool test_taunt_elimination;
+static s32 test_taunt_removal[6];
+static struct StartMeleeRules* gm_GetRules(void) { return &test_taunt_rules; }
+static u8 gm_GetCurrentGameMode(void) { return test_taunt_mode; }
+static bool gm_8016B0E8(void) { return test_taunt_elimination; }
+static s32 Player_GetFlagsBit1(s32 slot) { return test_taunt_removal[slot]; }
+
 typedef struct Fighter Fighter;
 typedef struct Fighter_GObj {
     Fighter* user_data;
@@ -49,7 +61,7 @@ struct Fighter {
     Vec3 cur_pos, self_vel;
     CollData coll_data;
     struct { float x1830_percent; } dmg;
-    bool x221F_b3, x221C_b6, x2219_b5;
+    bool x221F_b3, x221F_b4, x221C_b6, x2219_b5;
     void* victim_gobj;
     void* x1A5C;
     void* item_gobj;

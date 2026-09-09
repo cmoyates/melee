@@ -17,6 +17,63 @@ state-confirmed dashdance, conservative KO-reset taunts, and a huge-lead
 up-air-over-Knee preference. It is not a trained superhuman model; competitive
 strength and the ability to dominate a good human remain to be established.
 
+## More visible ego and precision blocking
+
+The latest policy responds to playtest feedback: frequent short mockery while
+an opponent recovers, rather than simply raising an ego number. See
+[the native-mechanics audit](../research/showboat_ego_v3.md). Full KO taunts now
+also work in normal **Versus Time** matches, including quickstart's fresh default;
+the old stock-only restriction prevented them there.
+
+Offstage antics are deterministic, independent of ego/emotional caution, and
+short enough to recheck breathing room every update. Known Zelda/Mewtwo/Sheik
+teleport phases veto them. Running Falcon may first send at most 12 neutral
+samples to observe real RunBrake/Wait; no fabricated dash acceptance. A recovery
+window is still a heuristic, not a guarantee against every future special.
+
+`showboat_defense.c` adds a separate controller-only defense sidecar. At a
+**fresh, empty native defense-7 melee decision**, it may choose immediate digital
+R hardshield instead of the usual roll. It does not replace running native
+scripts, delay an existing shield, or pump/release/repress for fresh windows.
+Admission requires healthy shield (45–60), ordinary grounded normal-attack
+capsules with initialized history, a matching native threat, flat shared support
+and >22 clearance on both sides; grabs, specials, projectiles/items, aerials,
+forced states and incompatible inputs keep native defense. The native three-frame
+body forecast is not precise shield-contact timing.
+
+An attempt holds for at most ten samples, with an abandoned-VM release tail.
+Contact/shieldstun and preemption hand back to native processing immediately;
+defense-7 handoff preserves held R until the native decision handles it. No
+shieldstun, DI/SDI, timer, shield-health or physical-state manipulation. HUD
+`BLOCK` (10) means a custom attempt; `PERFECT` (11) requires native fighter
+powershield-contact evidence during that owned attempt—not GuardReflect alone.
+Such a verified contact adds **8 ego once**; PERFECT expires after at most 30
+module updates or leaving guard. Failed attempts retry after 12 updates; success
+has no added lockout beyond real actionability and a naturally released sample.
+Repeated perfect blocks require legally available opportunities, not guaranteed
+success. Logs distinguish queued onset, guard acknowledgment and actual contact.
+
+**Testing protocol:** finish offline checks, then ask here for readiness. Do not
+launch or restart Dolphin until the tester explicitly confirms. The previous
+quickstart playtest exited cleanly; a new build is not runtime-tested merely
+because compilation or host fixtures pass.
+
+### Current offline checkpoint
+
+- **221 tests pass:** 109 personality/orchestration, 29 combat, 53 movement,
+  24 defense, HUD, two unlock and three quickstart tests. Actual-C debug 0/1
+  sanitizer coverage where applicable; no inferred native physics from inputs.
+- Native build/isolation passes. Five mod modules compile with MWCC `-warn all`
+  in debug 0/1 without module-local diagnostics. All six disabled native hooks
+  remain byte-identical to the C-stick baseline; original stock DOLs unchanged.
+- Current DOL: **4,496,256 bytes**, SHA-1
+  `0643071c098d78ab6d3339e3cc931647436b3594`.
+- Python compile, shell syntax and whitespace checks pass. Isolated controller
+  mapping remains unchanged (`00dc2b7a5339493fe11fcf93e3adba16e93e0451`).
+- Logs: `build/showboat-ego-{tests,build,verify,checks}.log`. No new Dolphin
+  launch or runtime-strength claim. Await explicit readiness; use FD/Battlefield
+  with items off to exercise the advanced mockery/movement/blocking policies.
+
 ## Architecture traced so far
 
 Local source, not external AI mods, is the ground truth:
@@ -242,8 +299,9 @@ flags, input normalization, floor/landing behavior and verification limits.
 
 ### Implemented personality actions / tuning
 
-- **KO-reset taunt:** recent KO, normal stock match with rival stocks
-  remaining, grounded on FD/Battlefield's static main floor, no existing items.
+- **KO-reset taunt:** recent KO, stock match with rival stocks remaining or
+  normal Versus Time without elimination/removal routing; primary rival only.
+  Grounded on FD/Battlefield's static main floor, no existing items.
   A running winner can send neutral for at most 18 updates to settle through
   real Dash/RunBrake into a free stance (40-unit runway, bounded speed); it never
   forces Wait or spends Up early. Require death countdown + mandatory Rebirth ≥80 frames,
@@ -252,14 +310,21 @@ flags, input normalization, floor/landing behavior and verification limits.
   invulnerability as safety. Separate 180-update cooldown; a certified reset
   bypasses low ego/emotional serious mode, never physical danger. Real motion
   state must acknowledge the pulse. No custom final-stock victory pose yet.
-- **Dashdance:** ego ≥40, idle native priority, no selected attack or running
-  native script, rival 55–115 units away, no immediate knockdown/hitstun punish.
+- **Offstage mockery:** rival airborne beyond the connected ledge by >30 units,
+  with ≥100 horizontal separation after a four-update observed-closing reserve.
+  FD/Battlefield main floor, no items, signed runway/velocity/identity guards.
+  Deterministic even at ego zero: up to 24 dance updates or a 12-update crouch
+  fallback, 18-update retry, 30-update recent-hit veto. Recheck every sample;
+  native threats and real conversions win. No full live-recovery taunt gamble.
+- **Dashdance:** ego ≥30, idle native priority, no selected attack; an empty VM
+  or verified mundane remaining locomotion only. Rival 55–130 units away,
+  no immediate knockdown/hitstun/landing punish.
   FD/Battlefield static main floor only, no items, signed endpoint clearance
   ≥40 at start / ≥30 while running, bounded displacement and next-leg runway.
   One neutral sample, then legal full horizontal flicks. Reverse only after
   actual Dash frame 5 and observed facing; hold through Turn. At most two
-  reversals and 24 input updates. 75% opportunity roll, 45-update failed-roll
-  cooldown, 90 successful (60 at ego ≥80). Yield immediately to real attacks,
+  reversals and 24 input updates. 90% opportunity roll, 24-update failed-roll
+  cooldown, 48 successful (36 at ego ≥80). Yield immediately to real attacks,
   defense, recovery, nearby pressure and lost clearance; no forced dash cancels.
 - **Swagger:** two short crouches after a far (70–85), facing-away ordinary
   attack with ego ≥45, 50% opportunity roll. Idle priority only, no native
@@ -279,9 +344,10 @@ flags, input normalization, floor/landing behavior and verification limits.
   control over attempting a finisher; it never refuses all attacks or prevents
   a KO. Up-air can still kill and native/direct combat can still choose Knee.
   It is a conservative policy, not proof Falcon can end the match on demand.
-- Short styles share a 90-update cooldown. Opportunity rolls are consumed when
-  actionable, not during own lag. Gaining momentum rebuilds confidence; losing
-  ego suppresses personality, **not** the independent combat assistance.
+- Swagger/Punch share a 90-update cooldown; neutral dance and offstage mockery
+  use the shorter budgets above. Opportunity rolls are consumed when actionable,
+  not during own lag. Low ego suppresses discretionary neutral antics, **not**
+  offstage breathing-room mockery or independent combat/movement/defense.
 
 The short scripts own only CPU controller output. Every frame checks danger,
 priority behavior, compatible motion, target presence and floor margin.
@@ -294,6 +360,7 @@ intentional risk, not a state-machine lockup.
 ```
 sh tools/build_showboat.sh
 # Output: build/showboat/GALE01/main.dol
+# Only after the tester explicitly confirms readiness:
 sh tools/run_showboat.sh /absolute/path/to/original-US-v1.02.ciso
 ```
 

@@ -1,6 +1,7 @@
 /* A personality, not a replacement CPU. All actions use the stock input VM. */
 #include "showboat_ai.h"
 #include "showboat_combat.h"
+#include "showboat_defense.h"
 #include "showboat_movement.h"
 
 #if SHOWBOAT_AI_HUD
@@ -15,9 +16,14 @@
 #include <melee/mp/mplib.h>
 #include <sysdolphin/baselib/gobj.h>
 #include <melee/ft/kinds/ftCaptain/forward.h>
+#include <melee/ft/kinds/ftMewtwo/forward.h>
+#include <melee/ft/kinds/ftSeak/forward.h>
+#include <melee/ft/kinds/ftZelda/forward.h>
 #include <melee/ft/kinds/ftCommon/ftCo_0A01.h>
 #include <melee/ft/types.h>
 #include <melee/gm/gm_16AE.h>
+#include <melee/gm/gm_1A3F.h>
+#include <melee/mn/types.h>
 #include <melee/pl/player.h>
 #include <melee/mp/mpcoll.h>
 #include <dolphin/os.h>
@@ -31,6 +37,13 @@
 #define SB_PUNISH_WINDOW 30
 #define SB_SERIOUS_FRAMES 90
 #define SB_EDGE_MARGIN 22.0f
+#define SB_OFFSTAGE_RETRY 18
+#define SB_OFFSTAGE_MARGIN 30.0f
+#define SB_OFFSTAGE_GAP 100.0f
+#define SB_RECENT_HIT 30
+#define SB_NEUTRAL_RETRY 24
+#define SB_NEUTRAL_COOLDOWN 48
+#define SB_SCRIPT_MAX 5
 
 /* These are mod states, NOT CPU scenario IDs or fighter motion IDs. */
 typedef enum {
@@ -45,6 +58,16 @@ typedef struct {
     Fighter* owner; /* identity only; never dereferenced between updates */
     s32 spawn;
     int opponent_slot;
+    Fighter* opponent_owner; /* identity only */
+    s32 opponent_spawn;
+    float opponent_x;
+    float opponent_step;
+    int recent_hit;
+    int offstage_cooldown;
+    bool offstage_style;
+    int script_size;
+    int script_priority;
+    u8 script[SB_SCRIPT_MAX];
     int ego;
     int tick;
     int cooldown;
@@ -123,6 +146,7 @@ void ShowboatAI_ResetSlot(int slot)
 #endif
         ShowboatCombat_ResetSlot(slot);
         ShowboatMovement_ResetSlot(slot);
+        ShowboatDefense_ResetSlot(slot);
         memset(&sb_states[slot], 0, sizeof(SB_State));
     }
 }
@@ -130,6 +154,7 @@ void ShowboatAI_ResetSlot(int slot)
 static void SB_CancelTech(Fighter* fp)
 {
     ShowboatMovement_Suspend(fp);
+    ShowboatDefense_Suspend(fp);
     ShowboatCombat_Update(fp, NULL);
 }
 
@@ -224,14 +249,24 @@ static bool SB_TauntSafe(Fighter* fp, Fighter* target)
 {
     Vec3 left, right;
     float budget;
-    if (!SB_Dead(target) || !gm_8016B094() ||
-        Player_GetStocks(target->player_id) <= 0 || SB_Forced(fp) ||
-        fp->x2219_b5 || !SB_Court(fp, &left, &right, SB_EDGE_MARGIN))
+    bool respawns = (gm_8016B094() &&
+                     Player_GetStocks(target->player_id) > 0) ||
+                    (gm_GetCurrentGameMode() == GM_VS &&
+                     gm_GetRules()->match_kind == MatchKind_Time &&
+                     !gm_8016B0E8());
+    if (!SB_Dead(target) || !respawns || target->x221F_b4 ||
+        Player_GetFlagsBit1(target->player_id) || SB_Forced(fp) ||
+        fp->x2219_b5 || fp->item_gobj != NULL || target->item_gobj != NULL ||
+        !(SB_Abs(fp->self_vel.x) <= 2.5f) ||
+        !(SB_Abs(fp->self_vel.y) <= 0.25f) ||
+        !SB_Court(fp, &left, &right, SB_EDGE_MARGIN))
     {
         return false;
     }
     /* All death motions use this counter slot, followed by mandatory Rebirth
-     * on the normal stock route. Do NOT count actionable RebirthWait. Reading
+     * on normal stock and VS Time routes (gm_80167320/Player_80032070).
+     * Removal/subcharacter/elimination shortcuts are excluded. Do NOT count
+     * actionable RebirthWait. Reading
      * only the current death phase underestimates star/screen KO time safely.
      * Retail Falcon taunt is 60 frames; budget includes 20 frames of reserve. */
     /* x5D0 is still UNK_T upstream; retail Rebirth casts this exact field
@@ -256,15 +291,117 @@ static bool SB_Roll(SB_State* s, int chance)
     return (int) ((s->random >> 16) % 100) < chance;
 }
 
+/* Our scripts contain no waits: only the scheduled start and fully consumed
+ * cursor states belong to us. Priority/cache are decisions, not VM identity. */
+static bool SB_ScriptMatches(Fighter* fp, SB_State* s)
+{
+    return s->owner == fp && s->script_size > 0 &&
+           s->script_size <= SB_SCRIPT_MAX &&
+           fp->cpu.write_pos == fp->cpu.buffer + s->script_size &&
+           memcmp(fp->cpu.buffer, s->script, (size_t) s->script_size) == 0 &&
+           ((fp->cpu.csP == fp->cpu.buffer && fp->cpu.command_duration == 1) ||
+            (fp->cpu.csP == NULL && fp->cpu.command_duration == 0));
+}
+
+static bool SB_Continue(Fighter* fp, SB_State* s)
+{
+    return SB_ScriptMatches(fp, s) && fp->cpu.x18 == s->script_priority &&
+           fp->cpu.xA4 == 0 && fp->cpu.csP == NULL &&
+           fp->cpu.command_duration == 0;
+}
+
+static void SB_FinishInput(Fighter* fp, SB_State* s)
+{
+    ftCo_800B49F4(fp);
+    s->script_size = fp->cpu.write_pos - fp->cpu.buffer;
+    s->script_priority = fp->cpu.x18;
+    memcpy(s->script, fp->cpu.buffer, (size_t) s->script_size);
+}
+
+static void SB_Forget(SB_State* s)
+{
+    if (s->offstage_style) { s->offstage_cooldown = SB_OFFSTAGE_RETRY; }
+    s->offstage_style = false;
+    s->action = SB_NONE;
+    s->script_size = 0;
+}
+
 static void SB_Stop(Fighter* fp, SB_State* s, char* reason)
 {
     if (s->action != SB_NONE) {
         SB_Log(fp, s, reason);
-        s->action = SB_NONE;
-        /* Done and ReleaseAll are insufficient: sticks also persist. */
-        ftCo_800B4A78(fp);
-        fp->cpu.xA4 = 0; /* reselect attacks against the current situation */
+        if (SB_ScriptMatches(fp, s)) {
+            /* Done leaves sticks held. Release only our exact old VM, never
+             * a replacement native script, and NEVER erase a fresh A4. */
+            int selected = fp->cpu.xA4;
+            ftCo_800B4A78(fp);
+            fp->cpu.xA4 = selected;
+        }
+        SB_Forget(s);
     }
+}
+
+static bool SB_Takeover(Fighter* fp)
+{
+    int i, cursor = -1, end = -1, op, args;
+    if ((fp->cpu.x18 != 1 && fp->cpu.x18 != 10) || fp->cpu.xA4 != 0 ||
+        fp->cpu.buttons != 0 || fp->cpu.cstick.x != 0 ||
+        fp->cpu.cstick.y != 0 || fp->cpu.ltrigger != 0 ||
+        fp->cpu.rtrigger != 0)
+    {
+        return false;
+    }
+    if (fp->cpu.csP == NULL && fp->cpu.command_duration == 0) { return true; }
+    if (fp->cpu.command_duration == 0) { return false; }
+    /* Equality avoids subtraction/ordering of alien pointers. Decode the
+     * bounded REMAINING locomotion, including past waits, before taking over.
+     * No button presses, loops, priority writes or unknown opcodes admitted. */
+    for (i = 0; i <= (int) sizeof(fp->cpu.buffer); ++i) {
+        if (fp->cpu.csP == fp->cpu.buffer + i) { cursor = i; }
+        if (fp->cpu.write_pos == fp->cpu.buffer + i) { end = i; }
+    }
+    if (cursor < 0 || cursor >= end) { return false; }
+    while (cursor < end) {
+        op = (u8) fp->cpu.buffer[cursor++];
+        if (op == CpuCmd_Done) {
+            /* Native locomotion may append Done before B49F4 appends another.
+             * Permit only terminal Done padding, never hidden commands. */
+            while (cursor < end) {
+                if ((u8) fp->cpu.buffer[cursor++] != CpuCmd_Done) { return false; }
+            }
+            return true;
+        }
+        switch (op) {
+        case CpuCmd_ReleaseA: case CpuCmd_ReleaseB:
+        case CpuCmd_ReleaseX: case CpuCmd_ReleaseY:
+        case CpuCmd_ReleaseR: case CpuCmd_ReleaseL:
+        case CpuCmd_ReleaseZ: case CpuCmd_ReleaseUp: case CpuCmd_ReleaseAll:
+            args = 0;
+            break;
+        case CpuCmd_SetLstickX: case CpuCmd_SetLstickY:
+        case CpuCmd_WaitFor: case CpuCmd_WaitIfMotionId:
+        case CpuCmd_LstickTowardDestination:
+        case CpuCmd_LstickXTowardDestination: case CpuCmd_LstickXForward:
+        case CpuCmd_LstickTowardFighter: case CpuCmd_LstickXTowardFighter:
+            args = 1;
+            break;
+        case CpuCmd_LstickTowardDestinationClamped:
+        case CpuCmd_LstickXTowardDestinationClamped:
+        case CpuCmd_LstickForwardClamped:
+            args = 2;
+            break;
+        case CpuCmd_SetCstickX: case CpuCmd_SetCstickY:
+        case CpuCmd_SetRtrigger: case CpuCmd_SetLtrigger:
+            if (cursor >= end || fp->cpu.buffer[cursor] != 0) { return false; }
+            args = 1;
+            break;
+        default:
+            return false;
+        }
+        if (cursor + args >= end) { return false; } /* need terminal Done */
+        cursor += args;
+    }
+    return false;
 }
 
 void ShowboatAI_Suspend(Fighter* fp)
@@ -294,6 +431,8 @@ static void SB_Start(Fighter* fp, SB_State* s, SB_Action action, char* reason)
     s->action = action;
     s->age = 0;
     s->taunt_settle = 0;
+    s->offstage_style = false;
+    s->script_size = 0;
     if (action == SB_TAUNT) {
         s->taunt_cooldown = SB_TAUNT_COOLDOWN;
     } else {
@@ -310,31 +449,105 @@ static void SB_Countdown(int* value)
     }
 }
 
+/* This is a short, rechecked breathing-room window, NOT a recovery-duration
+ * estimate. Offscreen, hitstun and invulnerability cannot certify a 60f taunt.
+ * Project four updates of the larger observed/velocity closing rate as a veto;
+ * no claim to predict teleports, future projectiles or every recovery hitbox. */
+static bool SB_Teleport(Fighter* target)
+{
+    int motion = target->motion_id;
+    return (target->kind == FTKIND_ZELDA &&
+            motion >= ftZd_MS_SpecialHiStart_0 && motion <= ftZd_MS_SpecialAirHi) ||
+           (target->kind == FTKIND_MEWTWO &&
+            motion >= ftMt_MS_SpecialHiStart && motion <= ftMt_MS_SpecialAirHi) ||
+           (target->kind == FTKIND_SEAK &&
+            motion >= ftSk_MS_SpecialHiStart_0 && motion <= ftSk_MS_SpecialAirHi);
+}
+
+static bool SB_OffstageWindow(Fighter* fp, SB_State* s, Fighter* target)
+{
+    Vec3 left, right;
+    float side, closing, step, projected;
+    if (s->recent_hit || SB_Forced(fp) || fp->x2219_b5 || SB_Teleport(target) ||
+        fp->item_gobj != NULL || target->item_gobj != NULL ||
+        !SB_Interior(fp) || !(SB_Abs(fp->self_vel.x) <= 2.5f) ||
+        !(SB_Abs(fp->self_vel.y) <= 0.25f) ||
+        !SB_Court(fp, &left, &right, 30.0f) ||
+        target->ground_or_air != GA_Air || target->x221F_b3 ||
+        target->motion_id < ftCo_MS_Wait ||
+        (target->motion_id >= ftCo_MS_Entry &&
+         target->motion_id <= ftCo_MS_EntryEnd) ||
+        target->victim_gobj != NULL || target->x1A5C != NULL ||
+        (gm_8016B094() && Player_GetStocks(target->player_id) <= 0) ||
+        !(SB_Abs(target->cur_pos.x) < 1000.0f) ||
+        !(SB_Abs(target->cur_pos.y) < 1000.0f) ||
+        !(SB_Abs(target->self_vel.x) <= 100.0f) ||
+        !(SB_Abs(s->opponent_step) <= 100.0f))
+    {
+        return false;
+    }
+    side = target->cur_pos.x > right.x ? 1.0f : -1.0f;
+    closing = -side * target->self_vel.x;
+    step = -side * s->opponent_step;
+    if (step > closing) { closing = step; }
+    if (closing < 0.0f) { closing = 0.0f; }
+    projected = target->cur_pos.x - side * closing * 4.0f;
+    return (side > 0.0f ? projected > right.x + SB_OFFSTAGE_MARGIN :
+                         projected < left.x - SB_OFFSTAGE_MARGIN) &&
+           side * (projected - fp->cur_pos.x) >= SB_OFFSTAGE_GAP;
+}
+
+static bool SB_NeutralPunish(Fighter* target)
+{
+    return target->ground_or_air != GA_Ground ||
+           SB_Forced(target) || SB_Down(target) ||
+           target->motion_id == ftCo_MS_Landing ||
+           target->motion_id == ftCo_MS_LandingFallSpecial ||
+           (target->motion_id >= ftCo_MS_LandingAirN &&
+            target->motion_id <= ftCo_MS_LandingAirLw) ||
+           ftColl_8007B868(target->gobj) != 0;
+}
+
 static bool SB_DanceInput(Fighter* fp, SB_State* s, Fighter* target)
 {
     Vec3 left, right;
     float next;
-    int selected;
     bool motion_ok = SB_Standing(fp) || fp->motion_id == ftCo_MS_Dash ||
                      fp->motion_id == ftCo_MS_Turn;
-    /* A new candidate after the previous owned frame is fresh: preserve it
-     * when yielding instead of throwing away a real punish for movement. */
-    if (fp->cpu.x18 != 1 && fp->cpu.x18 != 10) {
-        selected = fp->cpu.xA4;
-        SB_Stop(fp, s, "dance yields: vanilla attack/defense priority");
-        fp->cpu.xA4 = selected;
+    bool settling = s->offstage_style && s->age == 0 &&
+                    (fp->motion_id == ftCo_MS_Run ||
+                     fp->motion_id == ftCo_MS_RunBrake);
+    if ((s->script_size ? !SB_Continue(fp, s) : !SB_Takeover(fp)) ||
+        (fp->cpu.x18 != 1 && fp->cpu.x18 != 10))
+    {
+        SB_Stop(fp, s, "dance yields: native VM/cache/priority");
         return false;
     }
-    if (!motion_ok || fp->x2219_b5 || SB_Forced(fp) ||
+    if ((!motion_ok && !settling) || fp->x2219_b5 || SB_Forced(fp) ||
         !SB_Court(fp, &left, &right, 30.0f) ||
         fp->coll_data.floor.index != s->dance_floor ||
         SB_Abs(fp->cur_pos.x - s->dance_origin) > 24.0f ||
-        SB_Abs(target->cur_pos.x - fp->cur_pos.x) < 45.0f ||
-        target->x221C_b6 || SB_Down(target) ||
-        ftColl_8007B868(target->gobj) != 0)
+        !(SB_Abs(target->cur_pos.x - fp->cur_pos.x) >= 45.0f) ||
+        fp->item_gobj != NULL || target->item_gobj != NULL ||
+        !(SB_Abs(fp->self_vel.x) <= 2.5f) ||
+        (s->offstage_style ? !SB_OffstageWindow(fp, s, target) :
+                             SB_NeutralPunish(target)))
     {
         SB_Stop(fp, s, "dance yields: pressure/punish/clearance");
         return false;
+    }
+    if (settling) {
+        /* Run cannot simply become Dash through an opposite flick. Allow at
+         * most 12 neutral samples for native RunBrake/Wait, rechecking every
+         * safety gate above. Never infer a stance from this private counter. */
+        if (s->taunt_settle >= 12) {
+            SB_Stop(fp, s, "offstage dance yields: running failed to settle");
+            return false;
+        }
+        ftCo_800B4A78(fp);
+        SB_FinishInput(fp, s);
+        ++s->taunt_settle;
+        return true;
     }
     if (s->age >= 24 ||
         (s->dance_turns >= 2 && fp->motion_id == ftCo_MS_Dash &&
@@ -367,7 +580,7 @@ static bool SB_DanceInput(Fighter* fp, SB_State* s, Fighter* target)
         ftCo_800B46B8(fp, CpuCmd_SetLstickX,
                      (u8) (s->dance_direction * 127));
     }
-    ftCo_800B49F4(fp);
+    SB_FinishInput(fp, s);
     ++s->age;
     return true;
 }
@@ -376,19 +589,25 @@ static bool SB_DanceInput(Fighter* fp, SB_State* s, Fighter* target)
  * this hook; forced states can cancel us before the interpreter executes. */
 static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
 {
-    int duration = s->action == SB_SWAGGER ? 22 : 3;
+    int duration = s->action == SB_SWAGGER ? (s->offstage_style ? 12 : 22) : 3;
     bool compatible = SB_GroundFree(fp);
     float distance = SB_Abs(target->cur_pos.x - fp->cur_pos.x);
     if (s->action == SB_DANCE) {
         return SB_DanceInput(fp, s, target);
     }
+    if (s->script_size ? !SB_Continue(fp, s) : !SB_Takeover(fp)) {
+        SB_Stop(fp, s, "flourish yields: native VM/cache/priority");
+        return false;
+    }
     if (s->action == SB_SWAGGER &&
-        ((fp->cpu.x18 != 1 && fp->cpu.x18 != 10) || target->x221C_b6 ||
-         SB_Down(target)))
+        ((fp->cpu.x18 != 1 && fp->cpu.x18 != 10) ||
+         (s->offstage_style ?
+              (!SB_OffstageWindow(fp, s, target) ||
+               fp->coll_data.floor.index != s->dance_floor ||
+               SB_Abs(fp->cur_pos.x - s->dance_origin) > 24.0f) :
+              SB_NeutralPunish(target))))
     {
-        int selected = fp->cpu.xA4;
-        SB_Stop(fp, s, "swagger yields: real punish/priority");
-        fp->cpu.xA4 = selected;
+        SB_Stop(fp, s, "swagger yields: real punish/window/priority");
         return false;
     }
     if (s->action == SB_TAUNT && s->age < 2 && !SB_TauntSafe(fp, target)) {
@@ -405,7 +624,7 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
         }
         ftCo_800B4A78(fp);
         fp->cpu.xA4 = 0;
-        ftCo_800B49F4(fp);
+        SB_FinishInput(fp, s);
         ++s->taunt_settle;
         return true;
     }
@@ -437,7 +656,7 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
         return false;
     }
     ftCo_800B4A78(fp);
-    fp->cpu.xA4 = 0; /* arbitration may have cached a vanilla selection */
+    fp->cpu.xA4 = 0; /* admission/continuation already verified no selection */
     if (s->action == SB_TAUNT && s->age == 1) {
         ftCo_800B463C(fp, CpuCmd_PressUp);
     } else if (s->action == SB_PUNCH && s->age == 1) {
@@ -447,7 +666,7 @@ static bool SB_Input(Fighter* fp, SB_State* s, Fighter* target)
     {
         ftCo_800B46B8(fp, CpuCmd_SetLstickY, (u8) -100);
     }
-    ftCo_800B49F4(fp);
+    SB_FinishInput(fp, s);
     ++s->age;
     return true;
 }
@@ -472,6 +691,8 @@ static bool SB_Update(Fighter* fp)
     bool stock_lost;
     bool spawned;
     bool movement_active;
+    bool preempted;
+    bool offstage;
 
     if (fp->player_id >= SB_SLOTS) {
         return false;
@@ -508,7 +729,9 @@ static bool SB_Update(Fighter* fp)
     target_stocks = Player_GetStocks(slot);
     dead = SB_Dead(target);
     stock_match = gm_8016B094();
-    if (s->owner != fp || s->opponent_slot != slot) {
+    if (s->owner != fp || s->opponent_slot != slot ||
+        s->opponent_owner != target)
+    {
         if (s->owner == fp) {
             SB_CancelTech(fp);
             SB_Stop(fp, s, "cancelled: opponent identity changed");
@@ -517,6 +740,9 @@ static bool SB_Update(Fighter* fp)
         s->owner = fp;
         s->spawn = fp->x8_spawnNum;
         s->opponent_slot = slot;
+        s->opponent_owner = target;
+        s->opponent_spawn = target->x8_spawnNum;
+        s->opponent_x = target->cur_pos.x;
         s->ego = SB_BASE_EGO;
         s->percent = fp->dmg.x1830_percent;
         s->opponent_percent = target->dmg.x1830_percent;
@@ -526,6 +752,8 @@ static bool SB_Update(Fighter* fp)
         s->random = fp->x8_spawnNum * 747796405U + fp->player_id + 1;
         SB_Log(fp, s, "initialized normal Level 9 Falcon (singles)");
     }
+    SB_Countdown(&s->recent_hit);
+    SB_Countdown(&s->offstage_cooldown);
     SB_Countdown(&s->cooldown);
     SB_Countdown(&s->taunt_cooldown);
     SB_Countdown(&s->serious);
@@ -535,6 +763,14 @@ static bool SB_Update(Fighter* fp)
     SB_Countdown(&s->bias_log_cooldown);
     SB_Countdown(&s->toy_frames);
 
+    s->opponent_step = target->cur_pos.x - s->opponent_x;
+    s->opponent_x = target->cur_pos.x;
+    if (s->opponent_spawn != target->x8_spawnNum) {
+        SB_Stop(fp, s, "cancelled: opponent new life");
+        s->opponent_spawn = target->x8_spawnNum;
+        s->opponent_step = 0.0f;
+        s->opponent_percent = target->dmg.x1830_percent;
+    }
     spawned = s->spawn != fp->x8_spawnNum;
     stock_lost = stock_match && stocks < s->stocks;
     if (spawned || stock_lost) {
@@ -559,6 +795,7 @@ static bool SB_Update(Fighter* fp)
         ShowboatCombat_ResetSlot(fp->player_id);
         ShowboatMovement_ResetSlot(fp->player_id);
         SB_Stop(fp, s, "cancelled: new life");
+        s->recent_hit = SB_RECENT_HIT;
         s->serious = 120;
         s->celebration = 0;
         s->toy_frames = 0;
@@ -573,6 +810,7 @@ static bool SB_Update(Fighter* fp)
             SB_Ego(fp, s, -10, "punished for showing off");
             s->recent_style = 0;
         }
+        s->recent_hit = SB_RECENT_HIT;
         s->serious = SB_SERIOUS_FRAMES;
         s->celebration = 0;
         s->toy_frames = 0;
@@ -618,6 +856,7 @@ static bool SB_Update(Fighter* fp)
             s->serious = 30;
         }
     }
+    if (fp->x221C_b6 || fp->x2219_b5) { s->recent_hit = SB_RECENT_HIT; }
     s->danger = danger;
     if (++s->tick >= SB_ADVANTAGE_PERIOD) {
         s->tick = 0;
@@ -653,16 +892,29 @@ static bool SB_Update(Fighter* fp)
     if (!vulnerable) {
         s->vulnerable = false;
     }
+    preempted = s->action != SB_NONE && !SB_Continue(fp, s);
+    if (preempted) {
+        SB_Stop(fp, s, "flourish preempted by native VM/cache/priority");
+    }
     /* Finish an already committed technical movement sequence before trying
      * another aerial tactic. It still yields to native safety/priority gates.
      * Never start a second movement attempt on the same cancellation update. */
     movement_active = ShowboatMovement_GetAction(fp) != 0;
     if (movement_active && ShowboatMovement_Update(fp, target)) {
+        SB_Forget(s); /* never release the newly supplied technical VM */
         return true;
+    }
+    /* Service an existing shield before all new tactics. On handoff, return
+     * directly to native dispatch: defense7 must decide what to do with held R
+     * on THIS sample, without a flourish/new movement stealing that handoff. */
+    if (ShowboatDefense_GetAction(fp) == 10) {
+        bool held = ShowboatDefense_Update(fp, target);
+        SB_Forget(s);
+        return held;
     }
     /* A certified KO reset overrides emotional caution, NEVER physical
      * danger. It has its own cooldown, so a tiny shuffle cannot suppress it. */
-    if (!danger && !fp->x2219_b5 &&
+    if (!preempted && !danger && !s->recent_hit && !fp->x2219_b5 &&
         (fp->cpu.x18 == 1 || fp->cpu.x18 == 10))
     {
         if (s->action == SB_TAUNT) {
@@ -670,7 +922,8 @@ static bool SB_Update(Fighter* fp)
         }
         if (s->celebration > 0 && s->taunt_cooldown == 0 &&
             (SB_GroundFree(fp) || SB_TauntMovement(fp)) &&
-            SB_TauntSafe(fp, target))
+            SB_TauntSafe(fp, target) &&
+            (s->action != SB_NONE || SB_Takeover(fp)))
         {
             SB_Stop(fp, s, "KO reset takes precedence over flourish");
             s->celebration = 0;
@@ -683,8 +936,14 @@ static bool SB_Update(Fighter* fp)
     if (ShowboatCombat_Update(fp, target)) {
         if (s->action != SB_NONE) {
             SB_Log(fp, s, "flourish yields to combat conversion");
-            s->action = SB_NONE; /* preserve the new combat script */
+            SB_Forget(s); /* preserve the new combat script */
         }
+        return true;
+    }
+    /* Only a fresh, empty native melee-defense choice may acquire R. Running
+     * native defenses and real attacks remain untouched. No ego gate. */
+    if (ShowboatDefense_Update(fp, target)) {
+        SB_Forget(s); /* retain the newly supplied defensive VM */
         return true;
     }
     if (!movement_active && s->action != SB_TAUNT && s->action != SB_PUNCH &&
@@ -692,9 +951,18 @@ static bool SB_Update(Fighter* fp)
     {
         if (s->action != SB_NONE) {
             SB_Log(fp, s, "flourish yields to technical wavedash");
-            s->action = SB_NONE; /* preserve the new movement script */
+            SB_Forget(s); /* preserve the new movement script */
         }
         return true;
+    }
+    if (preempted) { return false; } /* no same-update personality retake */
+    offstage = !danger && SB_OffstageWindow(fp, s, target);
+    if (s->offstage_style) {
+        if (!offstage) {
+            SB_Stop(fp, s, "offstage mockery yields: window closed/recent hit");
+            return false;
+        }
+        return SB_Input(fp, s, target); /* ignores emotional caution, not safety */
     }
     if (s->action == SB_DANCE) {
         if (danger || s->serious) {
@@ -702,6 +970,30 @@ static bool SB_Update(Fighter* fp)
             return false;
         }
         return SB_DanceInput(fp, s, target);
+    }
+    if (s->action == SB_NONE && offstage && !s->offstage_cooldown &&
+        SB_Takeover(fp))
+    {
+        Vec3 left, right;
+        SB_Action action = SB_NONE;
+        if ((SB_Standing(fp) || fp->motion_id == ftCo_MS_Dash ||
+             fp->motion_id == ftCo_MS_Turn || fp->motion_id == ftCo_MS_Run) &&
+            SB_Court(fp, &left, &right, 40.0f))
+        {
+            action = SB_DANCE;
+        } else if (SB_GroundFree(fp) && SB_Abs(fp->self_vel.x) <= 1.0f) {
+            action = SB_SWAGGER; /* crouch, never fake RunBrake dash acceptance */
+        }
+        if (action != SB_NONE) {
+            SB_Start(fp, s, action, "starting offstage mockery: clear recovery gap");
+            s->offstage_style = true;
+            s->cooldown = SB_NEUTRAL_RETRY;
+            s->dance_direction = dx > 0.0f ? -1 : 1;
+            s->dance_turns = 0;
+            s->dance_floor = fp->coll_data.floor.index;
+            s->dance_origin = fp->cur_pos.x;
+            return SB_Input(fp, s, target); /* deterministic, even at zero ego */
+        }
     }
     /* No override of defense, recovery, grabs, ledges or forced scenarios.
      * Vanilla priority arbitration has already run on this frame. */
@@ -715,29 +1007,28 @@ static bool SB_Update(Fighter* fp)
     if (s->action != SB_NONE) {
         return SB_Input(fp, s, target);
     }
-    if (s->cooldown == 0 && s->ego >= 40 && !dead &&
-        (fp->cpu.x18 == 1 || fp->cpu.x18 == 10) && fp->cpu.xA4 == 0 &&
-        fp->cpu.csP == NULL && fp->cpu.command_duration == 0 &&
+    if (s->cooldown == 0 && s->ego >= 30 && !dead && SB_Takeover(fp) &&
         (SB_Standing(fp) || fp->motion_id == ftCo_MS_Dash) &&
-        !target->x221C_b6 && !SB_Down(target) && dy < 20.0f &&
-        SB_Abs(dx) >= 55.0f && SB_Abs(dx) <= 115.0f &&
-        ftColl_8007B868(target->gobj) == 0)
+        !SB_NeutralPunish(target) && dy < 24.0f &&
+        SB_Abs(dx) >= 55.0f && SB_Abs(dx) <= 130.0f &&
+        fp->item_gobj == NULL && target->item_gobj == NULL &&
+        SB_Abs(fp->self_vel.x) <= 2.5f)
     {
         Vec3 left, right;
         if (SB_Court(fp, &left, &right, 40.0f)) {
-            s->cooldown = 45; /* failed rolls do not repeat every update */
-            if (SB_Roll(s, 75)) {
+            s->cooldown = SB_NEUTRAL_RETRY;
+            if (SB_Roll(s, 90)) {
                 s->dance_direction = dx > 0.0f ? -1 : 1;
                 s->dance_turns = 0;
                 s->dance_floor = fp->coll_data.floor.index;
                 s->dance_origin = fp->cur_pos.x;
                 SB_Start(fp, s, SB_DANCE, "starting DANCE: baiting neutral reset");
-                s->cooldown = s->ego >= 80 ? 60 : SB_STYLE_COOLDOWN;
+                s->cooldown = s->ego >= 80 ? 36 : SB_NEUTRAL_COOLDOWN;
                 return SB_DanceInput(fp, s, target);
             }
         }
     }
-    if (s->cooldown || !SB_Interior(fp) || !SB_GroundFree(fp) ||
+    if (s->cooldown || !SB_Takeover(fp) || !SB_Interior(fp) || !SB_GroundFree(fp) ||
         fp->item_gobj != NULL || SB_Abs(fp->self_vel.x) > 1.0f)
     {
         return false;
@@ -751,8 +1042,7 @@ static bool SB_Update(Fighter* fp)
             }
         } else if (whiff && !s->whiff && s->ego >= 45 &&
                    (fp->cpu.x18 == 1 || fp->cpu.x18 == 10) &&
-                   fp->cpu.xA4 == 0 && fp->cpu.csP == NULL &&
-                   fp->cpu.command_duration == 0 && SB_Abs(dx) >= 70.0f &&
+                   SB_Abs(dx) >= 70.0f &&
                    !mpColl_IsOnPlatform(&fp->coll_data))
         {
             s->whiff = true;
@@ -772,6 +1062,11 @@ bool ShowboatAI_Update(Fighter* fp)
      * target, eligibility gate or certified-taunt early return can bypass it. */
     ShowboatCombat_RestoreInput(fp);
     owns_input = SB_Update(fp);
+    if (fp->player_id < SB_SLOTS && sb_states[fp->player_id].owner == fp &&
+        ShowboatDefense_TakePerfect(fp))
+    {
+        SB_Ego(fp, &sb_states[fp->player_id], 8, "verified powershield contact");
+    }
 #if SHOWBOAT_AI_HUD
     if (fp->player_id < SB_SLOTS) {
         SB_State* s = &sb_states[fp->player_id];
@@ -780,6 +1075,9 @@ bool ShowboatAI_Update(Fighter* fp)
                          ShowboatCombat_GetAction(fp);
             if (action == 0) {
                 action = ShowboatMovement_GetAction(fp);
+            }
+            if (action == 0) {
+                action = ShowboatDefense_GetAction(fp);
             }
             if (action == 0 && s->toy_frames > 0) {
                 action = 8; /* JUGGLE: recent control-over-finisher bias */

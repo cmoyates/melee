@@ -42,9 +42,14 @@ STUB_HEADERS = (
     "melee/mp/mplib.h",
     "sysdolphin/baselib/gobj.h",
     "melee/ft/kinds/ftCaptain/forward.h",
+    "melee/ft/kinds/ftMewtwo/forward.h",
+    "melee/ft/kinds/ftSeak/forward.h",
+    "melee/ft/kinds/ftZelda/forward.h",
     "melee/ft/kinds/ftCommon/ftCo_0A01.h",
     "melee/ft/types.h",
     "melee/gm/gm_16AE.h",
+    "melee/gm/gm_1A3F.h",
+    "melee/mn/types.h",
     "melee/pl/player.h",
     "melee/mp/mpcoll.h",
     "dolphin/os.h",
@@ -53,8 +58,13 @@ ENUMS = (
     ("src/melee/ft/forward.h", "FighterKind"),
     ("src/melee/ft/kinds/ftCommon/forward.h", "ftCommon_MotionState"),
     ("src/melee/ft/kinds/ftCaptain/forward.h", "ftCaptain_MotionState"),
+    ("src/melee/ft/kinds/ftMewtwo/forward.h", "ftMewtwo_MotionState"),
+    ("src/melee/ft/kinds/ftSeak/forward.h", "ftSeak_MotionState"),
+    ("src/melee/ft/kinds/ftZelda/forward.h", "ftZd_MotionState"),
     ("src/melee/ft/ftcmdscript.h", "CPUCommand"),
     ("src/melee/gr/forward.h", "StKind"),
+    ("src/melee/gm/forward.h", "GameModeKind"),
+    ("src/melee/gm/forward.h", "MatchKind"),
 )
 
 

@@ -48,6 +48,23 @@ static struct {
     Fighter* owner;
     int owner_slot, updates, suspends, resets[SB_SLOTS];
 } movement;
+/* Defense uses independent counters: default calls add NO legacy trace events.
+ * Saved owners are identity tokens only, never dereferenced on reset/suspend. */
+static struct {
+    bool owns_input, perfect_on_update;
+    int handoff_action; /* 0 native fallback, 11 observed-contact indicator */
+    struct {
+        Fighter* owner;
+        int action;
+        bool pending;
+    } slots[SB_SLOTS];
+    int updates, suspends, actions, takes, rewards, resets[SB_SLOTS];
+    int clock, update_order, suspend_order, reset_order, take_order;
+    int update_events, update_combat, update_movement;
+    Fighter* last_actor;
+    Fighter* last_target;
+    struct CpuFighter emitted;
+} defense;
 static void event(int kind)
 {
     if (tracing) {
@@ -245,6 +262,70 @@ bool ShowboatMovement_Update(Fighter* fp, Fighter* rival)
     return true;
 }
 
+/* Main/defense orchestration ONLY, not a shield/collision/ReleaseR emulator.
+ * Tests explicitly inject verified contact; an owned attempt or action 11 alone
+ * never creates a reward. Actual fingerprint/release/identity policy is tested
+ * in the separate defense module suite. */
+void ShowboatDefense_ResetSlot(int slot)
+{
+    valid_slot(slot); ++defense.resets[slot];
+    defense.reset_order = ++defense.clock;
+    memset(&defense.slots[slot], 0, sizeof(defense.slots[slot]));
+}
+void ShowboatDefense_Suspend(Fighter* fp)
+{
+    CHECK(fp); valid_slot(fp->player_id); ++defense.suspends;
+    defense.suspend_order = ++defense.clock;
+    if (defense.slots[fp->player_id].owner == fp) {
+        memset(&defense.slots[fp->player_id], 0,
+               sizeof(defense.slots[fp->player_id]));
+    }
+}
+int ShowboatDefense_GetAction(Fighter* fp)
+{
+    CHECK(fp); valid_slot(fp->player_id); ++defense.actions;
+    return defense.slots[fp->player_id].owner == fp ?
+        defense.slots[fp->player_id].action : 0;
+}
+bool ShowboatDefense_Update(Fighter* fp, Fighter* rival)
+{
+    CHECK(fp && rival && fp != rival); valid_slot(fp->player_id);
+    ++defense.updates; defense.update_order = ++defense.clock;
+    defense.update_events = event_count;
+    defense.update_combat = combat.updates;
+    defense.update_movement = movement.updates;
+    defense.last_actor = fp; defense.last_target = rival;
+    if (defense.owns_input) {
+        defense.slots[fp->player_id].owner = fp;
+        defense.slots[fp->player_id].action = 10;
+    } else if (defense.slots[fp->player_id].owner == fp &&
+               defense.slots[fp->player_id].action == 10) {
+        defense.slots[fp->player_id].action = defense.handoff_action;
+    }
+    if (defense.perfect_on_update) {
+        CHECK(defense.slots[fp->player_id].owner == fp);
+        defense.slots[fp->player_id].pending = true;
+        defense.slots[fp->player_id].action = 11;
+        defense.perfect_on_update = false;
+    }
+    if (!defense.owns_input) { return false; }
+    ftCo_800B4A78(fp); fp->cpu.xA4 = 0;
+    ftCo_800B46B8(fp, CpuCmd_SetLstickY, 47); /* unique, NOT simulated R */
+    ftCo_800B49F4(fp);
+    memcpy(&defense.emitted, &fp->cpu, sizeof(defense.emitted));
+    return true;
+}
+bool ShowboatDefense_TakePerfect(Fighter* fp)
+{
+    CHECK(fp); valid_slot(fp->player_id); ++defense.takes;
+    defense.take_order = ++defense.clock;
+    if (defense.slots[fp->player_id].owner != fp ||
+        !defense.slots[fp->player_id].pending) { return false; }
+    defense.slots[fp->player_id].pending = false;
+    ++defense.rewards;
+    return true;
+}
+
 /* Compare EVERY exposed Fighter field, allowing ONLY CPU script/input writes
  * and invalidation of the cached vanilla attack selection (cpu.xA4).
  * This includes motion, position, velocities, facing, damage, animation frame,
@@ -315,13 +396,17 @@ static void neutral(Fighter* fp)
     CHECK(fp->cpu.cstick.x == 0 && fp->cpu.cstick.y == 0);
     CHECK(fp->cpu.ltrigger == 0 && fp->cpu.rtrigger == 0);
 }
-static void dirty_input(Fighter* fp)
+static void dirty_controls(Fighter* fp)
 {
-    fp->cpu.xA4 = 123;
     fp->cpu.buttons = 0xffff;
     fp->cpu.lstick.x = 77; fp->cpu.lstick.y = -100;
     fp->cpu.cstick.x = -44; fp->cpu.cstick.y = 55;
     fp->cpu.ltrigger = 123; fp->cpu.rtrigger = 234;
+}
+static void dirty_input(Fighter* fp)
+{
+    dirty_controls(fp);
+    fp->cpu.xA4 = 123;
     fp->cpu.buffer[0] = CpuCmd_PressB;
     fp->cpu.buffer[1] = CpuCmd_Done;
     fp->cpu.write_pos = fp->cpu.buffer + 2;
@@ -333,6 +418,10 @@ static void setup(void)
     tracing = false; event_count = 0;
     memset(&combat, 0, sizeof(combat));
     memset(&movement, 0, sizeof(movement));
+    memset(&defense, 0, sizeof(defense));
+    memset(&test_taunt_rules, 0, sizeof(test_taunt_rules));
+    memset(test_taunt_removal, 0, sizeof(test_taunt_removal));
+    test_taunt_mode = GM_TITLE; test_taunt_elimination = false;
     memset(&common_data, 0, sizeof(common_data));
     memset(&entities, 0, sizeof(entities));
     memset(fighters, 0, sizeof(fighters));
@@ -393,7 +482,7 @@ static u32 seed_for(int chance, bool success)
 }
 static void taunt_context(bool success)
 {
-    init();
+    init(); self->cpu.xA4 = 0;
     state->random = seed_for(80, success);
     target->motion_id = ftCo_MS_DeadDown;
     target->mv.co.unk_deadleft.x40 = 20;
@@ -413,24 +502,40 @@ static void whiff_context(bool success)
 }
 static void punch_context(bool success)
 {
-    init();
+    init(); self->cpu.xA4 = 0;
     state->ego = 85;
     state->random = seed_for(35, success);
     target->cur_pos.x = 30;
     target->motion_id = ftCo_MS_Furafura;
     target->grab_timer = 301;
 }
+/* Dirtied held channels still belong to the exact preceding personality VM.
+ * Replacement scripts are a different contract: dedicated regressions below
+ * require preserving their entire CPU snapshot, not blindly neutralizing it. */
+static void dirty_owned_input(void)
+{
+    if (state->script_size == 0) {
+        /* Only manually seeded action tests need an initial owned VM. */
+        self->cpu.xA4 = 0;
+        ftCo_800B4A78(self);
+        ftCo_800B46B8(self, CpuCmd_SetLstickY, (u8) -100);
+        SB_FinishInput(self, state);
+        interpret(self);
+    }
+    dirty_controls(self);
+}
 static void expect_cancel(void)
 {
+    dirty_owned_input();
     int old_clears = clears;
-    dirty_input(self);
+    int selected = self->cpu.xA4;
     CHECK(!update(self)); /* no interpreter: inputs must already be clear */
     CHECK(state->action == SB_NONE);
     CHECK(clears == old_clears + 1);
     neutral(self);
     CHECK(self->cpu.csP == NULL && self->cpu.command_duration == 0);
     CHECK(self->cpu.write_pos == self->cpu.buffer);
-    CHECK(self->cpu.xA4 == 0);
+    CHECK(self->cpu.xA4 == selected);
 }
 static void expect_ignored(void)
 {
@@ -672,7 +777,7 @@ static void test_taunt_finite_native_script(void)
 {
     const int appeals[] = { ftCo_MS_AppealSR, ftCo_MS_AppealSL };
     for (variant = 0; variant < 2; ++variant) {
-        taunt_context(true); dirty_input(self);
+        taunt_context(true); self->cpu.lstick.x = 77; self->cpu.lstick.y = -100;
         CHECK(frame()); CHECK(state->action == SB_TAUNT && state->age == 1);
         CHECK(state->ego == 77 && state->taunt_cooldown == 180);
         CHECK(state->cooldown == 0);
@@ -979,7 +1084,7 @@ static void test_rng_deterministic_and_slot_private(void)
     SB_State other;
     memcpy(&other, &sb_states[1], sizeof(other));
     target->motion_id = ftCo_MS_DeadDown; state->random = seed_for(80, true);
-    target->mv.co.unk_deadleft.x40 = 20;
+    target->mv.co.unk_deadleft.x40 = 20; self->cpu.xA4 = 0;
     CHECK(frame());
     CHECK(memcmp(&other, &sb_states[1], sizeof(other)) == 0);
 }
@@ -1022,7 +1127,7 @@ static void suspend(Fighter* fp)
 }
 static void test_suspend_clears_active_input_and_celebration(void)
 {
-    whiff_context(true); CHECK(frame()); dirty_input(self);
+    whiff_context(true); CHECK(frame()); dirty_owned_input();
     state->celebration = 100;
     int ego = state->ego, cooldown = state->cooldown;
     suspend(self); neutral(self);
@@ -1038,7 +1143,7 @@ static void test_suspend_clears_active_input_and_celebration(void)
 static void test_suspend_disabled_configuration_resets_slot(void)
 {
     for (variant = 0; variant < 4; ++variant) {
-        whiff_context(true); CHECK(frame()); dirty_input(self);
+        whiff_context(true); CHECK(frame()); dirty_owned_input();
         switch (variant) {
         case 0: world.cpu[0] = false; break;
         case 1: self->kind = FTKIND_FOX; break;
@@ -1173,7 +1278,7 @@ static void test_cancel_when_singles_opponent_slot_changes(void)
 static void dance_context(bool success)
 {
     init(); self->cpu.xA4 = 0; target->cur_pos.x = 80;
-    state->ego = 60; state->random = seed_for(75, success);
+    state->ego = 60; state->random = seed_for(90, success);
 }
 static void test_v2_policy_constants_and_damage_rounding(void)
 {
@@ -1348,18 +1453,18 @@ static void test_dance_start_world_direction_and_cooldown(void)
         CHECK(frame()); CHECK(state->action == SB_DANCE && state->age == 1);
         CHECK(state->dance_direction == -side && state->dance_turns == 0);
         CHECK(state->dance_origin == 0 && state->dance_floor == 0);
-        CHECK(state->cooldown == (variant & 2 ? 60 : 90));
+        CHECK(state->cooldown == (variant & 2 ? 36 : 48));
         neutral(self); CHECK(self->cpu.write_pos - self->cpu.buffer == 1);
         CHECK(frame()); CHECK(self->cpu.lstick.x == -side * 127);
         CHECK(self->cpu.buffer[0] == CpuCmd_SetLstickX);
         CHECK(self->cpu.write_pos - self->cpu.buffer == 3);
         CHECK(self->cpu.buttons == 0 && self->cpu.lstick.y == 0);
     }
-    dance_context(false); CHECK(!frame()); CHECK(state->cooldown == 45);
+    dance_context(false); CHECK(!frame()); CHECK(state->cooldown == 24);
     u32 random = state->random;
-    for (int i = 0; i < 44; ++i) { CHECK(!frame()); }
+    for (int i = 0; i < 23; ++i) { CHECK(!frame()); }
     CHECK(state->random == random && state->cooldown == 1);
-    state->random = seed_for(75, true); CHECK(frame());
+    state->random = seed_for(90, true); CHECK(frame());
 }
 static void test_dance_real_dash_confirmation_and_end(void)
 {
@@ -1425,13 +1530,13 @@ static void test_dance_start_court_and_context_guards(void)
         case 10: self->cur_pos.x = 140; target->cur_pos.x = 220; break;
         case 11: self->cur_pos.x = -140; target->cur_pos.x = -220; break;
         case 12: target->cur_pos.x = 54.99f; break;
-        case 13: target->cur_pos.x = 115.01f; break;
-        case 14: target->cur_pos.y = 20; break;
+        case 13: target->cur_pos.x = 130.01f; break;
+        case 14: target->cur_pos.y = 24; break;
         case 15: target->x221C_b6 = true; break;
         case 16: target->motion_id = ftCo_MS_DownWaitU; break;
         case 17: world.invincible[1] = 1; break;
         case 18: self->motion_id = ftCo_MS_Run; break;
-        case 19: state->ego = 39; break;
+        case 19: state->ego = 29; break;
         case 20: self->ground_or_air = GA_Air; break;
         case 21: self->x2219_b5 = true; break;
         case 22: state->serious = 2; break;
@@ -1509,18 +1614,14 @@ static void test_flourish_yields_real_punish_preserves_fresh_selection(void)
         for (variant = 0; variant < 9; ++variant) {
             if (dance) { dance_context(true); } else { whiff_context(true); }
             CHECK(frame());
-            dirty_input(self); self->cpu.x18 = priority[variant]; self->cpu.xA4 = 8;
+            dirty_owned_input(); self->cpu.x18 = priority[variant]; self->cpu.xA4 = 8;
             CHECK(!update(self)); CHECK(state->action == SB_NONE);
             neutral(self); CHECK(self->cpu.csP == NULL && self->cpu.command_duration == 0);
-            /* Dance preserves fresh selection on EVERY native-priority yield;
-             * swagger does so inside its 1/2/3/8/10 input path. */
-            bool preserve = dance || priority[variant] == 2 || priority[variant] == 3 ||
-                            priority[variant] == 8;
-            CHECK(self->cpu.xA4 == (preserve ? 8 : 0));
+            CHECK(self->cpu.xA4 == 8); /* every exit preserves a fresh decision */
         }
     }
     for (variant = 0; variant < 2; ++variant) {
-        whiff_context(true); CHECK(frame()); dirty_input(self);
+        whiff_context(true); CHECK(frame()); dirty_owned_input(); self->cpu.xA4 = 123;
         if (variant == 0) { target->x221C_b6 = true; }
         else { target->motion_id = ftCo_MS_DownWaitD; }
         CHECK(!update(self)); neutral(self); CHECK(self->cpu.xA4 == 123);
@@ -1767,8 +1868,764 @@ static void test_selective_mercy_indicator_lifecycle(void)
     target->motion_id = ftCo_MS_DeadDown; CHECK(!frame()); CHECK(state->toy_frames == 0);
 }
 
+static void offstage_context(int side, bool crouch)
+{
+    init(); self->cpu.xA4 = 0;
+    state->ego = 0; state->serious = 600; state->cooldown = 900;
+    target->ground_or_air = GA_Air; target->motion_id = ftCo_MS_Fall;
+    target->cur_pos.x = side * 170; target->cur_pos.y = -30;
+    state->opponent_x = target->cur_pos.x; /* preceding observation, not physics */
+    if (crouch) { self->motion_id = ftCo_MS_SquatWait; }
+}
+static void test_offstage_deterministic_repeat_bouts_at_zero_ego(void)
+{
+    for (variant = 0; variant < 2; ++variant) {
+        int side = variant ? -1 : 1;
+        offstage_context(side, false);
+        world.stage = variant ? St_Kind_Battle : St_Kind_Last;
+        u32 random = state->random;
+        for (int bout = 0; bout < 3; ++bout) {
+            for (int age = 0; age < 24; ++age) {
+                CHECK(frame()); CHECK(state->offstage_style && state->action == SB_DANCE);
+                CHECK(state->age == age + 1 && state->ego == 0 && state->serious > 0);
+                CHECK(self->cpu.buttons == 0 && self->cpu.lstick.y == 0);
+                CHECK(self->cpu.lstick.x == (age ? -side * 127 : 0));
+                CHECK(state->taunt_cooldown == 0 && state->random == random);
+            }
+            CHECK(!update(self)); neutral(self);
+            CHECK(state->action == SB_NONE && !state->offstage_style);
+            CHECK(state->offstage_cooldown == 18);
+            for (int i = 0; i < 17; ++i) { CHECK(!frame()); }
+            CHECK(state->offstage_cooldown == 1);
+        }
+        CHECK(scripts == 72); CHECK(frame()); CHECK(scripts == 73);
+    }
+}
+static void test_offstage_crouch_fallback_bounded_and_legal(void)
+{
+    for (variant = 0; variant < 2; ++variant) {
+        offstage_context(1, variant == 0);
+        if (variant == 1) { self->cur_pos.x = -65; } /* only 35 signed runway */
+        for (int age = 0; age < 12; ++age) {
+            CHECK(frame()); CHECK(state->offstage_style && state->action == SB_SWAGGER);
+            CHECK(state->age == age + 1 && self->cpu.buttons == 0);
+            CHECK(self->cpu.lstick.x == 0 && self->cpu.lstick.y == (age < 8 ? -100 : 0));
+            self->motion_id = ftCo_MS_SquatWait; /* real crouch acceptance supplied */
+        }
+        CHECK(!update(self)); neutral(self); CHECK(scripts == 12);
+        for (int i = 0; i < 17; ++i) { CHECK(!frame()); }
+        CHECK(frame()); CHECK(state->action == SB_SWAGGER);
+    }
+}
+static void offstage_veto(int which)
+{
+    switch (which) {
+    case 0: world.stage = St_Kind_Story; break;
+    case 1: self->coll_data.on_platform = true; break;
+    case 2: self->coll_data.floor.index = -1; break;
+    case 3: self->ground_or_air = GA_Air; break;
+    case 4: self->cur_pos.x = 70; break; /* strict active 30 runway */
+    case 5: self->cur_pos.x = -70; break;
+    case 6: self->cur_pos.x = 170; break; /* unsigned endpoint distances lie */
+    case 7: world.floor_left[0].x = 100; world.floor_right[0].x = -100; break;
+    case 8: world.floor_right[0].y = 1; break;
+    case 9: self->cur_pos.y = 6; break;
+    case 10: entities.items = &objects[2]; break; /* items AND projectiles */
+    case 11: self->item_gobj = &objects[2]; break;
+    case 12: target->item_gobj = &objects[2]; break;
+    case 13: self->x221C_b6 = true; break;
+    case 14: self->x2219_b5 = true; break;
+    case 15: self->victim_gobj = target->gobj; break;
+    case 16: self->x1A5C = target->gobj; break;
+    case 17: self->motion_id = ftCo_MS_RunBrake; break; /* can't dash/crouch directly */
+    case 18: self->self_vel.x = 2.51f; break;
+    case 19: self->self_vel.y = 0.26f; break;
+    case 20: state->recent_hit = 2; break;
+    case 21: target->cur_pos.x = 130; break; /* exactly ledge+30 */
+    case 22: target->cur_pos.x = 100; target->cur_pos.y = -100; break;
+    case 23: target->cur_pos.x = 0; target->cur_pos.y = -200; break; /* below != outside */
+    case 24: target->ground_or_air = GA_Ground; break;
+    case 25: target->motion_id = ftCo_MS_DeadDown; break;
+    case 26: target->motion_id = ftCo_MS_RebirthWait; break;
+    case 27: target->motion_id = ftCo_MS_Entry; break;
+    case 28: target->victim_gobj = self->gobj; break;
+    case 29: target->x1A5C = self->gobj; break;
+    case 30: target->x221F_b3 = true; break;
+    case 31: world.stocks[1] = state->opponent_stocks = 0; break;
+    case 32: self->dmg.x1830_percent += 1; break;
+    case 33: self->cur_pos.x = 50; target->cur_pos.x = 149.99f; break; /* gap <100 */
+    }
+}
+static void test_offstage_start_signed_court_and_physical_guards(void)
+{
+    for (variant = 0; variant < 34; ++variant) {
+        offstage_context(1, false); offstage_veto(variant);
+        state->opponent_x = target->cur_pos.x; /* isolate instantaneous geometry */
+        u32 random = state->random;
+        CHECK(!frame()); CHECK(state->action == SB_NONE);
+        CHECK(writes == 0 && clears == 0 && state->random == random);
+    }
+    offstage_context(1, false); self->cur_pos.x = 50; target->cur_pos.x = 150;
+    state->opponent_x = 150; CHECK(frame()); /* exact 100 gap */
+    offstage_context(-1, false); target->cur_pos.x = -130.01f;
+    state->opponent_x = target->cur_pos.x; CHECK(frame()); /* signed left boundary */
+}
+static void test_offstage_active_window_closure_releases_immediately(void)
+{
+    for (int crouch = 0; crouch < 2; ++crouch) {
+        for (variant = 0; variant < 34; ++variant) {
+            offstage_context(1, crouch != 0); CHECK(frame()); CHECK(frame());
+            offstage_veto(variant);
+            int old_clears = clears;
+            CHECK(!update(self)); neutral(self);
+            CHECK(state->action == SB_NONE && state->offstage_cooldown == 18);
+            CHECK(clears == old_clears + 1 && scripts == 2);
+        }
+        offstage_context(1, crouch != 0); CHECK(frame());
+        self->coll_data.floor.index = 1; CHECK(!update(self)); neutral(self);
+    }
+}
+static void test_offstage_far_hitstun_and_return_invulnerability_not_vetoes(void)
+{
+    for (variant = 0; variant < 4; ++variant) {
+        offstage_context(1, false);
+        target->x221C_b6 = true; target->motion_id = ftCo_MS_DamageFlyHi;
+        if (variant & 1) { world.invincible[1] = 2; }
+        if (variant & 2) { target->x2219_b5 = true; }
+        CHECK(frame()); CHECK(state->offstage_style);
+        self->motion_id = ftCo_MS_Dash; self->facing_dir = -1;
+        self->cur_anim_frame = 6; CHECK(frame());
+        CHECK(state->dance_turns == 1 && self->cpu.lstick.x == 127);
+        target->x221C_b6 = false; target->x2219_b5 = false;
+        target->motion_id = ftCo_MS_Fall; world.invincible[1] = 2;
+        CHECK(frame()); CHECK(state->offstage_style);
+        target->cur_pos.x = 110; CHECK(!update(self)); neutral(self);
+    }
+    offstage_context(1, false); CHECK(frame());
+    target->cur_pos.x = 80; target->cur_pos.y = 0;
+    target->ground_or_air = GA_Ground; target->x221C_b6 = true;
+    CHECK(!update(self)); neutral(self); /* actual onscreen punish, not far hitstun */
+}
+static void test_offstage_closing_rate_reserve_uses_live_observations(void)
+{
+    for (variant = 0; variant < 4; ++variant) {
+        int side = variant & 1 ? -1 : 1;
+        offstage_context(side, false); CHECK(frame());
+        if (variant & 2) {
+            target->cur_pos.x = side * 160; /* actual step 10, even with zero self_vel */
+        } else { target->self_vel.x = -side * 10; }
+        CHECK(!update(self)); neutral(self); /* 4-update projection reaches <=130 */
+    }
+    offstage_context(1, false); target->self_vel.x = 20; CHECK(frame());
+    CHECK(frame()); /* outward motion is not a closing threat */
+}
+static void test_offstage_recent_hit_caution_and_ego_lifecycle(void)
+{
+    offstage_context(1, false); CHECK(frame());
+    state->ego = 80; self->dmg.x1830_percent = 10;
+    CHECK(!update(self)); neutral(self);
+    CHECK(state->ego == 62 && state->serious == 90 && state->recent_hit == 30);
+    for (int i = 0; i < 29; ++i) { CHECK(!frame()); }
+    CHECK(state->recent_hit == 1 && state->serious == 61);
+    state->ego = 0; CHECK(frame()); /* physical recovery after 30, emotional 60 remains */
+    CHECK(state->offstage_style && state->serious == 60 && state->ego == 0);
+    self->x221C_b6 = true; CHECK(!frame()); CHECK(state->recent_hit == 30);
+    for (int i = 0; i < 40; ++i) { CHECK(!frame()); CHECK(state->recent_hit == 30); }
+    self->x221C_b6 = false;
+    for (int i = 0; i < 29; ++i) { CHECK(!frame()); }
+    CHECK(frame()); CHECK(state->offstage_style);
+    ++self->x8_spawnNum; CHECK(!update(self)); neutral(self);
+    CHECK(state->recent_hit == 30 && state->serious == 120);
+}
+static void test_offstage_technical_competence_and_certified_ko_win(void)
+{
+    for (int active = 0; active < 2; ++active) {
+        for (variant = 0; variant < 2; ++variant) {
+            offstage_context(1, false);
+            if (active) { CHECK(frame()); }
+            if (variant) { movement.owns_input = true; }
+            else { combat.owns_input = true; }
+            int old_clears = clears;
+            CHECK(frame()); CHECK(state->action == SB_NONE && !state->offstage_style);
+            CHECK(clears == old_clears + 1);
+            CHECK(self->cpu.buttons == (variant ? 0 : HSD_PAD_B));
+            CHECK(self->cpu.lstick.x == (variant ? 66 : 0));
+            CHECK(first_event(EV_COMBAT) >= 0);
+            if (variant) { CHECK(first_event(EV_COMBAT) < first_event(EV_MOVE)); }
+            if (active) { CHECK(state->offstage_cooldown == 18); }
+        }
+    }
+    offstage_context(1, false); CHECK(frame());
+    target->motion_id = ftCo_MS_DeadDown; target->mv.co.unk_deadleft.x40 = 20;
+    CHECK(frame()); CHECK(state->action == SB_TAUNT && !state->offstage_style);
+    neutral(self); CHECK(frame()); CHECK(self->cpu.buttons == HSD_PAD_DPADUP);
+    CHECK(state->offstage_cooldown == 17); /* ordinary recovery never used Up */
+}
+
+static void personality_context(int style)
+{
+    switch (style) {
+    case 0: dance_context(true); break;
+    case 1: whiff_context(true); break;
+    case 2: taunt_context(true); break;
+    case 3: punch_context(true); break;
+    case 4: offstage_context(1, false); break;
+    case 5: offstage_context(1, true); break;
+    default: CHECK(!"unknown style fixture");
+    }
+}
+static void native_vm(const u8* bytes, int size, int cursor, int duration)
+{
+    CHECK(size > 0 && size <= (int) sizeof(self->cpu.buffer));
+    CHECK(cursor >= 0 && cursor < size);
+    memcpy(self->cpu.buffer, bytes, (size_t) size);
+    self->cpu.write_pos = self->cpu.buffer + size;
+    self->cpu.csP = self->cpu.buffer + cursor;
+    self->cpu.command_duration = duration;
+}
+static void test_personality_verified_mundane_initial_takeover(void)
+{
+    static const u8 locomotion[] = {
+        CpuCmd_SetLstickX, 80, CpuCmd_WaitFor, 3,
+        CpuCmd_LstickXTowardDestination, 90, CpuCmd_ReleaseAll, CpuCmd_Done
+    };
+    static const u8 clamped[] = {
+        CpuCmd_LstickXTowardDestinationClamped, 5, 80,
+        CpuCmd_SetCstickX, 0, CpuCmd_SetLtrigger, 0, CpuCmd_Done
+    };
+    for (int style = 0; style < 6; ++style) {
+        for (variant = 0; variant < 3; ++variant) {
+            personality_context(style);
+            if (variant == 2) { native_vm(clamped, sizeof(clamped), 0, 1); }
+            else { native_vm(locomotion, sizeof(locomotion), variant ? 4 : 0, 3); }
+            self->cpu.lstick.x = 80;
+            CHECK(frame()); CHECK(state->action != SB_NONE);
+            CHECK(clears == 1 && scripts == 1 && self->cpu.lstick.x == 0);
+        }
+    }
+}
+static void test_personality_queued_attack_and_malformed_takeover_veto(void)
+{
+    static const u8 attack[] = {
+        CpuCmd_SetLstickX, 80, CpuCmd_WaitFor, 3, CpuCmd_PressB, CpuCmd_Done
+    };
+    static const u8 mundane[] = { CpuCmd_SetLstickX, 80, CpuCmd_Done };
+    for (int style = 0; style < 6; ++style) {
+        for (variant = 0; variant < 16; ++variant) {
+            personality_context(style);
+            native_vm(attack, sizeof(attack), variant == 1 ? 4 : 0, 3);
+            switch (variant) {
+            case 0: case 1: break; /* don't stop scanning at the wait */
+            case 2: self->cpu.buffer[4] = CpuCmd_PressX; break;
+            case 3: self->cpu.buffer[4] = CpuCmd_PressA; break;
+            case 4: self->cpu.buffer[4] = CpuCmd_PressUp; break;
+            case 5: self->cpu.buffer[4] = CpuCmd_Unk0x93; break;
+            case 6: self->cpu.buffer[0] = 0xfe; break;
+            case 7: self->cpu.write_pos = self->cpu.buffer + 1; break;
+            case 8: self->cpu.csP = (void*) (uintptr_t) 1; break;
+            case 9: self->cpu.write_pos = (void*) (uintptr_t) 1; break;
+            case 10: self->cpu.command_duration = 0; break;
+            default:
+                native_vm(mundane, sizeof(mundane), 0, 1);
+                if (variant == 11) { self->cpu.xA4 = 8; }
+                if (variant == 12) { self->cpu.buttons = HSD_PAD_B; }
+                if (variant == 13) { self->cpu.ltrigger = 100; }
+                if (variant == 14) { self->cpu.cstick.x = 50; }
+                if (variant == 15) { self->cpu.buffer[0] = CpuCmd_SetRtrigger; }
+            }
+            struct CpuFighter before = self->cpu;
+            u32 random = state->random;
+            CHECK(!update(self)); CHECK(state->action == SB_NONE);
+            CHECK(memcmp(&before, &self->cpu, sizeof(before)) == 0);
+            CHECK(state->random == random && writes == 0 && clears == 0);
+        }
+    }
+}
+static void test_personality_active_replacement_vm_preserved_exactly(void)
+{
+    static const u8 mundane[] = { CpuCmd_SetLstickX, 80, CpuCmd_Done };
+    for (int style = 0; style < 6; ++style) {
+        for (variant = 0; variant < 10; ++variant) {
+            personality_context(style); CHECK(frame());
+            switch (variant) {
+            case 0: dirty_input(self); break; /* fresh native attack */
+            case 1: native_vm(mundane, sizeof(mundane), 0, 1); break;
+            case 2: self->cpu.write_pos++; break; /* same prefix != owned length */
+            case 3: self->cpu.csP = self->cpu.buffer + 1;
+                    self->cpu.command_duration = 1; break;
+            case 4: self->cpu.csP = self->cpu.buffer;
+                    self->cpu.command_duration = 2; break;
+            case 5: self->cpu.command_duration = 1; break; /* NULL cursor inconsistent */
+            case 6: self->cpu.buffer[0] ^= 1; break;
+            case 7: self->cpu.csP = (void*) (uintptr_t) 1; break;
+            case 8: self->cpu.write_pos = (void*) (uintptr_t) 1; break;
+            case 9: self->cpu.csP = self->cpu.buffer;
+                    self->cpu.command_duration = 0; break;
+            }
+            struct CpuFighter before = self->cpu;
+            int old_clears = clears;
+            CHECK(!update(self)); CHECK(state->action == SB_NONE && state->script_size == 0);
+            CHECK(memcmp(&before, &self->cpu, sizeof(before)) == 0);
+            CHECK(clears == old_clears && scripts == 1);
+        }
+    }
+}
+static void test_personality_cache_and_priority_preemption_release_only_owned_vm(void)
+{
+    const int priorities[] = { 1, 10, 2, 3, 4, 7, 8, 9, 15, 18 };
+    for (int style = 0; style < 6; ++style) {
+        for (variant = 0; variant < 10; ++variant) {
+            personality_context(style); CHECK(frame());
+            self->cpu.x18 = priorities[variant];
+            self->cpu.xA4 = variant == 1 ? 0 : 8; /* even low-priority 1 ->10 yields */
+            int old_clears = clears;
+            CHECK(!update(self)); neutral(self);
+            CHECK(self->cpu.csP == NULL && self->cpu.write_pos == self->cpu.buffer);
+            CHECK(self->cpu.xA4 == (variant == 1 ? 0 : 8));
+            CHECK(self->cpu.x18 == priorities[variant]);
+            CHECK(clears == old_clears + 1 && state->script_size == 0);
+            CHECK(state->action == SB_NONE && scripts == 1);
+        }
+    }
+}
+static void test_personality_unsampled_input_cannot_advance_bout(void)
+{
+    for (variant = 0; variant < 6; ++variant) {
+        personality_context(variant); CHECK(update(self)); /* do not interpret */
+        int age = state->age;
+        CHECK(!update(self)); neutral(self);
+        CHECK(state->action == SB_NONE && state->age == age && scripts == 1);
+        CHECK(self->cpu.csP == NULL && self->cpu.command_duration == 0);
+    }
+}
+static void test_personality_replacement_vm_survives_lifecycle_exits(void)
+{
+    for (int style = 0; style < 6; ++style) {
+        for (variant = 0; variant < 10; ++variant) {
+            personality_context(style); CHECK(frame()); dirty_input(self);
+            switch (variant) {
+            case 0: self->cpu.level = 8; break;
+            case 1: world.entity[1] = NULL; break;
+            case 2: world.ally = true; break;
+            case 3: ++self->x8_spawnNum; break;
+            case 4: --world.stocks[0]; break;
+            case 5: self->dmg.x1830_percent += 1; break;
+            case 6: ++target->x8_spawnNum; break;
+            case 7: world.player_state[1] = 0; world.player_state[2] = 2; break;
+            case 8: fighters[2].player_id = 1; world.entity[1] = &objects[2]; break;
+            case 9: break; /* suspension */
+            }
+            struct CpuFighter before = self->cpu;
+            int old_clears = clears;
+            if (variant == 9) { suspend(self); } else { CHECK(!update(self)); }
+            CHECK(state->action == SB_NONE && state->script_size == 0);
+            CHECK(memcmp(&before, &self->cpu, sizeof(before)) == 0);
+            CHECK(clears == old_clears && scripts == 1);
+        }
+    }
+}
+static void test_offstage_identity_lifecycle_releases_owned_input(void)
+{
+    for (variant = 0; variant < 4; ++variant) {
+        offstage_context(1, false); CHECK(frame()); CHECK(frame());
+        if (variant == 0) { ++target->x8_spawnNum; }
+        if (variant == 1) { fighters[2].player_id = 1; world.entity[1] = &objects[2]; }
+        if (variant == 2) { world.entity[1] = NULL; }
+        if (variant == 3) { suspend(self); } else { CHECK(!update(self)); }
+        neutral(self); CHECK(state->action == SB_NONE && state->script_size == 0);
+        CHECK(self->cpu.csP == NULL && self->cpu.command_duration == 0);
+    }
+    offstage_context(1, false); CHECK(frame());
+    ShowboatAI_ResetSlot(0); /* bookkeeping reset must never dereference old owners */
+    CHECK(state->owner == NULL && state->recent_hit == 0 && state->offstage_cooldown == 0);
+}
+static void test_certified_taunt_still_rejects_recent_hits_and_physical_risk(void)
+{
+    for (variant = 0; variant < 5; ++variant) {
+        taunt_context(true);
+        if (variant == 0) { self->dmg.x1830_percent = 1; }
+        if (variant == 1) { self->self_vel.x = 2.51f; }
+        if (variant == 2) { self->self_vel.y = 0.26f; }
+        if (variant == 3) { self->item_gobj = &objects[2]; }
+        if (variant == 4) { target->item_gobj = &objects[2]; }
+        CHECK(!frame()); CHECK(state->action == SB_NONE && writes == 0);
+    }
+    taunt_context(true); state->recent_hit = 2; state->serious = 90;
+    CHECK(!frame()); CHECK(state->recent_hit == 1);
+    CHECK(frame()); CHECK(state->action == SB_TAUNT && state->serious == 88);
+}
+static void test_long_action_press_preemption_never_forces_animation_exit(void)
+{
+    for (int punch = 0; punch < 2; ++punch) {
+        for (variant = 0; variant < 2; ++variant) {
+            if (punch) { punch_context(true); } else { taunt_context(true); }
+            CHECK(frame()); CHECK(frame());
+            CHECK(self->cpu.buttons == (punch ? HSD_PAD_B : HSD_PAD_DPADUP));
+            self->motion_id = punch ? ftCa_MS_SpecialN : ftCo_MS_AppealSR;
+            if (variant) {
+                dirty_input(self);
+                self->cpu.buffer[0] = CpuCmd_PressA; /* distinct from owned Punch B */
+            } else { self->cpu.xA4 = 8; }
+            struct CpuFighter before = self->cpu;
+            CHECK(!update(self)); CHECK(state->action == SB_NONE);
+            CHECK(self->motion_id == (punch ? ftCa_MS_SpecialN : ftCo_MS_AppealSR));
+            if (variant) { CHECK(memcmp(&before, &self->cpu, sizeof(before)) == 0); }
+            else { neutral(self); CHECK(self->cpu.xA4 == 8); }
+        }
+    }
+}
+static void test_neutral_frequency_widened_but_recoveries_and_punishes_yield(void)
+{
+    dance_context(true); state->ego = 30;
+    target->cur_pos.x = 125; target->cur_pos.y = 23;
+    CHECK(frame()); CHECK(state->cooldown == 48 && !state->offstage_style);
+    for (int i = 1; i < 24; ++i) { CHECK(frame()); }
+    CHECK(!frame());
+    for (int i = 0; i < 23; ++i) { CHECK(!frame()); }
+    state->random = seed_for(90, true); CHECK(frame()); /* 48-update start cadence */
+    const int motions[] = { ftCo_MS_Landing, ftCo_MS_LandingFallSpecial,
+        ftCo_MS_LandingAirN, ftCo_MS_LandingAirLw };
+    for (variant = 0; variant < 4; ++variant) {
+        dance_context(true); target->motion_id = motions[variant];
+        CHECK(!frame()); CHECK(writes == 0);
+        dance_context(true); CHECK(frame()); target->motion_id = motions[variant];
+        CHECK(!update(self)); neutral(self);
+    }
+    dance_context(true); target->ground_or_air = GA_Air;
+    target->cur_pos.x = 125; target->cur_pos.y = 0; target->motion_id = ftCo_MS_Fall;
+    CHECK(!frame()); /* too close to ledge for offstage window; no neutral back door */
+}
+
+static void seed_defense(Fighter* fp, int action, bool pending)
+{
+    valid_slot(fp->player_id);
+    defense.slots[fp->player_id].owner = fp;
+    defense.slots[fp->player_id].action = action;
+    defense.slots[fp->player_id].pending = pending;
+}
+static void test_defense_default_declines_without_input_or_reward(void)
+{
+    init(); dirty_input(self);
+    struct CpuFighter before = self->cpu;
+    int calls = defense.updates, takes = defense.takes;
+    int old_writes = writes, old_clears = clears;
+    CHECK(!update(self));
+    CHECK(defense.updates == calls + 1 && defense.takes == takes + 1);
+    CHECK(defense.last_actor == self && defense.last_target == target);
+    CHECK(ShowboatDefense_GetAction(self) == 0 && defense.rewards == 0);
+    CHECK(state->ego == SB_BASE_EGO);
+    CHECK(memcmp(&before, &self->cpu, sizeof(before)) == 0);
+    CHECK(writes == old_writes && clears == old_clears);
+    CHECK(first_event(EV_COMBAT) < defense.update_events);
+    CHECK(defense.update_events <= first_event(EV_MOVE));
+    CHECK(defense.take_order > defense.update_order);
+}
+static void test_defense_new_start_after_combat_before_new_movement(void)
+{
+    init(); state->ego = 0; state->serious = 100;
+    defense.owns_input = movement.owns_input = true;
+    int moves = movement.updates, fights = combat.updates;
+    CHECK(frame());
+    CHECK(defense.update_combat == fights + 1 && combat.updates == fights + 1);
+    CHECK(defense.update_movement == moves && movement.updates == moves);
+    CHECK(first_event(EV_COMBAT) < defense.update_events);
+    CHECK(first_event(EV_MOVE) == -1);
+    CHECK(self->cpu.lstick.y == 47 && self->cpu.lstick.x == 0);
+    CHECK(state->action == SB_NONE && state->ego == 0 && state->serious == 99);
+    CHECK(ShowboatDefense_GetAction(self) == 10 && defense.rewards == 0);
+
+    init(); combat.owns_input = defense.owns_input = movement.owns_input = true;
+    int calls = defense.updates; moves = movement.updates;
+    CHECK(frame()); CHECK(self->cpu.buttons == HSD_PAD_B);
+    CHECK(defense.updates == calls && movement.updates == moves);
+    taunt_context(true); defense.owns_input = true; calls = defense.updates;
+    CHECK(frame()); CHECK(state->action == SB_TAUNT && defense.updates == calls);
+}
+static void test_defense_does_not_preempt_existing_movement(void)
+{
+    init(); movement.owns_input = true; CHECK(frame());
+    defense.owns_input = true;
+    int calls = defense.updates, fights = combat.updates, moves = movement.updates;
+    CHECK(frame()); CHECK(self->cpu.lstick.x == 66);
+    CHECK(defense.updates == calls && combat.updates == fights);
+    CHECK(movement.updates == moves + 1);
+    movement.owns_input = false; moves = movement.updates;
+    CHECK(frame()); CHECK(self->cpu.lstick.y == 47 && !movement.active);
+    CHECK(defense.updates == calls + 1 && defense.update_combat == fights + 1);
+    CHECK(defense.update_movement == moves + 1 && movement.updates == moves + 1);
+    CHECK(first_event(EV_MOVE) < first_event(EV_COMBAT));
+    CHECK(first_event(EV_COMBAT) < defense.update_events);
+}
+static void test_defense_existing_block_serviced_before_new_combat(void)
+{
+    for (variant = 0; variant < 2; ++variant) {
+        init(); defense.owns_input = true; CHECK(frame());
+        CHECK(ShowboatDefense_GetAction(self) == 10);
+        combat.owns_input = movement.owns_input = true;
+        defense.owns_input = variant != 0;
+        int calls = defense.updates, fights = combat.updates, moves = movement.updates;
+        struct CpuFighter before = self->cpu;
+        CHECK(update(self) == (variant != 0));
+        CHECK(defense.updates == calls + 1 && defense.update_combat == fights);
+        CHECK(combat.updates == fights && movement.updates == moves);
+        CHECK(first_event(EV_COMBAT) == -1 && first_event(EV_MOVE) == -1);
+        CHECK(state->action == SB_NONE && state->script_size == 0);
+        if (variant) {
+            CHECK(memcmp(&defense.emitted, &self->cpu, sizeof(self->cpu)) == 0);
+            interpret(self); CHECK(self->cpu.lstick.y == 47);
+        } else { CHECK(memcmp(&before, &self->cpu, sizeof(before)) == 0); }
+    }
+}
+static void test_defense_false_handoff_never_retakes_low_priority_style(void)
+{
+    /* Every context would start personality without this existing BLOCK. The
+     * neutral idle CPU deliberately removes any incidental bytecode veto. */
+    for (int style = 0; style < 6; ++style) {
+        for (variant = 0; variant < 4; ++variant) {
+            personality_context(style);
+            self->cpu.x18 = variant & 1 ? 10 : 1;
+            CHECK(frame()); CHECK(state->action != SB_NONE); /* prove the opportunity */
+            personality_context(style);
+            self->cpu.x18 = variant & 1 ? 10 : 1;
+            CHECK(SB_Takeover(self));
+            seed_defense(self, 10, false);
+            defense.handoff_action = variant & 2 ? 11 : 0;
+            movement.owns_input = variant < 2; /* also test personality without movement */
+            int calls = defense.updates, fights = combat.updates, moves = movement.updates;
+            int old_clears = clears, old_writes = writes;
+            struct CpuFighter before = self->cpu;
+            u32 random = state->random;
+            CHECK(!update(self));
+            CHECK(defense.updates == calls + 1 && combat.updates == fights);
+            CHECK(movement.updates == moves && state->action == SB_NONE);
+            CHECK(state->script_size == 0 && state->random == random);
+            CHECK(memcmp(&before, &self->cpu, sizeof(before)) == 0);
+            CHECK(clears == old_clears && writes == old_writes);
+            CHECK(ShowboatDefense_GetAction(self) == defense.handoff_action);
+            CHECK(defense.rewards == 0);
+        }
+    }
+}
+static void test_defense_yielding_flourish_preserves_entire_new_vm(void)
+{
+    const int styles[] = { 0, 1, 3, 4, 5 }; /* certified taunt is higher priority */
+    for (variant = 0; variant < 5; ++variant) {
+        personality_context(styles[variant]); CHECK(frame());
+        CHECK(state->action != SB_NONE && state->script_size > 0);
+        defense.owns_input = true;
+        int old_clears = clears;
+        CHECK(update(self)); /* inspect scheduled VM before any interpreter */
+        CHECK(state->action == SB_NONE && state->script_size == 0);
+        CHECK(clears == old_clears + 1);
+        CHECK(memcmp(&defense.emitted, &self->cpu, sizeof(self->cpu)) == 0);
+        CHECK(self->cpu.buffer[0] == CpuCmd_SetLstickY && self->cpu.buffer[1] == 47);
+        CHECK(self->cpu.buffer[2] == CpuCmd_Done);
+        interpret(self); CHECK(self->cpu.lstick.y == 47 && self->cpu.buttons == 0);
+        if (styles[variant] >= 4) {
+            CHECK(!state->offstage_style && state->offstage_cooldown == 18);
+        }
+    }
+}
+static void test_defense_attempt_and_reflect_motion_never_boost_ego(void)
+{
+    init(); defense.owns_input = true;
+    int takes = defense.takes;
+    CHECK(frame()); CHECK(state->ego == 55 && defense.rewards == 0);
+    self->motion_id = ftCo_MS_GuardReflect; /* attempt, not collision evidence */
+    CHECK(frame()); CHECK(state->ego == 55 && defense.rewards == 0);
+    CHECK(defense.takes == takes + 2 && !defense.slots[0].pending);
+    CHECK(ShowboatDefense_GetAction(self) == 10);
+}
+static void test_defense_verified_pending_reward_after_false_update_once(void)
+{
+    for (variant = 0; variant < 3; ++variant) {
+        init(); defense.owns_input = true; CHECK(frame());
+        state->ego = variant == 0 ? 0 : variant == 1 ? 55 : 97;
+        int expected = variant == 0 ? 8 : variant == 1 ? 63 : 100;
+        defense.owns_input = false; defense.perfect_on_update = true;
+        int takes = defense.takes, calls = defense.updates;
+        CHECK(!update(self)); /* verified contact returns native ownership */
+        CHECK(defense.updates == calls + 1 && defense.takes == takes + 1);
+        CHECK(defense.take_order > defense.update_order);
+        CHECK(state->ego == expected && defense.rewards == 1);
+        CHECK(!defense.slots[0].pending && ShowboatDefense_GetAction(self) == 11);
+        self->cpu.xA4 = 123; /* isolate future ordinary fallback from style */
+        for (int i = 0; i < 3; ++i) { CHECK(!frame()); CHECK(state->ego == expected); }
+        CHECK(defense.rewards == 1 && !ShowboatDefense_TakePerfect(self));
+    }
+}
+static void test_defense_perfect_indicator_is_not_active_block_or_reward(void)
+{
+    init(); seed_defense(self, 11, false);
+    combat.owns_input = true;
+    int calls = defense.updates, fights = combat.updates;
+    CHECK(frame()); CHECK(self->cpu.buttons == HSD_PAD_B);
+    CHECK(combat.updates == fights + 1 && defense.updates == calls);
+    CHECK(state->ego == 55 && defense.rewards == 0);
+    CHECK(ShowboatDefense_GetAction(self) == 11);
+}
+static void test_defense_pending_reward_is_owner_and_slot_private(void)
+{
+    init(); CHECK(!update(target));
+    seed_defense(target, 11, true);
+    CHECK(!frame()); CHECK(state->ego == 55 && defense.slots[1].pending);
+    CHECK(!update(target)); CHECK(sb_states[1].ego == 63 && state->ego == 55);
+    CHECK(defense.rewards == 1 && !defense.slots[1].pending);
+    seed_defense(self, 11, true);
+    defense.slots[0].owner = (Fighter*) (uintptr_t) 1;
+    CHECK(!frame()); CHECK(state->ego == 55 && defense.rewards == 1);
+    CHECK(ShowboatDefense_GetAction(self) == 0); /* never dereference stale owner */
+}
+static void test_defense_lifecycle_cancels_pending_before_reinitialization(void)
+{
+    for (variant = 0; variant < 12; ++variant) {
+        init(); defense.owns_input = true; CHECK(frame());
+        defense.owns_input = false; defense.slots[0].pending = true;
+        self->cpu.xA4 = 123;
+        int suspends = defense.suspends, resets = defense.resets[0];
+        int takes = defense.takes;
+        switch (variant) {
+        case 0: self->cpu.level = 8; break;
+        case 1: world.cpu[0] = false; break;
+        case 2: self->kind = FTKIND_FOX; break;
+        case 3: self->cpu.xC = 5; break;
+        case 4: self->x221F_b3 = true; break;
+        case 5: world.entity[1] = NULL; break;
+        case 6: world.ally = true; break;
+        case 7: world.player_state[2] = 2; break;
+        case 8: world.player_state[1] = 0; world.player_state[2] = 2; break;
+        case 9: fighters[2].player_id = 1; world.entity[1] = &objects[2]; break;
+        case 10: ++self->x8_spawnNum; break;
+        case 11: --world.stocks[0]; break;
+        }
+        CHECK(!update(self));
+        CHECK(defense.suspends == suspends + 1);
+        CHECK(!defense.slots[0].pending && defense.slots[0].owner == NULL);
+        CHECK(defense.rewards == 0 && ShowboatDefense_GetAction(self) == 0);
+        /* New self life suspends (discarding pending); configuration/identity
+         * loss additionally resets the slot. Neither may pay a stale reward. */
+        CHECK(defense.resets[0] == resets + (variant < 10 ? 1 : 0));
+        if (variant < 10) { CHECK(defense.suspend_order < defense.reset_order); }
+        if (variant < 8) {
+            CHECK(state->owner == NULL && defense.takes == takes);
+        } else {
+            CHECK(state->ego == (variant < 10 ? 55 : 40));
+            CHECK(defense.take_order > defense.suspend_order);
+        }
+    }
+}
+static void test_defense_owner_replacement_resets_without_stale_dereference(void)
+{
+    for (variant = 0; variant < 2; ++variant) {
+        init(); seed_defense(self, 10, true);
+        int resets = defense.resets[0], suspends = defense.suspends;
+        Fighter* actor = self;
+        if (variant == 0) {
+            state->owner = (Fighter*) (uintptr_t) 1;
+            defense.slots[0].owner = (Fighter*) (uintptr_t) 1;
+        } else {
+            fighters[2].player_id = 0; world.entity[0] = &objects[2];
+            actor = &fighters[2];
+        }
+        CHECK(!update(actor));
+        CHECK(defense.resets[0] == resets + 1 && defense.suspends == suspends);
+        CHECK(defense.slots[0].owner == NULL && !defense.slots[0].pending);
+        CHECK(state->owner == actor && state->ego == 55 && defense.rewards == 0);
+    }
+}
+static void test_defense_suspend_discards_pending_and_respects_owner_gates(void)
+{
+    for (variant = 0; variant < 7; ++variant) {
+        init(); seed_defense(self, 10, true);
+        int suspends = defense.suspends, resets = defense.resets[0];
+        switch (variant) {
+        case 0: break; /* eligible suspension retains personality identity */
+        case 1: self->cpu.level = 8; break;
+        case 2: world.cpu[0] = false; break;
+        case 3: self->kind = FTKIND_FOX; break;
+        case 4: self->cpu.xC = 5; break;
+        case 5: state->owner = (Fighter*) (uintptr_t) 1; break;
+        case 6: self->player_id = 255; break;
+        }
+        suspend(self);
+        CHECK(defense.suspends == suspends + (variant < 5 ? 1 : 0));
+        CHECK(defense.resets[0] == resets + (variant > 0 && variant < 5 ? 1 : 0));
+        CHECK(defense.slots[0].pending == (variant >= 5));
+        CHECK(defense.rewards == 0);
+        if (variant > 0 && variant < 5) {
+            CHECK(defense.suspend_order < defense.reset_order && state->owner == NULL);
+        }
+        if (variant == 0) {
+            CHECK(state->owner == self && state->ego == 55);
+            suspend(self); CHECK(defense.suspends == suspends + 2);
+            CHECK(!ShowboatDefense_TakePerfect(self));
+        }
+    }
+}
+static void test_defense_reset_slot_isolated_bounds_and_bookkeeping_only(void)
+{
+    init(); seed_defense(self, 11, true); seed_defense(&fighters[2], 10, true);
+    defense.slots[2].owner = (Fighter*) (uintptr_t) 1;
+    unsigned char before[sizeof(defense)];
+    Fighter old_fighters[SB_SLOTS]; memcpy(old_fighters, fighters, sizeof(fighters));
+    memcpy(before, &defense, sizeof(defense));
+    ShowboatAI_ResetSlot(-1); ShowboatAI_ResetSlot(SB_SLOTS);
+    CHECK(memcmp(before, &defense, sizeof(defense)) == 0);
+    int resets[SB_SLOTS]; memcpy(resets, defense.resets, sizeof(resets));
+    ShowboatAI_ResetSlot(2); ShowboatAI_ResetSlot(2);
+    CHECK(defense.slots[2].owner == NULL && defense.slots[2].action == 0);
+    CHECK(!defense.slots[2].pending);
+    CHECK(defense.slots[0].owner == self && defense.slots[0].pending);
+    CHECK(defense.slots[0].action == 11);
+    for (int i = 0; i < SB_SLOTS; ++i) {
+        CHECK(defense.resets[i] == resets[i] + (i == 2 ? 2 : 0));
+    }
+    CHECK(memcmp(old_fighters, fighters, sizeof(fighters)) == 0);
+}
+
+#include "ego_regressions.c"
+
 #define CASE(name) { #name, test_##name }
 static const struct { const char* name; void (*run)(void); } cases[] = {
+    CASE(normal_time_ko_taunt_without_stocks),
+    CASE(time_ko_certificate_excludes_other_routes),
+    CASE(time_ko_rechecks_certificate_before_up),
+    CASE(native_locomotion_done_padding_takeover),
+    CASE(known_teleport_phases_veto_mockery),
+    CASE(offstage_run_settles_using_only_neutral_input),
+    CASE(offstage_run_settle_timeout_and_threat_preemption),
+    CASE(defense_default_declines_without_input_or_reward),
+    CASE(defense_new_start_after_combat_before_new_movement),
+    CASE(defense_does_not_preempt_existing_movement),
+    CASE(defense_existing_block_serviced_before_new_combat),
+    CASE(defense_false_handoff_never_retakes_low_priority_style),
+    CASE(defense_yielding_flourish_preserves_entire_new_vm),
+    CASE(defense_attempt_and_reflect_motion_never_boost_ego),
+    CASE(defense_verified_pending_reward_after_false_update_once),
+    CASE(defense_perfect_indicator_is_not_active_block_or_reward),
+    CASE(defense_pending_reward_is_owner_and_slot_private),
+    CASE(defense_lifecycle_cancels_pending_before_reinitialization),
+    CASE(defense_owner_replacement_resets_without_stale_dereference),
+    CASE(defense_suspend_discards_pending_and_respects_owner_gates),
+    CASE(defense_reset_slot_isolated_bounds_and_bookkeeping_only),
+    CASE(offstage_deterministic_repeat_bouts_at_zero_ego),
+    CASE(offstage_crouch_fallback_bounded_and_legal),
+    CASE(offstage_start_signed_court_and_physical_guards),
+    CASE(offstage_active_window_closure_releases_immediately),
+    CASE(offstage_far_hitstun_and_return_invulnerability_not_vetoes),
+    CASE(offstage_closing_rate_reserve_uses_live_observations),
+    CASE(offstage_recent_hit_caution_and_ego_lifecycle),
+    CASE(offstage_technical_competence_and_certified_ko_win),
+    CASE(personality_verified_mundane_initial_takeover),
+    CASE(personality_queued_attack_and_malformed_takeover_veto),
+    CASE(personality_active_replacement_vm_preserved_exactly),
+    CASE(personality_cache_and_priority_preemption_release_only_owned_vm),
+    CASE(personality_unsampled_input_cannot_advance_bout),
+    CASE(personality_replacement_vm_survives_lifecycle_exits),
+    CASE(offstage_identity_lifecycle_releases_owned_input),
+    CASE(neutral_frequency_widened_but_recoveries_and_punishes_yield),
+    CASE(certified_taunt_still_rejects_recent_hits_and_physical_risk),
+    CASE(long_action_press_preemption_never_forces_animation_exit),
     CASE(v2_policy_constants_and_damage_rounding),
     CASE(initial_spawn_no_danger_penalty),
     CASE(taunt_death_enum_and_budget_boundaries),

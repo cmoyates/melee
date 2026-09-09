@@ -2048,6 +2048,9 @@ if args.showboat_ai:
     movement_source = "melee/mod/showboat_movement.c"
     config.libs.append(MeleeLib("Showboat movement", [Object(Matching, movement_source)]))
     config.extra_dol_objects.append(movement_source)
+    defense_source = "melee/mod/showboat_defense.c"
+    config.libs.append(MeleeLib("Showboat defense", [Object(Matching, defense_source)]))
+    config.extra_dol_objects.append(defense_source)
     if args.showboat_ai_hud:
         hud_source = "melee/mod/showboat_hud.c"
         config.libs.append(MeleeLib("Showboat HUD", [Object(Matching, hud_source)]))
@@ -2061,7 +2064,8 @@ if args.showboat_ai:
             if args.showboat_unlock_all and obj.name == "melee/gm/gmmain_lib.c":
                 obj.options["extra_cflags"].append("-DSHOWBOAT_UNLOCK_ALL=1")
             if obj.name in {
-                showboat_source, combat_source, movement_source, "melee/mod/showboat_hud.c",
+                showboat_source, combat_source, movement_source, defense_source,
+                "melee/mod/showboat_hud.c",
                 "melee/ft/kinds/ftCommon/ftCo_0A01.c",
                 "melee/ft/ftcpuattack.c", "melee/pl/player.c", "melee/ft/fighter.c",
             }:

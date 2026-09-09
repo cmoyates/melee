@@ -12,6 +12,9 @@ automatic damage/state summaries. Integer-only gate accounting and separately
 corroborated custom events support a limited analysis. See the
 [first playtest review](../research/showboat_recorder_playtest_1.md). Serialization
 needs repair and live validation before another full-state analysis.
+A [second limited playtest review](../research/showboat_recorder_playtest_2.md)
+corroborates one custom fighter powershield contact and its +8 ego reward, while
+confirming that the same snapshot corruption remains unfixed.
 
 The default showboat build now includes structured **SBREC v1** telemetry and an
 [offline analyzer](../tools/analyze_showboat.py). This observes the same legal bot;

@@ -16,11 +16,15 @@ enum {
     SBR_ITEMS, SBR_COMPLETED, SBR_CANCELLED, SBR_BUDGET, SBR_SUCCESS,
     SBR_REASONS
 };
+/* Additive v2 event bit: no protocol version bump or format/float-encoding
+ * change. Older strict readers with mask 127 reject bit 128, not reinterpret it.
+ * SIDEB_VETO records an actual controller safety veto, not an acknowledgment,
+ * hit, success or proof of a saved recovery. Existing bits 1-64 are unchanged. */
 enum {
     SBR_EVENT_TAUNT_ACK = 1, SBR_EVENT_PUNCH_ACK = 2,
     SBR_EVENT_GRAB_ACK = 4, SBR_EVENT_AERIAL_ACK = 8,
     SBR_EVENT_WAVEDASH_LANDING_ACK = 16, SBR_EVENT_POWERSHIELD_CONTACT = 32,
-    SBR_EVENT_LCANCEL_SAMPLE = 64
+    SBR_EVENT_LCANCEL_SAMPLE = 64, SBR_EVENT_SIDEB_VETO = 128
 };
 
 #if SHOWBOAT_RECORDER

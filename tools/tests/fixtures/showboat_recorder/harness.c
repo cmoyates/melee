@@ -208,12 +208,43 @@ static void schema(void)
     CHECK(ShowboatRecorder_Reason(f, 1, -1));
     CHECK(ShowboatRecorder_Reason(f, 1, 16));
     CHECK(ShowboatRecorder_Event(f, SBR_EVENT_TAUNT_ACK));
-    CHECK(ShowboatRecorder_Event(f, 0xFFFFFFFEU));
+    /* Preserve the original seven-bit schema fixture; higher unknown bits
+     * still exercise masking without requesting the newly assigned bit 128. */
+    CHECK(ShowboatRecorder_Event(f, 0xFFFFFF7EU));
     CHECK(ShowboatRecorder_Decision(f, 73, 11, true));
     observe(f, t);
     observe(f, t); /* No double count, no second sample. */
     finish(); finish();
 }
+static void side_b_veto(void)
+{
+    Fighter* f = &fighters[0];
+    Fighter* t = &fighters[1];
+    /* Telemetry only: the controller filter lives elsewhere. No safety or
+     * recovery outcome is inferred from this explicit event call. */
+    f->cpu.x18 = 9;
+    step(1, 0);
+    frame = 2; begin(f); decision(f, 0);
+    CHECK(ShowboatRecorder_Event(f, SBR_EVENT_SIDEB_VETO));
+    CHECK(ShowboatRecorder_Event(f, SBR_EVENT_SIDEB_VETO));
+    observe(f, t); /* Event alone forces a sample, duplicate calls are one bit. */
+    f->cpu.buttons = HSD_PAD_A;
+    step(3, 0); /* Next update must not retain the veto. */
+    frame = 4; begin(f); decision(f, 0);
+    CHECK(ShowboatRecorder_Event(f, 0xFFFFFF00U));
+    observe(f, t); /* Unknown-only mask must not trigger a sample. */
+    frame = 5; begin(f); decision(f, 0);
+    CHECK(ShowboatRecorder_Event(f, SBR_EVENT_SIDEB_VETO | 256U));
+    CHECK(ShowboatRecorder_Event(f, SBR_EVENT_TAUNT_ACK | 0x80000000U));
+    observe(f, t);
+    frame = 6; begin(f); decision(f, 0);
+    CHECK(ShowboatRecorder_Event(f, UINT_MAX));
+    observe(f, t); /* All eight assigned bits survive; no higher bits do. */
+    f->cpu.buttons = 0;
+    step(7, 0);
+    finish();
+}
+
 static void sentinels(void)
 {
     /* Independent bit patterns: all sixteen fields differ, including -0,
@@ -648,6 +679,7 @@ int main(int argc, char** argv)
     unsigned i;
     static const struct { const char* name; void (*run)(void); } cases[] = {
         CASE(schema),
+        CASE(side_b_veto),
         CASE(sentinels),
         CASE(capacity_baseline),
         CASE(overflow),

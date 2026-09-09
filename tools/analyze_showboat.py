@@ -48,7 +48,11 @@ INTENTS = ('vanilla', 'taunt', 'swagger', 'punch', 'dance', 'grab', 'knee',
            'upair', 'juggle', 'wdash', 'block', 'perfect')
 EVENTS = {1: 'taunt_ack', 2: 'punch_ack', 4: 'grab_ack', 8: 'aerial_ack',
           16: 'wavedash_landing_ack', 32: 'custom_powershield_contact',
-          64: 'lcancel_sample'}
+          64: 'lcancel_sample', 128: 'side_b_veto'}
+# Additive v2 bit, not a protocol/float-encoding change. Preserve unknown-bit
+# diagnostics; older strict mask-127 readers reject the new bit rather than
+# interpreting it as an acknowledgment or outcome.
+EVENT_MASK = 255
 FLAGS = {1: 'airborne', 2: 'hitstun', 4: 'hitlag', 8: 'inactive',
          16: 'held_item', 32: 'captured_or_thrown', 64: 'protected',
          128: 'global_items_present'}
@@ -106,6 +110,8 @@ NOTES = [
     'Acknowledgments are not hits; lcancel_sample does not prove lag reduction. '
     'Percent increases are comparable endpoint net increases, not raw hit damage '
     'or guaranteed attribution; stock changes are not attributed KOs.',
+    'side_b_veto records an actual controller safety veto, not an acknowledgment, '
+    'hit, success or proof of a saved recovery.',
     'Inputs are CPU output before preprocessing, not hardware or opponent inputs. '
     'Both fighters are sampled at the CPU hook, not an atomic world snapshot.',
     'Recovery context is motion/flag evidence only. Offstage is unknown: v1/v2 have '
@@ -525,7 +531,7 @@ class Segment:
             self.warn('ego_outside_hud_range', line, damage=False)
         if row['action'] >= len(INTENTS):
             self.warn('unknown_intent_id', line, damage=False)
-        if row['events'] & ~127:
+        if row['events'] & ~EVENT_MASK:
             self.warn('unknown_event_bits', line, damage=False)
             self.events['unknown_event_bits_samples'] += 1
         for bit, name in EVENTS.items():

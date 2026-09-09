@@ -273,7 +273,7 @@ class RecorderTests(unittest.TestCase):
                 self.assertIn(row["action"], range(12))
                 self.assertIn(row["owns"], (0, 1))
                 self.assertIn(row["gap"], (0, 1))
-                self.assertIn(row["events"], range(128))
+                self.assertIn(row["events"], range(256))
                 self.assertEqual(len(row["reasons"]), 5)
                 self.assertTrue(all(type(v) is int and 0 <= v < 16 for v in row["reasons"]))
                 self.assertTrue(0 <= row["input"][0] <= 0xFFFFFFFF)
@@ -357,6 +357,75 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual([s[k] for k in ("ego", "action", "owns", "events", "gap")], [73, 11, 1, 127, 0])
         self.assertEqual({r["tactic"]: r["reason"] for r in rows_of(rows, "gate")},
                          {0: 2, 1: 0, 2: 0, 3: 0, 4: 15})
+
+    def test_side_b_veto_is_a_real_event_field_not_sticky_or_an_outcome(self):
+        rows = self.records("side_b_veto", raw=True)
+        samples = rows_of(rows, "sample")
+        self.assertEqual([(s["frame"], s["events"]) for s in samples],
+                         [(1, 0), (2, 128), (3, 0), (5, 129), (6, 255), (7, 0)])
+        before, veto = samples[:2]
+        self.assertEqual({k: v for k, v in before.items() if k not in ("frame", "events")},
+                         {k: v for k, v in veto.items() if k not in ("frame", "events")})
+        self.assertEqual(veto["native"][0], 9)
+        self.assertEqual((veto["action"], veto["owns"], veto["reasons"]), (0, 0, [0] * 5))
+        self.assertTrue(all(s["gap"] == 0 for s in samples))
+        self.assertEqual(rows[-1]["observations"], 7)
+        self.assertEqual([g["count"] for g in rows_of(rows, "gate")], [7] * 5)
+
+    def test_event_mask_keeps_all_assigned_bits_and_masks_unknown_higher_bits(self):
+        samples = rows_of(self.records("side_b_veto", raw=True), "sample")
+        # Unknown-only update at f4 emits nothing; mixed calls retain only the
+        # assigned bits. The original schema still tests legacy bits 1-64.
+        self.assertNotIn(4, [s["frame"] for s in samples])
+        self.assertEqual([s["events"] for s in samples if s["frame"] in (5, 6)], [129, 255])
+        self.assertTrue(all(s["events"] & ~255 == 0 for s in samples))
+        self.assertEqual(rows_of(self.records("schema"), "sample")[0]["events"], 127)
+
+    def test_strict_wire_reader_rejects_unknown_event_bits(self):
+        rows = self.records("side_b_veto", raw=True)
+        for mask in (256, 128 | 256, 0x80000000, 0xFFFFFFFF):
+            with self.subTest(mask=mask):
+                altered = deepcopy(rows)
+                rows_of(altered, "sample")[1]["events"] = mask
+                with self.assertRaises(AssertionError):
+                    self.validate(altered)
+        # Old strict readers' mask-127 bound rejects the additive bit instead
+        # of interpreting it as any of the existing acknowledgments.
+        self.assertNotIn(rows_of(rows, "sample")[1]["events"], range(128))
+
+    def test_side_b_veto_c_producer_through_analyzer_cli(self):
+        import sys
+        rows = self.records("side_b_veto", raw=True)
+        with tempfile.TemporaryDirectory(prefix="showboat-veto-analysis-") as work:
+            log = Path(work) / "runtime.log"
+            report_path = Path(work) / "report.json"
+            markdown_path = Path(work) / "report.md"
+            log.write_text(self.last_wire)
+            run([sys.executable, str(ROOT / "tools/analyze_showboat.py"), str(log),
+                 "--json", str(report_path), "--markdown", str(markdown_path)])
+            report = json.loads(report_path.read_text())
+            self.assertEqual(report["scan"]["rejected_records"], 0)
+            self.assertEqual(report["scan"]["accepted_records"], len(rows))
+            seg = report["segments"][0]
+            self.assertEqual(seg["protocol_version"], 2)
+            self.assertIsNone(seg["sample_quarantine"])
+            self.assertEqual(seg["warnings"]["counts"], {})
+            self.assertEqual(seg["coverage"]["known_continuous_frames"], 6)
+            self.assertEqual(seg["coverage"]["status"], "count_consistent_recording")
+            events = seg["acknowledgment_and_event_samples"]
+            self.assertEqual(events["side_b_veto"], 3)
+            self.assertEqual(events["taunt_ack"], 2)
+            self.assertEqual(events["punch_ack"], 1)
+            self.assertEqual(events["lcancel_sample"], 1)
+            snap = seg["timeline"][1]
+            self.assertEqual(snap["events_mask"], 128)
+            self.assertEqual(snap["events"], ["side_b_veto"])
+            self.assertEqual(snap["native"][0], 9)
+            self.assertEqual(seg["recovery_motion_context_samples"], {"self": 0, "rival": 0})
+            self.assertIsNone(seg["offstage"])
+            text = markdown_path.read_text()
+            self.assertIn("side_b_veto=3", text)
+            self.assertIn("not an acknowledgment, hit, success or proof of a saved recovery", text)
 
     def test_sample_transport_single_pointer(self):
         source = MODULE.read_text()

@@ -20,7 +20,7 @@
 #define SR_SLOTS 6
 #define SR_INTERVAL 12
 #define SR_FLUSH 60
-#define SR_EVENTS 127U
+#define SR_EVENTS 255U
 #define SR_MAX_U32 0xFFFFFFFFU
 
 typedef struct {

@@ -42,8 +42,14 @@ A reason is the actual instrumented branch/group, not necessarily one atomic
 predicate. Report NOT_EVALUATED separately: another layer may own this update.
 Never rerun a mutating planner just to explain its rejection.
 Event bit masks: 1 taunt_ack, 2 punch_ack, 4 grab_ack, 8 aerial_ack,
-16 wavedash_landing_ack, 32 custom_powershield_contact, 64 lcancel_sample.
+16 wavedash_landing_ack, 32 custom_powershield_contact, 64 lcancel_sample,
+128 side_b_veto (added with the native ledge safeguard; current allowed mask255).
 Acknowledgment is not a hit; lcancel_sample is not successful lag reduction.
+`side_b_veto` is only a controller-input rejection, not acknowledgment, recovery
+or saved-stock proof. Snapshot input is after that filter; `owns`/intent retain
+the earlier tactical meaning. The native follow-up VM is not rewritten.
+This additive v2 bit requires the matching analyzer; older strict readers may
+reject new safety-event rows. Existing v2 captures and float encoding are unchanged.
 
 ## JSON records
 

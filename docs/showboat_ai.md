@@ -4,6 +4,38 @@ Tracking: https://github.com/cmoyates/melee/issues/1
 Branch: `mod/showboat-ai`, based on the existing single-player C-stick mod.
 Initial working tree was clean; that mod is retained.
 
+## Current gameplay update: native side-B ledge safeguard
+
+The valid v2 trace exposed an unsafe side-B queued inside a native throw
+follow-up. The new `showboat_safety.c/.h` filter examines that actual B output
+before controller processing, independently of ego. It is limited to uncached
+native priority 9, grounded Wait/Walk and verified normal FD/Battlefield floors.
+It checks **both** the backward windup and forward rush runway, using a rounded
+animation envelope plus an explicit margin. Central and sufficiently inward
+side-B choices remain available; other priorities and airborne/in-progress
+specials, recovery, throws, physics and game input timers are untouched.
+
+Only an unsafe B press and its accompanying horizontal input are suppressed.
+**The native VM and its 55-update wait/later follow-up inputs are retained**;
+this is not a complete throw-combo planner or guaranteed saved stock. The
+recorder emits event128 `side_b_veto` and snapshots the filtered output; the
+legacy diagnostic retains the requested direction. No ego reward is added.
+See [native research, scope and limitations](../research/showboat_side_b_safety.md).
+Live veto behavior still needs the next explicitly approved test.
+
+**Offline checkpoint:** 442 tests pass (242 retained/main, 33 safety, 56 recorder,
+92 analyzer, 16 capture, three config/verifier). This includes 2,768 complete
+Fighter write guards, 130 main cases across four recorder/debug combinations,
+and native-overlap/seam tests. Native build/verifier, 28 warning configurations
+and six disabled-hook comparisons pass. Safety's object is identical with the
+recorder off/on. Only AI, recorder event-mask and the new safety object differ
+from the prior live build; no jab, shield or recovery tuning was included.
+
+Ready DOL: **4,522,176 bytes**, SHA-1
+`463a5a435aa5241f943fd21bfc87a4612c9eb2d7`. Dolphin is closed; the virtual disc
+still holds the previous tested DOL until an approved launch. Controller mapping
+is unchanged. These tests do not prove live admission or a prevented death.
+
 ## Read-only match recorder
 
 **Recorder v2 replaces the faulty v1 serialization path.** A bounded buffer and
@@ -108,7 +140,7 @@ Logging/formatting can still cost runtime; offline tests do not establish emulat
 speed or recording overhead. The first live capture exposed the integrity fault
 noted above; the following historical checkpoint predates that finding.
 
-### Recorder v2 repair checkpoint
+### Recorder v2 repair checkpoint (before the ledge safeguard)
 
 - **393 tests pass**: 235 main/retained tests, 52 recorder tests, 87 analyzer
   tests, 16 capture tests and three configuration/verifier tests.
@@ -712,6 +744,12 @@ and set level 9. Leave other slots NONE.
    native recovery/defense and never leave stuck controls or cross-slot HUD rows.
 9. **Lifecycle:** restart matches and change CPU settings/control. Initial ego
    resets; ordinary stock loss lowers it, and ownership/borrowed analog clears.
+10. **Native side-B safeguard:** on FD/Battlefield's main floor, allow native
+    throw follow-ups near an edge, then also near center or facing inward.
+    Look for `SIDE-B VETO` / event128, not a claimed saved stock. Verify the B
+    pulse is actually absent and normal side-B remains available with runway.
+    A retained native wait after veto is expected; watch the later follow-up
+    rather than assuming the entire native chain has been redesigned.
 
 Use HUD and logs to distinguish native moves from custom input starts. Play
 several fair matches as well as staged observations: deliberately feeding the
@@ -740,6 +778,12 @@ CPU proves neither its strength nor its ability to sustain a real lead.
   savestates are not compatible with this shifted DOL.
 
 ## Best next improvements
+
+First validate the new native side-B input veto at edges and its central/inward
+allowances. Check the retained follow-up wait/later inputs for new practical
+problems before considering script ownership changes. The valid v2 capture also
+motivates jab-conversion and defense-admission investigation, not more reckless
+flourishes.
 
 1. Benchmark V2 vs native level 9; measure acknowledged inputs, connected
    conversions, failed commitments, stock differential and personality frequency.

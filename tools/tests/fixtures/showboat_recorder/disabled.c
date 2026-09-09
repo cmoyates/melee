@@ -14,10 +14,11 @@ int main(void)
         SBR_CANCELLED, SBR_BUDGET, SBR_SUCCESS, SBR_REASONS };
     const int events[] = { SBR_EVENT_TAUNT_ACK, SBR_EVENT_PUNCH_ACK,
         SBR_EVENT_GRAB_ACK, SBR_EVENT_AERIAL_ACK, SBR_EVENT_WAVEDASH_LANDING_ACK,
-        SBR_EVENT_POWERSHIELD_CONTACT, SBR_EVENT_LCANCEL_SAMPLE };
+        SBR_EVENT_POWERSHIELD_CONTACT, SBR_EVENT_LCANCEL_SAMPLE,
+        SBR_EVENT_SIDEB_VETO };
     for (i = 0; i < 6; ++i) { assert(tactics[i] == i); }
     for (i = 0; i < 17; ++i) { assert(reasons[i] == i); }
-    for (i = 0; i < 7; ++i) { assert(events[i] == (1 << i)); }
+    for (i = 0; i < 8; ++i) { assert(events[i] == (1 << i)); }
     ShowboatRecorder_Begin(++calls);
     ShowboatRecorder_Reason(++calls, ++calls, ++calls);
     ShowboatRecorder_Event(++calls, ++calls);

@@ -2,6 +2,7 @@
  * Include production verbatim: no copied personality logic and no #define static.
  * See test_showboat_ai.py for scope, compiler setup, and how to run.
  */
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,7 @@ enum { EV_RESTORE, EV_RESET, EV_COMBAT, EV_ABORT, EV_POST, EV_ACTION, EV_QUERY, 
 static int events[512], event_count;
 static bool tracing;
 static struct {
-    bool owns_input, borrowed;
+    bool owns_input, borrowed, post_overlay;
     Fighter* borrower;
     s8 saved_x;
     int resets[SB_SLOTS], restores, updates, aborts, posts, actions;
@@ -89,6 +90,7 @@ static Fighter* const target = &fighters[1];
 static SB_State* const state = &sb_states[0];
 
 #include "recording_spies.c"
+#include "safety_spies.c"
 
 static void valid_slot(int slot) { CHECK(slot >= 0 && slot < SB_SLOTS); }
 StKind Stage_80225194(void) { event(EV_QUERY); return world.stage; }
@@ -131,7 +133,19 @@ int ftColl_8007B868(Fighter_GObj* gobj)
     valid_slot(GET_FIGHTER(gobj)->player_id);
     return world.invincible[GET_FIGHTER(gobj)->player_id];
 }
-void OSReport(const char* format, ...) { CHECK(format != NULL); }
+void OSReport(const char* format, ...)
+{
+    CHECK(format != NULL);
+    if (safety.watching_logs) {
+        va_list args;
+        va_start(args, format);
+        int n = vsnprintf(safety.last_log, sizeof(safety.last_log), format, args);
+        va_end(args);
+        CHECK(n >= 0 && n < (int) sizeof(safety.last_log));
+        ++safety.logs;
+        recording_mark(REC_LOG, NULL, 0, 0);
+    }
+}
 
 /* Faithful subset of ftcmdscript.c writers. Finalizing does NOT execute the VM.
  * In particular Done does not release held buttons/sticks. Cancellation tests
@@ -234,6 +248,8 @@ bool ShowboatCombat_Update(Fighter* fp, Fighter* rival)
 void ShowboatCombat_PostInput(Fighter* fp)
 {
     CHECK(fp != NULL); event(EV_POST); ++combat.posts; combat.last_actor = fp;
+    /* Explicit opt-in output marker to distinguish VM -> combat -> safety. */
+    if (combat.post_overlay) { fp->cpu.lstick.x = -91; }
     memcpy(&recording.post_cpu, &fp->cpu, sizeof(fp->cpu));
     recording_mark(REC_POST, fp, 0, 0);
 }
@@ -359,6 +375,9 @@ static bool update(Fighter* fp)
     Fighter_GObj old_objects[SB_SLOTS];
     unsigned char old_world[sizeof(world)];
     int old_scripts = scripts;
+#if !SHOWBOAT_RECORDER
+    int old_actions = combat.actions;
+#endif
     bool result;
     memcpy(before, fighters, sizeof(before));
     memcpy(old_objects, objects, sizeof(objects));
@@ -370,7 +389,7 @@ static bool update(Fighter* fp)
     tracing = false;
     CHECK(event_count > 0 && events[0] == EV_RESTORE);
 #if !SHOWBOAT_RECORDER
-    CHECK(combat.actions == 0); /* HUD off; recording legitimately queries action */
+    CHECK(combat.actions == old_actions); /* Update needs no getter; PostInput does */
 #endif
     CHECK(memcmp(&old_common, &common_data, sizeof(common_data)) == 0);
     CHECK(memcmp(&old_entities, &entities, sizeof(entities)) == 0);
@@ -428,6 +447,8 @@ static void dirty_input(Fighter* fp)
 }
 static void setup(void)
 {
+    safety_verified();
+    memset(&safety, 0, sizeof(safety));
     tracing = false; event_count = 0;
     memset(&recording, 0, sizeof(recording));
     memset(&combat, 0, sizeof(combat));
@@ -2602,9 +2623,17 @@ static void test_defense_reset_slot_isolated_bounds_and_bookkeeping_only(void)
 
 #include "ego_regressions.c"
 #include "recording_cases.c"
+#include "safety_cases.c"
 
 #define CASE(name) { #name, test_##name }
 static const struct { const char* name; void (*run)(void); } cases[] = {
+    CASE(safety_native_vm_filter_before_recording),
+    CASE(safety_false_preserves_running_native_output),
+    CASE(safety_never_cancels_personality_programs),
+    CASE(safety_never_cancels_technical_or_perfect_actions),
+    CASE(safety_late_target_identity_and_slot_gates),
+    CASE(safety_late_self_spawn_owner_and_eligibility_gates),
+    CASE(safety_resumes_only_after_update_rebinds_identity),
     CASE(recording_begin_decision_vm_post_frame_order),
     CASE(recording_output_channels_after_native_vm),
     CASE(recording_decision_action_precedence),
@@ -2735,7 +2764,8 @@ int main(int argc, char** argv)
     case_name = argv[1];
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         if (strcmp(cases[i].name, case_name) == 0) {
-            cases[i].run(); printf("PASS %s\n", case_name); return 0;
+            cases[i].run(); safety_verified();
+            printf("PASS %s\n", case_name); return 0;
         }
     }
     fprintf(stderr, "unknown case: %s\n", case_name);

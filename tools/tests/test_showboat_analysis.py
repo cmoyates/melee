@@ -1099,6 +1099,88 @@ class BehaviorTests(unittest.TestCase):
             seg = first([begin(), sample(), sample(101, **change)])
             self.assertIsNone(seg['observed_changes']['self']['net_percent_increases'])
 
+    def test_all_event_masks_through_255_keep_existing_labels_and_add_veto(self):
+        expected = {1: 'taunt_ack', 2: 'punch_ack', 4: 'grab_ack', 8: 'aerial_ack',
+                    16: 'wavedash_landing_ack', 32: 'custom_powershield_contact',
+                    64: 'lcancel_sample', 128: 'side_b_veto'}
+        self.assertEqual(analysis.EVENTS, expected)
+        self.assertEqual(analysis.EVENT_MASK, 255)
+        for mask in range(256):
+            with self.subTest(mask=mask):
+                rows = complete()
+                rows[1]['events'] = mask
+                report = analyze_v2(rows)
+                seg = report['segments'][0]
+                labels = [name for bit, name in expected.items() if mask & bit]
+                self.assertEqual(report['scan']['rejected_records'], 0)
+                self.assertEqual(seg['protocol_version'], 2)
+                self.assertIsNone(seg['sample_quarantine'])
+                self.assertEqual(seg['warnings']['counts'], {})
+                self.assertEqual(seg['acknowledgment_and_event_samples'],
+                                 {name: 1 for name in labels})
+                self.assertEqual(seg['timeline'][0]['events_mask'], mask)
+                self.assertEqual(seg['timeline'][0]['events'], labels)
+                self.assertEqual(seg['timeline'][1]['events'], [])
+                self.assertEqual(seg['coverage']['known_continuous_frames'], 12)
+
+    def test_unknown_higher_event_bits_still_warn_without_becoming_veto(self):
+        # Retain the analyzer's diagnostic policy for unknown in-range u32
+        # bits; the producer masks these and strict wire readers reject them.
+        for high in (256, 512, 0x80000000, 0xFFFFFF00):
+            for known in (0, 128, 255):
+                with self.subTest(high=high, known=known):
+                    rows = complete()
+                    rows[1]['events'] = high | known
+                    seg = first(rows)
+                    self.assertEqual(seg['warnings']['counts'], {'unknown_event_bits': 1})
+                    self.assertEqual(seg['acknowledgment_and_event_samples'],
+                                     {'unknown_event_bits_samples': 1,
+                                      **{name: 1 for bit, name in analysis.EVENTS.items() if known & bit}})
+                    self.assertEqual(seg['timeline'][0]['events_mask'], high | known)
+                    self.assertEqual(seg['timeline'][0]['events'],
+                                     [name for bit, name in analysis.EVENTS.items() if known & bit])
+
+    def test_side_b_veto_does_not_escape_legacy_quarantine(self):
+        rows = complete()
+        rows[1]['events'] = 128
+        report = analyze(rows)
+        seg = report['segments'][0]
+        self.assertEqual(report['scan']['rejected_records'], 0)
+        assert_quarantined(self, seg)
+        self.assertEqual(seg['sample_quarantine']['diagnostic_raw_timeline'][0]['events'], 128)
+        self.assertTrue(all(g['logged_updates'] == 13 for g in seg['gates']))
+        self.assertNotIn('side_b_veto=1', analysis.markdown(report))
+
+    def test_side_b_veto_does_not_escape_input_wide_corruption_quarantine(self):
+        rows = v2(complete())
+        rows[1]['events'] = 128
+        # Even a rejected orphan after the end, outside the selected segment,
+        # must withhold this new event along with every other sample metric.
+        report = analyze(rows + ['SBREC {"v":2}\n'], segment=1)
+        self.assertEqual(report['scan']['rejected_records'], 1)
+        seg = report['segments'][0]
+        assert_quarantined(self, seg)
+        self.assertEqual(seg['sample_quarantine']['diagnostic_raw_timeline'][0]['events'], 128)
+        self.assertNotIn('side_b_veto=1', analysis.markdown(report))
+
+    def test_side_b_veto_is_not_coverage_gate_or_recovery_evidence(self):
+        rows = complete()
+        rows[2]['gap'] = 1
+        baseline = first(rows)
+        rows[2]['events'] = 128
+        seg = first(rows)
+        self.assertEqual(seg['acknowledgment_and_event_samples'], {'side_b_veto': 1})
+        for field in ('coverage', 'gates', 'observed_changes', 'native_priorities',
+                      'custom_intents', 'recovery_motion_context_samples', 'warnings'):
+            self.assertEqual(seg[field], baseline[field], field)
+        self.assertEqual(seg['coverage']['known_continuous_frames'], 0)
+        self.assertEqual(seg['coverage']['status'], 'partial_or_inconsistent')
+        self.assertEqual(seg['recovery_motion_context_samples'], {'self': 0, 'rival': 0})
+        self.assertIsNone(seg['offstage'])
+        text = analysis.markdown(analyze_v2(rows))
+        self.assertIn('side_b_veto=1', text)
+        self.assertIn('not an acknowledgment, hit, success or proof of a saved recovery', text)
+
     def test_events_intents_flags_ego_and_positions_are_sampled_context(self):
         falcon_hi = next(k for k, v in LABELS.falcon.items() if v == 'ftCa_MS_SpecialAirHi')
         actor = fighter(motion=falcon_hi, flags=255)
@@ -1156,6 +1238,7 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(set(events.values()), set(analysis.EVENTS))
         self.assertEqual(events['SBR_EVENT_PUNCH_ACK'], 2)
         self.assertEqual(events['SBR_EVENT_LCANCEL_SAMPLE'], 64)
+        self.assertEqual(events['SBR_EVENT_SIDEB_VETO'], 128)
         hud = analysis.read_enum((ROOT / 'src/melee/mod/showboat_hud.h').read_text().replace(
             'enum ShowboatHUD_Action', 'typedef enum ShowboatHUD_Action'), 'ShowboatHUD_Action')
         self.assertEqual(hud, {'SHOWBOAT_HUD_' + name.upper(): i for i, name in enumerate(analysis.INTENTS)})

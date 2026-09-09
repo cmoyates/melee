@@ -1,9 +1,11 @@
-/* A personality, not a replacement CPU. All actions use the stock input VM. */
+/* A personality, not a replacement CPU. All actions use the stock controller
+ * path: native input VM programs or narrowly filtered CPU controller outputs. */
 #include "showboat_ai.h"
 #include "showboat_combat.h"
 #include "showboat_defense.h"
 #include "showboat_recorder.h"
 #include "showboat_movement.h"
+#include "showboat_safety.h"
 
 #if SHOWBOAT_AI_HUD
 #include "showboat_hud.h"
@@ -1140,16 +1142,34 @@ bool ShowboatAI_Update(Fighter* fp)
 
 void ShowboatAI_PostInput(Fighter* fp)
 {
-    if (SB_Eligible(fp) && sb_states[fp->player_id].owner == fp) {
+    if (SB_Eligible(fp) && sb_states[fp->player_id].owner == fp &&
+        sb_states[fp->player_id].spawn == fp->x8_spawnNum)
+    {
+        SB_State* s = &sb_states[fp->player_id];
+        int slot = s->opponent_slot;
+        Fighter_GObj* other = slot >= 0 && slot < SB_SLOTS ?
+                              Player_GetEntity(slot) : NULL;
+        Fighter* target = other != NULL ? GET_FIGHTER(other) : NULL;
+        int requested_x;
         ShowboatCombat_PostInput(fp);
-#if SHOWBOAT_RECORDER
+        requested_x = fp->cpu.lstick.x;
+        /* Inspect the actual native output, including already-running throw
+         * follow-ups. No speculative planner rerun. Never cancel a custom
+         * program or a replaced identity between Update and PostInput. */
+        if (s->action == SB_NONE && target != NULL &&
+            target == s->opponent_owner &&
+            target->x8_spawnNum == s->opponent_spawn &&
+            ShowboatCombat_GetAction(fp) == 0 &&
+            ShowboatMovement_GetAction(fp) == 0 &&
+            ShowboatDefense_GetAction(fp) == 0 &&
+            ShowboatSafety_PostInput(fp, target))
         {
-            int slot = sb_states[fp->player_id].opponent_slot;
-            Fighter_GObj* other = slot >= 0 && slot < SB_SLOTS ?
-                                  Player_GetEntity(slot) : NULL;
-            ShowboatRecorder_Frame(fp, other != NULL ? GET_FIGHTER(other) : NULL);
+            SB_Log(fp, s, requested_x < 0 ?
+                   "SIDE-B VETO: left native throw follow-up; VM retained" :
+                   "SIDE-B VETO: right native throw follow-up; VM retained");
+            ShowboatRecorder_Event(fp, SBR_EVENT_SIDEB_VETO);
         }
-#endif
+        ShowboatRecorder_Frame(fp, target);
     } else {
         ShowboatRecorder_Suspend(fp);
     }

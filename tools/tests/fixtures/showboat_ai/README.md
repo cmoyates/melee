@@ -32,9 +32,11 @@ assets, emulator, production edits, or target build are involved.
   does not reproduce combat policy. A borrowed-stick fixture and call trace test
   restoration before early gates/reset/taunt, serious-mode-independent delegation,
   flourish handoff without clearing the new combat script, and PostInput gating.
-  GetAction must remain unused only when **both HUD and recording are disabled**;
-  recording legitimately queries the HUD action getter. Its default remains 5,
-  with an explicit configurable result for action-precedence tests. Combat behavior
+  Update's GetAction must remain unused when **both HUD and recording are disabled**;
+  PostInput now legitimately queries it in every mode to exclude custom actions
+  from safety. The Update guard checks its per-call delta, not a cumulative zero.
+  Its default remains 5, with explicit configurable results for action-precedence
+  and safety tests. Combat behavior
   needs its own tests; a spy returning true during danger proves delegation, not safe combat.
 - Four `ShowboatMovement` APIs are explicit orchestration spies using its real
   header. They verify reset/suspend ordering, ego-independent starts after combat
@@ -88,7 +90,8 @@ Recorder orchestration (`recording_cases.c`) adds **14 C cases** covering:
   JUGGLE > none action reporting, and both owned and native-fallback samples.
   Frame captures all buttons, both sticks, both triggers and consumed VM state,
   not the queued Decision snapshot. Extra native channel values are explicit test
-  inputs; the combat post-input spy remains read-only, not a physical overlay model.
+  inputs; the combat post-input spy remains read-only in these recorder cases.
+  Only new safety ordering cases opt into its distinctive x-stick output marker.
 - No Decision/Frame after Update loses eligibility or its singles target; no
   CombatPostInput/Frame when PostInput itself loses eligibility/private ownership.
   **Boundary:** if a target disappears only *after* Update, main forwards NULL to
@@ -110,6 +113,45 @@ Every new scenario also executes with recording disabled; gameplay assertions an
 all original physical-write/input-gating assertions remain active in both modes.
 Recorder bookkeeping assertions test main's call contract, not the real recorder's
 implementation. No HUD rendering, DOL build, emulator or analyzer is tested here.
+
+Safety orchestration (`safety_cases.c`) adds **7 C cases** covering:
+
+- Native VM -> CombatPostInput -> Safety -> debug log / event -> Frame ordering.
+  An explicitly enabled combat x-stick marker distinguishes its output from the
+  VM output; the safety spy snapshots that exact input, then optionally clears B
+  and x. Event and Frame must see the filtered snapshot, including all untouched
+  buttons/sticks/triggers and bytecode/cursors. These marker writes are NOT the
+  actual safety policy or proof of recovery safety.
+- True returns emit exactly one real-header `SBR_EVENT_SIDEB_VETO == 128`, one
+  debug log when enabled, and no ego/RNG/state mutation. False returns preserve
+  every input byte and emit no event/log, including after a previous true sample.
+  Recorder-off builds still call safety and retain exactly the same raw effects.
+  Zero/high ego, serious mode and the informational JUGGLE indicator do not gate it.
+- Active taunt/dance/swagger/Punch and both offstage styles, combat IDs 5/6/7,
+  movement 9, defense 10 and PERFECT 11 never call safety. Queued and consumed
+  custom scripts, dirty held channels and pending defense rewards are preserved.
+- Missing/replaced target entities, null live user data, invalid saved target slots,
+  stale/null owner tokens and target spawn changes block safety. Frame still
+  receives the late live target or NULL; recorder validation is tested elsewhere.
+- Late self-spawn/owner/primary-entity replacement and every eligibility gate block
+  CombatPostInput, safety and Frame. A later Update can rebind live self/target
+  identities and allow safety again; no stale pointer is dereferenced.
+
+`safety_spies.c` uses the real `showboat_safety.h` prototype. It has **no permissive
+fallback**: every call consumes an explicitly armed expectation from an eight-entry
+bounded array, checking exact actor/target, CPU bytes, combat call count and absence
+of an early Frame. Unexpected or missing calls fail (also checked before setup
+resets and process success). Legacy cases that legitimately reach safety explicitly
+arm false results; all other cases default to forbidding calls. The new output
+helper compares every Fighter byte against the exact planned CPU change, all
+private AI state, fixture world/objects, and script writer/reward counters. Existing
+read-only and physical-write guards remain intact.
+
+`test_showboat_ai.py` exports `create_stub_headers(include: Path)` for host/native
+hook verifier reuse. It generates only the typed game dependency tree and native
+enums; real mod API headers are never replaced by copied/variadic stub headers.
+This suite still includes production main verbatim and does not link real safety,
+combat, movement, defense or recorder implementations.
 
 Defense orchestration cases cover:
 
@@ -202,9 +244,10 @@ The whiff helper intentionally selects a non-FD/BF stage to isolate crouch
 swagger from dance. Death counters and native motion frames never advance
 implicitly in a stub; each relevant transition is supplied by the test.
 
-The baseline **109 cases** (88 earlier cases, 14 defense orchestration cases and
-7 final regressions) are all retained. With 14 recorder orchestration cases, the
-suite runs **123 C cases / 492 recorder × debug matrix executions** with ASan/UBSan.
+The baseline **123 cases** (88 earlier cases, 14 defense orchestration cases,
+7 final regressions and 14 recorder orchestration cases) are all retained. With
+7 safety orchestration cases, the suite runs **130 C cases / 520 recorder × debug
+matrix executions** with ASan/UBSan.
 Case loops also vary styles, sides, priorities, bytecode/cursor mutations, physical
 vetoes, defense handoff/reward states and recorder lifecycle/acknowledgment paths.
 Existing physical-write guards and combat/movement/defense gating remain intact.

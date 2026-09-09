@@ -7,8 +7,11 @@ Or:  python3 tools/tests/test_showboat_ai.py -v
 Requires clang; no game assets, configure step, target SDK, or Python packages.
 The recorder 0/1 x debug 0/1 matrix runs with AddressSanitizer and
 UndefinedBehaviorSanitizer. Explicit recorder spies use the real header; the
-recorder implementation is not linked here (it has a separate suite). The real
-main module is #included, unmodified, so its private state/helpers are exercised.
+recorder implementation is not linked here (it has a separate suite). Safety is
+also an explicit bounded typed spy using its real public header, not a geometry
+model. The real main module is #included, unmodified, so its private state/helpers
+are exercised. create_stub_headers() exposes the typed dependency tree to other
+host/native-hook checks without replacing any real mod API header.
 Game layouts/queries and a small input-script VM are stubs, not the game engine:
 these tests do NOT prove in-game animation timing, collision, stock arbitration,
 build opt-in wiring, PPC ABI correctness, or behavior in Dolphin/hardware.
@@ -70,6 +73,30 @@ ENUMS = (
 )
 
 
+def create_stub_headers(include: Path) -> None:
+    """Build the typed host dependency tree (also usable by native-hook checks).
+
+    Mod API headers, including showboat_safety.h, remain REAL headers from src;
+    never shadow them with a variadic/no-op declaration or copied enum values.
+    """
+    include.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(FIXTURES / "game.h", include / "sb_test_game.h")
+    enums = []
+    for path, name in ENUMS:
+        source = (ROOT / path).read_text()
+        match = re.search(
+            rf"typedef enum {name}\s*\{{.*?\}}\s*{name};", source, re.S
+        )
+        if match is None:
+            raise AssertionError(f"Cannot extract native enum {name} from {path}")
+        enums.append(match.group())
+    (include / "sb_native_enums.h").write_text("\n".join(enums) + "\n")
+    for header in STUB_HEADERS:
+        dest = include / header
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text('#include "sb_test_game.h"\n')
+
+
 class ShowboatHostTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -80,22 +107,7 @@ class ShowboatHostTests(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         work = Path(cls.temp.name)
         include = work / "include"
-        include.mkdir()
-        shutil.copyfile(FIXTURES / "game.h", include / "sb_test_game.h")
-        enums = []
-        for path, name in ENUMS:
-            source = (ROOT / path).read_text()
-            match = re.search(
-                rf"typedef enum {name}\s*\{{.*?\}}\s*{name};", source, re.S
-            )
-            if match is None:
-                raise AssertionError(f"Cannot extract native enum {name} from {path}")
-            enums.append(match.group())
-        (include / "sb_native_enums.h").write_text("\n".join(enums) + "\n")
-        for header in STUB_HEADERS:
-            dest = include / header
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text('#include "sb_test_game.h"\n')
+        create_stub_headers(include)
         cls.binaries = []
         for recorder, debug in ((0, 0), (0, 1), (1, 0), (1, 1)):
             binary = work / f"showboat-recorder-{recorder}-debug-{debug}"

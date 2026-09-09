@@ -2060,6 +2060,9 @@ if args.showboat_ai:
     defense_source = "melee/mod/showboat_defense.c"
     config.libs.append(MeleeLib("Showboat defense", [Object(Matching, defense_source)]))
     config.extra_dol_objects.append(defense_source)
+    safety_source = "melee/mod/showboat_safety.c"
+    config.libs.append(MeleeLib("Showboat safety", [Object(Matching, safety_source)]))
+    config.extra_dol_objects.append(safety_source)
     recorder_source = "melee/mod/showboat_recorder.c"
     if args.showboat_recorder:
         config.libs.append(MeleeLib("Showboat recorder", [Object(Matching, recorder_source)]))
@@ -2078,7 +2081,7 @@ if args.showboat_ai:
                 obj.options["extra_cflags"].append("-DSHOWBOAT_UNLOCK_ALL=1")
             if obj.name in {
                 showboat_source, combat_source, movement_source, defense_source,
-                recorder_source, "melee/mod/showboat_hud.c",
+                recorder_source, safety_source, "melee/mod/showboat_hud.c",
                 "melee/ft/kinds/ftCommon/ftCo_0A01.c",
                 "melee/ft/ftcpuattack.c", "melee/pl/player.c", "melee/ft/fighter.c",
             }:

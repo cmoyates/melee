@@ -6,7 +6,7 @@
 enum {
     REC_RESTORE, REC_BEGIN, REC_REASON, REC_DECISION, REC_VM, REC_POST,
     REC_FRAME, REC_RESET, REC_SUSPEND, REC_EVENT, REC_COMBAT,
-    REC_MOVEMENT, REC_DEFENSE
+    REC_MOVEMENT, REC_DEFENSE, REC_SAFETY, REC_LOG
 };
 typedef struct {
     Fighter* owner;
@@ -20,7 +20,7 @@ static struct {
     int begins, decisions, frames, reasons, events, suspends, resets[SB_SLOTS];
     Fighter *begin_actor, *decision_actor, *frame_actor, *frame_target,
             *suspend_actor;
-    struct CpuFighter begin_cpu, decision_cpu, post_cpu, frame_cpu;
+    struct CpuFighter begin_cpu, decision_cpu, post_cpu, frame_cpu, event_cpu;
     int begin_tick, decision_tick;
     bool watching;
     int count;
@@ -70,6 +70,7 @@ void ShowboatRecorder_Event(Fighter* fp, unsigned mask)
 {
     RecordingSlot* slot = recording_slot(fp);
     ++recording.events;
+    memcpy(&recording.event_cpu, &fp->cpu, sizeof(fp->cpu));
     recording_mark(REC_EVENT, fp, (int) mask, 0);
     if (slot) { slot->owner = fp; slot->mask |= mask; }
 }

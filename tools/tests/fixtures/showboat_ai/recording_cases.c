@@ -27,6 +27,7 @@ static void recording_post_input(Fighter* fp)
     memcpy(old_objects, objects, sizeof(objects));
     memcpy(old_world, &world, sizeof(world));
     post_input(fp); /* compares EVERY Fighter byte, including CPU input */
+    safety_verified();
     CHECK(memcmp(old_objects, objects, sizeof(objects)) == 0);
     CHECK(memcmp(old_world, &world, sizeof(world)) == 0);
     CHECK(memcmp(&old_common, &common_data, sizeof(common_data)) == 0);
@@ -152,10 +153,12 @@ static void test_recording_decision_action_precedence(void)
         bool owns = variant < 4;
         int decisions = recording.decisions, getters = combat.actions;
         CHECK(frame() == owns);
+        if (variant >= 5) { safety_expect(self, target, false, &self->cpu); }
         recording_post_input(self);
         CHECK(recording.decisions == decisions + SHOWBOAT_RECORDER);
         CHECK(recording.frames == SHOWBOAT_RECORDER);
-        CHECK(combat.actions == getters + (SHOWBOAT_RECORDER && variant != 0));
+        CHECK(combat.actions == getters + (SHOWBOAT_RECORDER && variant != 0) +
+                                (variant != 0)); /* PostInput's ownership gate */
         if (SHOWBOAT_RECORDER) {
             CHECK(recording.slots[0].action == actions[variant]);
             CHECK(recording.slots[0].ego == state->ego);

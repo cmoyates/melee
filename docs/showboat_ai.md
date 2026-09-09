@@ -21,7 +21,11 @@ this is not a complete throw-combo planner or guaranteed saved stock. The
 recorder emits event128 `side_b_veto` and snapshots the filtered output; the
 legacy diagnostic retains the requested direction. No ego reward is added.
 See [native research, scope and limitations](../research/showboat_side_b_safety.md).
-Live veto behavior still needs the next explicitly approved test.
+The [first safeguard live review](../research/showboat_recorder_playtest_4.md)
+confirms one actual veto and a retained jump/Knee follow-up that returns to a
+platform without recorded damage. It also exposes the next gap: the same native
+side-B chain can start on a raised platform, outside the current main-floor
+scope, and carry Falcon into a fatal fall. No universal saved-stock claim.
 
 **Offline checkpoint:** 442 tests pass (242 retained/main, 33 safety, 56 recorder,
 92 analyzer, 16 capture, three config/verifier). This includes 2,768 complete
@@ -32,9 +36,10 @@ recorder off/on. Only AI, recorder event-mask and the new safety object differ
 from the prior live build; no jab, shield or recovery tuning was included.
 
 Ready DOL: **4,522,176 bytes**, SHA-1
-`463a5a435aa5241f943fd21bfc87a4612c9eb2d7`. Dolphin is closed; the virtual disc
-still holds the previous tested DOL until an approved launch. Controller mapping
-is unchanged. These tests do not prove live admission or a prevented death.
+`463a5a435aa5241f943fd21bfc87a4612c9eb2d7`. The approved live test staged this
+same DOL and then closed cleanly. Controller mapping is unchanged. Host tests
+alone do not prove live admission; the review documents one actual veto, not a
+counterfactual prevented-death count.
 
 ## Read-only match recorder
 
@@ -779,9 +784,12 @@ CPU proves neither its strength nor its ability to sustain a real lead.
 
 ## Best next improvements
 
-First validate the new native side-B input veto at edges and its central/inward
-allowances. Check the retained follow-up wait/later inputs for new practical
-problems before considering script ownership changes. The valid v2 capture also
+The main-floor side-B veto has one live activation with a useful retained
+follow-up. Next investigate platform-side-B commitments: the live review records
+a fatal platform departure at9.6% with no intervening sampled damage. Preserve
+legal controller decisions and validate the platform edge/air-coast/lower-floor
+path before expanding scope. Further controlled tests should check central/inward
+allowances and retained follow-up behavior before script ownership changes. The valid v2 capture also
 motivates jab-conversion and defense-admission investigation, not more reckless
 flourishes.
 

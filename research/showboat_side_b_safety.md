@@ -189,6 +189,23 @@ explicitly tester-approved launch. No emulator launch is part of development.
   `00dc2b7a5339493fe11fcf93e3adba16e93e0451`. No active disc, stock assets,
   raw captures, normal profile or prior reports were modified.
 
-The next approved capture must establish whether eligible unsafe pulses are
-actually vetoed and whether the retained native follow-up behaves usefully.
 An event128 demonstrates rejection only; do not count it as a saved stock.
+
+## First approved live result
+
+The [fourth recorded playtest](showboat_recorder_playtest_4.md) uses this exact
+DOL and clean `b52670cc5` source. At f1902 the legacy left-veto diagnostic agrees
+with event128 and neutral post-filter output from Wait at x=-49.25. No side-B
+starts; the native wait, jumps and Knee continue, followed by landing on the
+left platform without a recorded percent increase. This validates one actual
+admission/continuation, not a counterfactual saved stock or a generally optimal
+throw follow-up.
+
+At f5302 the same native9 B+left pulse occurs on the raised left platform at
+y27.2, outside this module's main-floor scope. It proceeds into side-B,
+FallSpecial and DeadDown at f5381 with percent unchanged at9.6. Platform-edge
+and subsequent air-coast/lower-floor safety is the next evidenced investigation.
+The main-floor policy has not become a universal side-B safeguard. Ordinary
+priority2 ground/air side-Bs remain observed. The capture parses 2,766 records
+without rejected rows; Dolphin exited0 and is closed. No further tuning or
+restart followed the review.

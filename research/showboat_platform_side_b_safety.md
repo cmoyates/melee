@@ -116,7 +116,17 @@ capture4 remains evidence from the **preceding** main-floor-only binary, not a
 live test of this extension. A replay must explicitly stub its unrecorded native
 map/input predicates.
 
-## Verification status
+## First approved live result
+
+The [fifth recorded playtest](showboat_recorder_playtest_5.md) uses the exact
+platform build below. It records event128 atf4323 on the left platform, pointing
+right/inward, with B/X suppressed. The retained jump/up-B lands at4484, but is
+punished by a Stone-consistent damage event during landing lag at4501. Two
+main-floor vetoes also occur; another retained up-B catches Kirby. This validates
+one platform admission, not all directions/platforms, a saved stock, or a
+uniformly useful tail. No post-review gameplay changes were made.
+
+## Original offline verification checkpoint
 
 - **452 tests pass** in125.213s:242 retained/main,43 safety,56 recorder,
   92 analyzer,16 capture,3 config/verifier. All442 preceding tests are retained.

@@ -34,24 +34,30 @@ The [first safeguard live review](../research/showboat_recorder_playtest_4.md)
 confirms one actual veto and a retained jump/Knee follow-up that returns to a
 platform without recorded damage. It also exposed the platform departure that
 motivated this extension: a raised-platform side-B led to a fatal fall at9.6%.
-That capture used the preceding main-floor-only binary; the extension still
-needs its own live validation. No universal saved-stock claim.
+That capture used the preceding main-floor-only binary. The
+[first platform live review](../research/showboat_recorder_playtest_5.md) now
+confirms one **inward left-platform veto** plus two main-floor vetoes. All three
+retained tails land; the platform tail is then punished during up-B landing lag,
+while another tail actually catches Kirby. No universal saved-stock or
+uniformly useful continuation claim.
 
-**Offline checkpoint:** 452 tests pass (242 retained/main, 43 safety, 56 recorder,
-92 analyzer, 16 capture, three config/verifier). This includes **12,122 complete
+**Offline checkpoint:** 461 tests pass (242 retained/main, 43 safety, 56 recorder,
+101 analyzer, 16 capture, three config/verifier). This includes **12,122 complete
 Fighter write guards** (all2,768 legacy guards retained), all-platform/direction
 and static-map rejection matrices, the explicitly stubbed f5302 replay, and
 130 main cases across four recorder/debug combinations. Native build/verifier,
 28 warning configurations and six disabled-hook comparisons pass. Safety's
-object is identical with the recorder off/on. **Only the safety object differs
-from the last live build**; no jab, shield, recovery or recorder tuning.
+object is identical with the recorder off/on. The platform patch changed only
+the safety object versus the preceding main-floor live build; this latest
+review/label update changes **no gameplay objects**. No jab, shield, recovery
+or recorder tuning.
 Independent native/asset review found no actionable implementation defects.
 
 Ready DOL: **4,522,912 bytes**, SHA-1
-`7384b2f1dadc18b996e324a4c3add40221963290`. Dolphin is closed; the virtual disc
-still holds the preceding tested `463a5a435aa5241f943fd21bfc87a4612c9eb2d7`
-DOL until an approved launch. Controller mapping is unchanged. Host/static
-checks do not prove platform admission or a prevented death in Dolphin.
+`7384b2f1dadc18b996e324a4c3add40221963290`. The approved platform playtest staged
+this same DOL and closed cleanly. Controller mapping is unchanged. No gameplay
+changes or rebuild followed the review; only offline Kirby labels/tests/docs
+changed. Host/static checks alone do not prove live admission or a saved stock.
 
 ## Read-only match recorder
 
@@ -800,9 +806,13 @@ CPU proves neither its strength nor its ability to sustain a real lead.
 
 ## Best next improvements
 
-The main-floor side-B veto has one live activation with a useful retained
-follow-up. First validate the new conservative platform veto and its retained
-native continuation. Allowing selected inward platform drops would require a
+Main-floor and one inward platform veto are now live-observed. Retained tails
+vary in usefulness: one up-B captures Kirby, another gets punished in landing
+lag. Investigate context-sensitive continuation without blindly cancelling an
+opaque native script. Also research pre-commitment awareness of slow specials:
+the latest self-death follows a late dash-grab into Kirby's copied Falcon Punch,
+not a side-B departure. The existing fresh7/ordinary-melee shield module does
+not admit that situation; relaxing its gates is not a complete fix. Allowing selected inward platform drops would require a
 separate supported air-coast/lower-floor landing analysis; it is deliberately
 not assumed here. Further controlled tests should check main-floor central/inward
 allowances and retained follow-up behavior before script ownership changes. The valid v2 capture also

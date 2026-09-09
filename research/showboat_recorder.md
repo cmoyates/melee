@@ -5,6 +5,20 @@ why tactics declined. No gameplay/controller writes, timers repaired, native RNG
 allocations, network, model runtime, or claims that observed inputs guarantee hits.
 Recorder work does not launch Dolphin; launch/restart requires tester readiness.
 
+## Offline motion labels
+
+The analyzer loads bounded native enum headers for common states, Falcon
+(internal kind2) and Kirby (kind4), with numeric fallback when unavailable or
+invalid. Kirby's203 character-specific states341–543 include copied moves:
+433 is `ftKb_MS_CaSpecialN`, not a Falcon label applied across kinds. Names do
+not repair corrupt samples or remove v1 quarantine. Recovery-motion context
+remains a name-based hint; newly named Kirby up-B states can increase that
+context count without any change in gameplay or proof of offstage recovery.
+
+The fifth capture's separate `named-report.*` removes520 numeric-name warnings;
+raw records, original reports, accepted/rejected counts and integrity status
+remain unchanged. See [its review](showboat_recorder_playtest_5.md).
+
 ## Transport and ownership
 
 Optional `SHOWBOAT_RECORDER=1` (raw configure off, showboat helper default on).

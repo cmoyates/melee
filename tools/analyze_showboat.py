@@ -370,12 +370,14 @@ class Labels:
     def __init__(self, root=None):
         self.common = {}
         self.falcon = {}
+        self.kirby = {}
         self.sources = []
         root = Path(root) if root is not None else Path(__file__).resolve().parents[1]
         symbols = {}
         for relative, enum, dest in (
             ('src/melee/ft/kinds/ftCommon/forward.h', 'ftCommon_MotionState', self.common),
             ('src/melee/ft/kinds/ftCaptain/forward.h', 'ftCaptain_MotionState', self.falcon),
+            ('src/melee/ft/kinds/ftKirby/forward.h', 'ftKirby_MotionState', self.kirby),
         ):
             try:
                 with (root / relative).open('rb') as stream:
@@ -393,8 +395,11 @@ class Labels:
     def motion(self, fighter):
         kind, motion = fighter[1:3]
         label = self.common.get(motion)
-        if label is None and kind == 2:  # FighterKind, not external CharacterKind.
-            label = self.falcon.get(motion)
+        if label is None:  # Internal FighterKind, not external CharacterKind.
+            if kind == 2:
+                label = self.falcon.get(motion)
+            elif kind == 4:
+                label = self.kirby.get(motion)
         return label or 'unknown_motion_' + str(motion)
 
 
@@ -432,6 +437,8 @@ def motion_key(fighter, labels):
 
 def fighter_context(fighter, labels):
     label = labels.motion(fighter)
+    # Kirby's copied neutral motions (including Pr rollout/Hit) do not match
+    # these tokens; only his own Special[Air]Hi1..4 add recovery context.
     recovery = any(word in label for word in ('SpecialHi', 'SpecialAirHi', 'FallSpecial', 'Cliff'))
     return {'spawn': fighter[0], 'kind': fighter[1], 'motion': fighter[2],
             'motion_label': label, 'anim': fighter[3], 'x': fighter[4], 'y': fighter[5],

@@ -16,6 +16,7 @@ import sys
 import tempfile
 import tracemalloc
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -1242,6 +1243,233 @@ class BehaviorTests(unittest.TestCase):
         hud = analysis.read_enum((ROOT / 'src/melee/mod/showboat_hud.h').read_text().replace(
             'enum ShowboatHUD_Action', 'typedef enum ShowboatHUD_Action'), 'ShowboatHUD_Action')
         self.assertEqual(hud, {'SHOWBOAT_HUD_' + name.upper(): i for i, name in enumerate(analysis.INTENTS)})
+
+
+class KirbyLabelTests(unittest.TestCase):
+    common = 'src/melee/ft/kinds/ftCommon/forward.h'
+    falcon = 'src/melee/ft/kinds/ftCaptain/forward.h'
+    kirby = 'src/melee/ft/kinds/ftKirby/forward.h'
+
+    def copy_headers(self, root, paths):
+        for relative in paths:
+            target = Path(root) / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / relative).read_bytes())
+
+    def test_real_header_ids_counts_and_label_sources(self):
+        self.assertEqual(LABELS.sources, [self.common, self.falcon, self.kirby])
+        self.assertEqual(set(LABELS.kirby), set(range(341, 544)))
+        expected = {341: 'JumpAerialF1', 347: 'JumpAerialF2Met', 351: 'AttackDash',
+                    353: 'SpecialN', 371: 'SpecialAirN', 383: 'SpecialS',
+                    385: 'SpecialHi1', 392: 'SpecialAirHi4', 398: 'SpecialAirLwEnd',
+                    399: 'MrSpecialN', 433: 'CaSpecialN', 434: 'CaSpecialAirN',
+                    475: 'PrSpecialNStartR', 491: 'PrSpecialNHit',
+                    528: 'GnSpecialN', 543: 'GkSpecialAirNEnd'}
+        for motion, suffix in expected.items():
+            with self.subTest(motion=motion):
+                self.assertEqual(LABELS.motion(fighter(kind=4, motion=motion)), 'ftKb_MS_' + suffix)
+        for labels in (LABELS.common, LABELS.falcon, LABELS.kirby):
+            self.assertFalse(any(name.endswith(('Count', 'SelfCount')) for name in labels.values()))
+        self.assertNotIn(203, LABELS.kirby)  # SelfCount must not shadow a common motion.
+        self.assertEqual(LABELS.motion(fighter(kind=4, motion=544)), 'unknown_motion_544')
+
+    def test_internal_kind_isolation_for_every_character_motion_and_unknown_kinds(self):
+        for kind in range(analysis.FIGHTER_KIND_MAX + 1):
+            for motion in range(-1, analysis.MOTION_MAX + 1):
+                specific = LABELS.falcon if kind == 2 else LABELS.kirby if kind == 4 else {}
+                expected = LABELS.common.get(motion, specific.get(motion, 'unknown_motion_' + str(motion)))
+                self.assertEqual(LABELS.motion(fighter(kind=kind, motion=motion)), expected,
+                                 (kind, motion))
+        # The same native ID has different semantics: never reuse Falcon's IDs.
+        self.assertEqual(LABELS.motion(fighter(kind=2, motion=347)), 'ftCa_MS_SpecialN')
+        self.assertEqual(LABELS.motion(fighter(kind=4, motion=347)), 'ftKb_MS_JumpAerialF2Met')
+        self.assertEqual(LABELS.motion(fighter(kind=2, motion=353)), 'ftCa_MS_SpecialHi')
+        self.assertEqual(LABELS.motion(fighter(kind=4, motion=353)), 'ftKb_MS_SpecialN')
+        self.assertEqual(LABELS.motion(fighter(kind=2, motion=433)), 'unknown_motion_433')
+
+    def test_recovery_semantics_all_real_kirby_motions_and_common_context(self):
+        for motion in range(341, 544):
+            context = analysis.fighter_context(fighter(kind=4, motion=motion, flags=1), LABELS)
+            # Only Kirby's own up-B, not copied neutral moves (399..543),
+            # including rollout (475..491) and its SpecialNHit suffix.
+            self.assertEqual(context['recovery_motion_context'], 385 <= motion <= 392,
+                             context['motion_label'])
+            self.assertIsNone(context['offstage'])
+        for name, recovery in (('ftCo_MS_FallSpecial', True), ('ftCo_MS_CliffCatch', True),
+                               ('ftCo_MS_Wait', False), ('ftCo_MS_None', False)):
+            motion = next(k for k, v in LABELS.common.items() if v == name)
+            self.assertEqual(analysis.fighter_context(fighter(kind=4, motion=motion), LABELS)
+                             ['recovery_motion_context'], recovery)
+
+    def test_missing_malformed_and_oversized_kirby_fail_closed_with_common_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.copy_headers(directory, (self.common, self.falcon))
+            header = Path(directory) / self.kirby
+            header.parent.mkdir(parents=True)
+            sentinel = Path(directory) / 'must-not-execute'
+            prefix = 'typedef enum ftKirby_MotionState { ftKb_MS_First = ftCo_MS_Count, '
+            payload = "__import__('pathlib').Path(%r).touch()" % str(sentinel)
+            bad_headers = [None, b'\xff', b'typedef enum Wrong { A = 433 } Wrong;',
+                           (prefix + 'ftKb_MS_Truncated').encode(),
+                           (ROOT / self.kirby).read_bytes().ljust(256 * 1024 + 1, b' ')]
+            bad_headers += [(prefix + 'ftKb_MS_Bad = ' + expr + ', ftKb_MS_After } E;').encode()
+                            for expr in ('unknown', '1 << 3', 'ftKb_MS_First * ftKb_MS_First', payload)]
+            rows = complete()
+            for row in rows:
+                if row['type'] == 'sample':
+                    row['rival'] = fighter(spawn=20, kind=4, motion=433)
+            for index, data in enumerate(bad_headers):
+                with self.subTest(case=index):
+                    if data is not None:
+                        header.write_bytes(data)
+                    labels = analysis.Labels(directory)
+                    self.assertEqual(labels.sources, [self.common, self.falcon])
+                    self.assertEqual(labels.kirby, {})  # No partial enum or shifted labels.
+                    self.assertEqual(labels.common, LABELS.common)
+                    self.assertEqual(labels.falcon, LABELS.falcon)
+                    self.assertEqual(labels.motion(fighter(kind=4, motion=14)), 'ftCo_MS_Wait')
+                    self.assertEqual(labels.motion(fighter(kind=4, motion=347)), 'unknown_motion_347')
+                    report = analysis.analyze_stream(io.BytesIO(encoded(v2(rows))), labels=labels)
+                    seg = report['segments'][0]
+                    self.assertEqual(report['scan']['rejected_records'], 0)
+                    self.assertEqual(report['warnings']['counts'], {})
+                    self.assertEqual(seg['warnings']['counts'], {'unknown_motion_id_numeric_fallback': 2})
+                    self.assertEqual(seg['coverage']['known_continuous_frames'], 12)
+                    self.assertIsNone(seg['sample_quarantine'])
+                    self.assertEqual(seg['integrity']['status'], 'validated_v2_records_not_runtime_verified')
+            self.assertFalse(sentinel.exists())
+
+    def test_header_reads_bounded_and_exact_256_kib_allowed(self):
+        header = (ROOT / self.kirby).read_bytes()
+        for size in (256 * 1024, 256 * 1024 + 1, 512 * 1024):
+            reads = []
+
+            class BoundedHeader(io.BytesIO):
+                def read(self, count=-1):
+                    self_test.assertEqual(count, 256 * 1024 + 1)
+                    reads.append(count)
+                    return super().read(count)
+
+            self_test = self
+            data = {self.common: (ROOT / self.common).read_bytes(),
+                    self.falcon: (ROOT / self.falcon).read_bytes(),
+                    self.kirby: header.ljust(size, b' ')}
+
+            def open_header(path, mode):
+                self.assertEqual(mode, 'rb')
+                return BoundedHeader(data[path.relative_to(ROOT).as_posix()])
+
+            with self.subTest(size=size), patch.object(Path, 'open', open_header):
+                labels = analysis.Labels(ROOT)
+            self.assertEqual(len(reads), 3)
+            self.assertEqual(labels.kirby, LABELS.kirby if size == 256 * 1024 else {})
+            self.assertEqual(labels.sources, [self.common, self.falcon] +
+                             ([self.kirby] if size == 256 * 1024 else []))
+
+    def test_common_dependency_and_independence_from_falcon_header(self):
+        for unavailable in (self.common, self.falcon):
+            for malformed in (False, True):
+                with self.subTest(unavailable=unavailable, malformed=malformed), \
+                        tempfile.TemporaryDirectory() as directory:
+                    self.copy_headers(directory, (self.common, self.falcon, self.kirby))
+                    path = Path(directory) / unavailable
+                    if malformed:
+                        path.write_text('not an enum')
+                    else:
+                        path.unlink()
+                    labels = analysis.Labels(directory)
+                    if unavailable == self.common:
+                        self.assertEqual(labels.sources, [])  # ftCo_MS_Count is unresolved.
+                        self.assertEqual(labels.kirby, {})
+                        for motion in (14, 341, 433, 543):
+                            self.assertEqual(labels.motion(fighter(kind=4, motion=motion)),
+                                             'unknown_motion_' + str(motion))
+                    else:
+                        self.assertEqual(labels.sources, [self.common, self.kirby])
+                        self.assertEqual(labels.kirby, LABELS.kirby)
+                        self.assertEqual(labels.motion(fighter(kind=2, motion=347)), 'unknown_motion_347')
+
+    def test_common_precedence_symbol_resolution_count_filter_and_noname(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.copy_headers(directory, (self.common, self.falcon, self.kirby))
+            (Path(directory) / self.kirby).write_text('''typedef enum ftKirby_MotionState {
+                ftKb_MS_Shadow = 14,
+                ftKb_MS_First = ftCo_MS_Count,
+                ftKb_MS_Next,
+                ftKb_MS_NoName = 433,
+                ftKb_MS_Alias = ftKb_MS_NoName,
+                ftKb_MS_NoNameLater,
+                ftKb_MS_Count,
+                ftKb_MS_SelfCount = ftKb_MS_Count - ftCo_MS_Count,
+                ftKb_MS_TestCount = ftKb_MS_Count + ftKb_MS_First,
+            } ftKirby_MotionState;''')
+            labels = analysis.Labels(directory)
+            self.assertEqual(labels.sources, [self.common, self.falcon, self.kirby])
+            self.assertEqual(labels.kirby, {14: 'ftKb_MS_Shadow', 341: 'ftKb_MS_First',
+                                          342: 'ftKb_MS_Next', 433: 'ftKb_MS_Alias',
+                                          434: 'ftKb_MS_NoNameLater'})
+            self.assertEqual(labels.motion(fighter(kind=4, motion=14)), 'ftCo_MS_Wait')
+            self.assertEqual(labels.motion(fighter(kind=4, motion=435)), 'unknown_motion_435')
+            context = analysis.fighter_context(fighter(kind=4, motion=434, flags=1), labels)
+            self.assertEqual(context['motion_label'], 'ftKb_MS_NoNameLater')
+            self.assertFalse(context['recovery_motion_context'])
+            self.assertIsNone(context['offstage'])
+
+    def test_v2_label_enhancement_changes_only_names_warnings_and_recovery_context(self):
+        rows = [begin()] + [sample(100 + i, rival=fighter(spawn=20, kind=4, motion=341 + i))
+                            for i in range(203)]
+        rows += flush(frame=302, count=203) + [end(302, observations=203)]
+        old_labels = analysis.Labels(ROOT)
+        old_labels.kirby.clear()
+        old_labels.sources.remove(self.kirby)
+        reports = [analysis.analyze_stream(io.BytesIO(encoded(v2(rows))), labels=labels,
+                                           limits=replace(analysis.Limits(), keys=256, timeline=3))
+                   for labels in (old_labels, LABELS)]
+        old, new = [r['segments'][0] for r in reports]
+        self.assertEqual(reports[0]['scan'], reports[1]['scan'])
+        self.assertEqual(reports[1]['scan']['accepted_records'], 210)
+        self.assertEqual(reports[1]['scan']['rejected_records'], 0)
+        self.assertEqual(reports[1]['motion_label_sources'], [self.common, self.falcon, self.kirby])
+        self.assertEqual(old['warnings']['counts'], {'unknown_motion_id_numeric_fallback': 203})
+        self.assertEqual(new['warnings']['counts'], {})
+        self.assertEqual(new['recovery_motion_context_samples'], {'self': 0, 'rival': 8})
+        self.assertEqual(old['recovery_motion_context_samples'], {'self': 0, 'rival': 0})
+        self.assertEqual(new['coverage']['known_continuous_frames'], 202)
+        self.assertEqual(len(new['timeline']), 3)
+        self.assertEqual(new['timeline_omitted'], 200)
+        for side in ('self', 'rival'):
+            numeric = [{':'.join(key.split(':')[:2]): value for key, value in seg['motions'][side].items()}
+                       for seg in (old, new)]
+            self.assertEqual(*numeric)
+        changed = {'motions', 'timeline', 'warnings', 'recovery_motion_context_samples'}
+        self.assertEqual({k: v for k, v in old.items() if k not in changed},
+                         {k: v for k, v in new.items() if k not in changed})
+        text = analysis.markdown(reports[1])
+        self.assertIn('ftKb_MS_CaSpecialN', text)
+        self.assertNotIn('unknown_motion_', text)
+
+    def test_kirby_names_never_unblock_v1_or_input_wide_corruption_quarantine(self):
+        rows = complete()
+        rows[1]['rival'] = fighter(spawn=20, kind=4, motion=433)
+        rows[2]['rival'] = fighter(spawn=20, kind=4, motion=385)
+        for convert in (list, v2):
+            for corrupt in (False, True):
+                if convert is v2 and not corrupt:
+                    continue
+                with self.subTest(version=convert.__name__, corrupt=corrupt):
+                    # Rejected orphan after the closed, selected segment is input-wide.
+                    data = convert(rows) + (['SBREC {"v":2,"segment":2}\n'] if corrupt else [])
+                    report = analyze(data, segment=1, limits=replace(analysis.Limits(), timeline=1, warnings=1))
+                    seg = report['segments'][0]
+                    self.assertEqual(report['scan']['rejected_records'], int(corrupt))
+                    assert_quarantined(self, seg)
+                    raw = seg['sample_quarantine']['diagnostic_raw_timeline']
+                    self.assertEqual(len(raw), 1)
+                    self.assertEqual(raw[0]['rival'][1:3], [4, 433])
+                    self.assertEqual(seg['sample_quarantine']['diagnostic_raw_timeline_omitted'], 1)
+                    self.assertTrue(all(g['logged_updates'] == 13 for g in seg['gates']))
+                    self.assertNotIn('ftKb_MS_', json.dumps(seg) + analysis.markdown(report))
+                    self.assertIn('Sample summaries withheld', analysis.markdown(report))
 
 
 class BoundsAndCLITests(unittest.TestCase):

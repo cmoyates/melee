@@ -344,6 +344,64 @@ A single render GObj owns no fighter pointers. Slot resets clear rows; live-list
 and callback/userdata validation rejects stale GObjs after scene heap resets.
 No repeated font/archive loads, new gameplay cameras or on-screen asset edits.
 
+## Boot directly to the test matchup
+
+The build helper enables `--showboat-quickstart` by default. After normal
+save/card initialization it enters **normal Versus character select**, with:
+
+- P1 human, **no character selected**;
+- P2 CPU **Captain Falcon, level 9, normal CPU type 4**, default costume;
+- other slots disabled and teams off.
+
+Pick a character and press Start normally; the stage is still your choice.
+This is a menu preset at each boot/native reboot, **not** an automatic match or a
+preset reapplied after results, stage-select cancellation, or Back. Normal CPU
+and rule changes remain editable. Unrelated native-initialized player values,
+ratios, scale, and saved match-rule preferences are not reset by this hook.
+
+Only `gmboot.c` receives `SHOWBOAT_QUICKSTART`. Its `bootOnLeave()` preserves
+Pikmin/card handling and `lbCardGame_DecideGameMode`, seeds the existing VS data,
+and requests `GM_VS`; the native mode begins at CSS and loads its own assets.
+Save/error and progressive-scan prompts still behave normally. Port 1 must have
+an ordinary connected controller; the existing Dolphin mapping is unchanged.
+CSS uses external `CKIND_CAPTAIN` (0), **not** internal `FTKIND_CAPTAIN` (2).
+
+Raw `configure.py` defaults off and requires `--showboat-ai` for this option.
+To retain the normal title/main-menu sequence:
+
+```sh
+sh tools/build_showboat.sh --no-showboat-quickstart
+.venv/bin/python tools/verify_showboat.py --no-quickstart
+```
+
+Unlocks are independent: add `--no-showboat-unlock-all` to that build and
+`--no-unlocks` to verification if desired. Rebuild without opt-outs to restore
+the testing defaults. Stop the old Dolphin session before running the usual
+launch helper; rebuilding alone does not replace its active virtual-disc DOL.
+
+### Quickstart verification
+
+- **158 tests pass**, including actual extracted boot callbacks under six
+  absent/0/1 flag × debug 0/1 ASan/UBSan configurations, native declaration
+  extraction, card/trophy/transition ordering, adjacent-state preservation,
+  boot-only scope, and parser/helper defaults.
+- Native build/isolation passes: **4,473,216 bytes**, SHA-1
+  `bce3be8563e0f1d3afb2fd0b10b436d02f177b35`. Six hooked objects plus the four
+  mod modules differ from C-stick. `gmboot.c` compiles with MWCC `-warn all`
+  in debug 0/1 without local diagnostics; with flags removed its object is
+  byte-identical to the C-stick baseline.
+- Quickstart opt-out reproduces the entire previous wavedash DOL byte-for-byte:
+  `e01be10808e5027b7eb87e6316d8a80f563c63b9`. Logs:
+  `build/showboat-quickstart-{tests,build,verify}.log` and
+  `build/showboat-quickstart-off-{build,verify}.log`.
+- Launched after the previous Dolphin session had exited. The existing Switch
+  Pro mapping is unchanged; staged and virtual-disc DOL hashes match. At
+  `DbLevel 0`, runtime reports unlocks first, then
+  `SHOWBOAT QUICKSTART: VS CSS; P1 choose, P2 Captain CPU9 (ckind=0 type=1 level=9)`.
+  A subsequent match logs P2 normal level-9 Falcon initialization in singles.
+  Log: `build/showboat/quickstart-stdout.log`. Exact visual layout remains a
+  human check, not a claim made by the host tests.
+
 ## Automatic test-profile unlocks
 
 `tools/build_showboat.sh` now also passes **`--showboat-unlock-all`**. After
@@ -383,7 +441,7 @@ It covers loaded/new/invalid-save branches, preserved native debug behavior,
 unlock-before-finalization ordering and mask readback. Notification helpers are
 explicit spies; it is not a memory-card or UI emulator test.
 
-### Unlock-enabled verification and current runtime
+### Historical unlock-enabled verification
 
 - At the unlock-only V2 checkpoint, **99 tests passed**, including the two unlock
   tests and AI/combat/HUD regressions. Default build/validator: **4,453,984 bytes**,

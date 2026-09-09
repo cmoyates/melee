@@ -229,9 +229,17 @@ parser.add_argument(
     "--no-showboat-unlock-all", dest="showboat_unlock_all", action="store_false",
     help="leave progression untouched, overriding the test helper's unlock flag",
 )
+parser.add_argument(
+    "--showboat-quickstart", action="store_true",
+    help="boot to Versus character select with P2 Falcon9 (requires --showboat-ai)",
+)
+parser.add_argument(
+    "--no-showboat-quickstart", dest="showboat_quickstart", action="store_false",
+    help="use the normal opening/title/menu sequence instead of the test shortcut",
+)
 args = parser.parse_args()
-if (args.showboat_ai_debug or args.showboat_ai_hud or args.showboat_unlock_all) and not args.showboat_ai:
-    parser.error("showboat debug/HUD/unlock options require --showboat-ai")
+if (args.showboat_ai_debug or args.showboat_ai_hud or args.showboat_unlock_all or args.showboat_quickstart) and not args.showboat_ai:
+    parser.error("showboat debug/HUD/unlock/quickstart options require --showboat-ai")
 
 if any({args.debug, args.asm, args.linkable}) or args.sym == "on":
     args.non_matching = True
@@ -2046,6 +2054,10 @@ if args.showboat_ai:
         config.extra_dol_objects.append(hud_source)
     for lib in config.libs:
         for obj in lib["objects"]:
+            if args.showboat_quickstart and obj.name == "melee/gm/gmboot.c":
+                obj.options["extra_cflags"].append("-DSHOWBOAT_QUICKSTART=1")
+                if args.showboat_ai_debug:
+                    obj.options["extra_cflags"].append("-DSHOWBOAT_AI_DEBUG=1")
             if args.showboat_unlock_all and obj.name == "melee/gm/gmmain_lib.c":
                 obj.options["extra_cflags"].append("-DSHOWBOAT_UNLOCK_ALL=1")
             if obj.name in {

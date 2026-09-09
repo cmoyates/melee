@@ -29,8 +29,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-unlocks", action="store_true",
                         help="expect a build made with --no-showboat-unlock-all")
+    parser.add_argument("--no-quickstart", action="store_true",
+                        help="expect a build made with --no-showboat-quickstart")
     args = parser.parse_args()
     expected = EXPECTED_OBJECTS.copy()
+    if not args.no_quickstart:
+        expected.add("melee/gm/gmboot.o")
     if not args.no_unlocks:
         expected.add("melee/gm/gmmain_lib.o")
     path = ROOT / "build/showboat/GALE01/main.dol"
@@ -78,11 +82,12 @@ def main():
         sha1=hashlib.sha1(data).hexdigest(), entry=hex(entry),
         bss=[hex(bss), bss_size], valid_sections=sections,
         original_dols_preserved=True, test_unlocks=not args.no_unlocks,
+        test_quickstart=not args.no_quickstart,
         objects_different_from_cstick=sorted(changed),
     )
     (ROOT / "build/showboat/verification.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"Validated {report['dol']}: {len(data):,} bytes, SHA-1 {report['sha1']}")
-    count = 4 if args.no_unlocks else 5
+    count = 4 + int(not args.no_unlocks) + int(not args.no_quickstart)
     print(f"Stock DOLs unchanged; exactly {count} hooked objects plus the AI/combat/movement/HUD modules differ from C-stick.")
 
 

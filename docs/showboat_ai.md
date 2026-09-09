@@ -6,6 +6,13 @@ Initial working tree was clean; that mod is retained.
 
 ## Read-only match recorder
 
+**Known live issue in `435836d5e`:** the first approved capture exposed corrupted
+mixed-format snapshot fields, despite passing host tests. Do not trust its
+automatic damage/state summaries. Integer-only gate accounting and separately
+corroborated custom events support a limited analysis. See the
+[first playtest review](../research/showboat_recorder_playtest_1.md). Serialization
+needs repair and live validation before another full-state analysis.
+
 The default showboat build now includes structured **SBREC v1** telemetry and an
 [offline analyzer](../tools/analyze_showboat.py). This observes the same legal bot;
 it does not change its decisions, controls, physics, resources, RNG or timers.
@@ -88,7 +95,8 @@ Recorder opt-out reproduces the entire preceding ego-build DOL byte-for-byte
 (SHA-1 `0643071c098d78ab6d3339e3cc931647436b3594`). No new native hooks are added.
 Rebuilding does not alter an already-running game or its virtual-disc DOL.
 Logging/formatting can still cost runtime; offline tests do not establish emulator
-speed or recording overhead. Live SBREC output awaits a tester-approved launch.
+speed or recording overhead. The first live capture exposed the integrity fault
+noted above; the following offline checkpoint predates that finding.
 
 ### Recorder offline checkpoint
 

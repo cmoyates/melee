@@ -4,6 +4,8 @@ Tracking: https://github.com/cmoyates/melee/issues/1
 Branch: `mod/showboat-ai`, based on the existing single-player C-stick mod.
 Initial working tree was clean; that mod is retained.
 
+**Resuming development? Read the [current handoff](showboat_handoff.md) first.**
+
 ## Current gameplay update: platform-origin side-B safeguard
 
 The valid v2 trace exposed an unsafe side-B queued inside a native throw

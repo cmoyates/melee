@@ -1,4 +1,4 @@
-Super Smash Bros Melee \
+Showboat Falcon — a Melee mod fork \
 [![Build Status]][actions]
 [![Discord Badge]][discord]
 [![Fuzzy Progress]][progress]
@@ -18,13 +18,64 @@ Super Smash Bros Melee \
 [Linked Progress]: https://decomp.dev/doldecomp/melee.svg?mode=shield&measure=complete_code&label=linked&category=all
 [Discord Badge]: https://img.shields.io/discord/727908905392275526?color=%237289DA&logo=discord&logoColor=%23FFFFFF
 
-This repo contains a WIP decompilation of Super Smash Bros Melee (US).
+An experimental, source-only Captain Falcon CPU mod built on
+[doldecomp/melee](https://github.com/doldecomp/melee), the work-in-progress
+Super Smash Bros. Melee US decompilation. **The badges above describe upstream
+matching progress, not this mod's gameplay quality or test status.**
 
 ## About this fork
 
-This is a source-only fork of [doldecomp/melee](https://github.com/doldecomp/melee)
-with a [single-player C-stick controls mod](../docs/single-player-cstick.md)
-on branch `mod/single-player-cstick`.
+Repository: **[cmoyates/melee](https://github.com/cmoyates/melee)** ·
+Active branch: **`mod/showboat-ai`** ·
+[Development tracker](https://github.com/cmoyates/melee/issues/1)
+
+The goal is a capable, conspicuously confident Captain Falcon CPU: competence
+first, with safe taunts, dancing and an ego/action HUD. This is an experimental
+layer over native AI, **not a demonstrated stronger-than-level-9 replacement**.
+
+### Implemented
+
+- Controller-only assistance for a primary level-9 Captain Falcon in normal
+  singles: selective grabs, aerial interceptions, wavedashes and L-cancel inputs.
+- Contextual personality, ego feedback, safe celebration opportunities and
+  selective hardshield/powershield handling.
+- Conservative native throw-follow-up side-B safeguards on verified
+  Battlefield/Final Destination main floors and Battlefield's static platforms.
+- Automatic unlocks and a boot-only normal Versus quickstart: P1 remains
+  unselected, P2 is Falcon level9; character and stage selection stay manual.
+- Read-only v2 telemetry, archived launch/completion provenance and a bounded
+  offline analyzer with native common/Falcon/Kirby motion names.
+- The original [single-player C-stick mod](../docs/single-player-cstick.md)
+  remains included; its independent branch is retained.
+
+AI additions issue ordinary controller inputs; they do not modify fighter
+physics, damage, hitboxes, facing, motion states or game input timers. Native
+recovery, targeting and other CPU configurations remain the baseline. Technical
+and personality features have deliberately narrow admission rules; they do not
+execute in every apparent opportunity.
+
+### Current checkpoint
+
+**461 host tests pass**, including12,122 complete-Fighter safety write guards.
+The native DOL verifies. Live captures have shown actual custom actions and
+side-B vetoes, including one inward Battlefield-platform veto. These observations
+are **not** proof of overall strength, guaranteed hits, saved stocks or match
+outcomes. Runtime logging overhead has not been benchmarked.
+
+The native wait and later inputs after a side-B veto remain intact. One retained
+up-B caught Kirby; another was punished during landing lag. The latest self-death
+followed a late dash-grab into Kirby's copied Falcon Punch. Better continuation
+choices and earlier slow-special awareness are research priorities, not shipped
+fixes. Historical v1 sample metrics remain quarantined; plausible-looking old
+rows must not be salvaged.
+
+- **[Start/resume here: development handoff](../docs/showboat_handoff.md)**
+- [Full behavior, build and verification guide](../docs/showboat_ai.md)
+- [Latest live review](../research/showboat_recorder_playtest_5.md)
+- [Recorder contract](../research/showboat_recorder.md)
+- [Platform safeguard rationale](../research/showboat_platform_side_b_safety.md)
+
+### Source and game files
 
 **No game disc images, original executable, extracted game assets, or rebuilt
 game binaries are included.** Supply `orig/GALE01/sys/main.dol` from your own
@@ -37,13 +88,47 @@ ignored by Git. Never force-add them or upload them as release/Actions artifacts
 Clone this fork with:
 
 ```sh
-git clone https://github.com/cmoyates/melee.git
+git clone --branch mod/showboat-ai https://github.com/cmoyates/melee.git
 cd melee
-git switch mod/single-player-cstick
 ```
 
-The documentation below describes the upstream project and stock build. Use the
-mod guide linked above for the C-stick build.
+### Build and play Showboat
+
+First complete the upstream stock setup below with your own US1.02 game data.
+The mod helpers assume an existing matching stock build and the local toolchain
+paths described in the [build guide](../docs/single-player-cstick.md#build),
+including `.venv`, Ninja and WiBo1.0.3. They are not a fresh-clone bootstrap;
+other platforms may need wrapper/path adjustments.
+
+From that configured checkout:
+
+```sh
+sh tools/build_showboat.sh
+.venv/bin/python tools/verify_showboat.py
+.venv/bin/python -m unittest discover -s tools/tests -p 'test_showboat*.py' -v
+```
+
+Output: `build/showboat/GALE01/main.dol`. After closing any existing Dolphin
+instance and confirming the tester is ready:
+
+```sh
+sh tools/run_showboat.sh '/path/to/your/original-melee-us-v1.02.ciso'
+```
+
+The launcher prepares a local virtual disc using original assets/apploader,
+an isolated Dolphin profile and a capture archive. **Do not open the bare DOL
+as a standalone game, replace an active virtual-disc DOL, or use stock
+savestates.** Building alone does not stage a new DOL. Use a fresh match;
+Battlefield with items off is the current platform-safeguard test setup.
+
+Helper defaults enable HUD/debug, recorder, unlocks and quickstart; optional
+flags and limitations are documented in the [Showboat guide](../docs/showboat_ai.md).
+Raw configure defaults differ. No prebuilt game or disc download is provided.
+
+## Upstream project / stock build reference
+
+The remaining documentation describes upstream decompilation and the matching
+stock build, not the modified DOL. For C-stick-only work use its separate guide.
 
 > [!TIP]
 > The DOL this repository builds can be shifted! Meaning you are able to now add and remove code as you see fit, for modding or research purposes.

@@ -1,0 +1,25 @@
+[project]
+name = "melee-agent"
+version = "0.1.0"
+description = "Local Fox-first Jev agent tooling"
+requires-python = "==3.13.*"
+dependencies = []
+
+[project.scripts]
+melee-agent = "melee_agent.cli:main"
+
+[project.optional-dependencies]
+runtime = [
+    "melee",
+]
+
+[build-system]
+requires = ["uv_build==0.10.9"]
+build-backend = "uv_build"
+
+[tool.uv]
+cache-dir = "build/jev/uv-cache"
+python-downloads = "never"
+
+[tool.uv.sources]
+melee = { git = "https://github.com/vladfi1/libmelee", rev = "bce21f09984b286e6d36bfd2939e4cd4691f94c2" }

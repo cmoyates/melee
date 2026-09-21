@@ -39,10 +39,10 @@ class EngineTests(unittest.TestCase):
 
     def test_unknown_fields_versions_and_nonfinite_values_fail(self):
         mutations = [lambda d: d.update(extra=True), lambda d: d.update(schema_version=2),
-                     lambda d: d.update(schema_version=True), lambda d: d.update(stage="FINAL_DESTINATION"),
-                     lambda d: d["bot"].update(extra=1), lambda d: d["bot"].update(x=float("nan")),
-                     lambda d: d["opponent"].update(y=float("inf")), lambda d: d.update(frame=1.2),
-                     lambda d: d["bot"].update(grounded=1), lambda d: d["bot"].update(x=10**1000)]
+                        lambda d: d.update(schema_version=True), lambda d: d.update(stage="FINAL_DESTINATION"),
+                        lambda d: d["bot"].update(extra=1), lambda d: d["bot"].update(x=float("nan")),
+                        lambda d: d["opponent"].update(y=float("inf")), lambda d: d.update(frame=1.2),
+                        lambda d: d["bot"].update(grounded=1), lambda d: d["bot"].update(x=10**1000)]
         for mutate in mutations:
             data = deepcopy(self.sample)
             mutate(data)

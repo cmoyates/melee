@@ -76,7 +76,7 @@ class OwnershipTests(unittest.TestCase):
             content = json.dumps({"status": "probe_verified", "emulator_stopped": True}).encode()
             (run / "summary.json").write_bytes(content)
             (run / "launch.json").write_text(json.dumps({"runtime_sha256": config.runtime_sha256,
-                                                         "disc_sha1": STOCK_DISC_SHA1}))
+                                                            "disc_sha1": STOCK_DISC_SHA1}))
             probes.append({"run_id": run_id, "summary_sha256": hashlib.sha256(content).hexdigest()})
         certificate = folder / "certification.json"
         certificate.write_text(json.dumps({"runtime_sha256": config.runtime_sha256, "probes": probes}))

@@ -73,7 +73,7 @@ def smoke(root: Path, fixture_path=None):
     with (run / "trace.jsonl").open("x") as handle:
         handle.write(trace)
     report = {**asdict(manifest), "status": "pass", "replays_identical": True,
-              "platforms": PLATFORMS, "run_id": run.name}
+                "platforms": PLATFORMS, "run_id": run.name}
     with (run / "summary.json").open("x") as handle:
         json.dump(report, handle, indent=2, allow_nan=False)
     return report

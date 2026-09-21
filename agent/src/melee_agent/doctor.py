@@ -34,44 +34,44 @@ def digest(path, algorithm):
 def verified_file(name, path, expected, algorithm="sha1"):
     if not path.is_file():
         return check(name, "blocked", "Required local file is absent.",
-                     "Configure an existing user-owned input; doctor never downloads assets.")
+                        "Configure an existing user-owned input; doctor never downloads assets.")
     actual = digest(path, algorithm)
     if actual != expected:
         return check(name, "fail", "Local file does not match the required fingerprint.",
-                     "Use the pinned original input; do not overwrite or patch the supplied file.")
+                        "Use the pinned original input; do not overwrite or patch the supplied file.")
     return check(name, "pass", "Required fingerprint matches.", **{algorithm: expected})
 
 
 def disc_check(root, config):
     if not config.disc_image:
         return check("game_assets", "blocked", "No full stock disc image configured.",
-                     "Set paths.disc_image to a user-owned uncompressed US1.02 ISO/GCM.")
+                        "Set paths.disc_image to a user-owned uncompressed US1.02 ISO/GCM.")
     path = read_path(root, config.disc_image)
     if not path.is_file():
         return check("game_assets", "blocked", "Configured full disc image is absent.",
-                     "Configure an existing user-owned US1.02 image.")
+                        "Configure an existing user-owned US1.02 image.")
     with path.open("rb") as handle:
         header = handle.read(8)
     if header[:4] in (b"CISO", b"RVZ\x01", b"WBFS", b"WIA\x01"):
         return check("game_assets", "blocked", "Compressed disc verification is not implemented.",
-                     "Use a separately prepared uncompressed stock image; keep the source intact.")
+                        "Use a separately prepared uncompressed stock image; keep the source intact.")
     if header[:6] != b"GALE01" or header[7:] != b"\x02":
         return check("game_assets", "fail", "Disc header is not Melee US1.02.",
-                     "Select the original GALE01 revision 2 disc.")
+                        "Select the original GALE01 revision 2 disc.")
     return verified_file("game_assets", path, STOCK_DISC_SHA1)
 
 
 def runtime_check(root, config):
     if not config.runtime:
         return check("runtime_file", "blocked", "No pinned Slippi executable configured.",
-                     "J03 must select and probe a compatible macOS Slippi runtime.")
+                        "J03 must select and probe a compatible macOS Slippi runtime.")
     path = read_path(root, config.runtime)
     if not path.is_file() or not os.access(path, os.X_OK):
         return check("runtime_file", "blocked", "Configured runtime is not an executable file.",
-                     "Set paths.runtime to the executable, not an application directory.")
+                        "Set paths.runtime to the executable, not an application directory.")
     if not config.runtime_sha256:
         return check("runtime_file", "blocked", "Runtime exists but has no pinned fingerprint.",
-                     "Record the verified release/source checksum during J03.")
+                        "Record the verified release/source checksum during J03.")
     return verified_file("runtime_file", path, config.runtime_sha256, "sha256")
 
 
@@ -82,10 +82,10 @@ def port_check(port):
     except OSError as error:
         occupied = error.errno == errno.EADDRINUSE
         return check("slippi_port", "blocked",
-                     "Loopback UDP port is occupied." if occupied else "Loopback UDP availability could not be probed.",
-                     "Choose an unused local port or resolve the probe restriction; do not stop another session.")
+                        "Loopback UDP port is occupied." if occupied else "Loopback UDP availability could not be probed.",
+                        "Choose an unused local port or resolve the probe restriction; do not stop another session.")
     return check("slippi_port", "pass", "Loopback UDP bind succeeded; no packets sent.",
-                 port=port, reservation=False)
+                    port=port, reservation=False)
 
 
 def runtime_evidence(root, config):
@@ -114,7 +114,7 @@ def runtime_evidence(root, config):
                     launch["runtime_sha256"] != config.runtime_sha256 or launch["disc_sha1"] != STOCK_DISC_SHA1):
                 return blocked
         return check("runtime_compatibility", "pass", "Three pinned cold-launch input probes verified.",
-                     graphical=True, headless_verified=False, cold_launches=3)
+                        graphical=True, headless_verified=False, cold_launches=3)
     except (KeyError, TypeError, ValueError, OSError):
         return blocked
 
@@ -127,10 +127,10 @@ def toolchain_check(root):
     missing = sum(not (root / p).is_file() for p in required)
     if missing or not shutil.which("ninja"):
         return check("decomp_tools", "blocked", "Some existing decomp build tools are absent.",
-                     "Follow LOCAL_SETUP.md with upstream-pinned tools; preserve the existing build tree.",
-                     missing_files=missing)
+                        "Follow LOCAL_SETUP.md with upstream-pinned tools; preserve the existing build tree.",
+                        missing_files=missing)
     return check("decomp_tools", "pass", "Expected tool files and Ninja are present; not executed.",
-                 build_verified=False)
+                    build_verified=False)
 
 
 def probe_safely(name, function):
@@ -138,7 +138,7 @@ def probe_safely(name, function):
         return function()
     except (OSError, ValueError, RuntimeError):
         return check(name, "blocked", "Probe could not read or inspect the configured resource.",
-                     "Check local input permissions and paths; exception details are omitted from public output.")
+                        "Check local input permissions and paths; exception details are omitted from public output.")
 
 
 def diagnose(root: Path, config_path=None, require="all"):
@@ -188,7 +188,7 @@ def diagnose(root: Path, config_path=None, require="all"):
         "host_tests": ["workspace", "python", "config", "host_compiler"],
         "decomp": ["workspace", "stock_dol", "decomp_tools", "wibo"],
         "live": ["workspace", "python", "config", "host", "stock_dol", "game_assets",
-                 "runtime_file", "runtime_compatibility", "slippi_port"],
+                    "runtime_file", "runtime_compatibility", "slippi_port"],
         "provider": ["python", "config", "jev_credential", "jev_access"],
     }
     return assemble(checks, capabilities, require, config)
@@ -197,7 +197,7 @@ def diagnose(root: Path, config_path=None, require="all"):
 def assemble(checks, capabilities, require, config):
     lookup = {item["id"]: item["status"] for item in checks}
     results = {name: {"status": max((lookup[k] for k in keys), key=RANK.get), "checks": keys}
-               for name, keys in capabilities.items()}
+                for name, keys in capabilities.items()}
     # Invalid configuration blocks every requested mode, even if no later probes ran.
     selected = [item["status"] for item in checks] if require == "all" else [
         results.get(require, {"status": "fail"})["status"]]
@@ -206,6 +206,6 @@ def assemble(checks, capabilities, require, config):
         "schema_version": 1, "command": "doctor", "required_capability": require,
         "status": status, "exit_code": EXIT[status], "checks": checks, "capabilities": results,
         "policy": {"character": "FOX", "environment": "local", "provider_contacted": False,
-                   "emulator_launched": False, "budgets_enforced_by_doctor": False},
+                    "emulator_launched": False, "budgets_enforced_by_doctor": False},
         "limits": asdict(config.limits) if config else None,
     }

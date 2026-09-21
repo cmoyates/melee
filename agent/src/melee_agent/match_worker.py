@@ -81,8 +81,8 @@ def run(run_dir):
                         if int(a.stock) != 4 or int(b.stock) != 4:
                             raise RuntimeError("unexpected starting stocks")
                         episode = {"episode": len(outcome["episodes"]) + 1, "first_frame": int(state.frame),
-                                   "last_frame": int(state.frame), "observations": 0, "gaps": 0,
-                                   "duplicates": 0, "rollbacks": 0, "started_monotonic": now}
+                                    "last_frame": int(state.frame), "observations": 0, "gaps": 0,
+                                    "duplicates": 0, "rollbacks": 0, "started_monotonic": now}
                         outcome["episodes"].append(episode)
                         last_frame = None
                         in_game = True
@@ -101,20 +101,20 @@ def run(run_dir):
                     episode["last_stocks"] = [int(a.stock), int(b.stock)]
                     if options["policy"] == "input-probe" and 0 <= current <= 100:
                         probe_samples.append({"frame": current, "x": float(a.position.x),
-                                              "main_x": float(a.controller_state.main_stick[0])})
+                                                "main_x": float(a.controller_state.main_stick[0])})
                     control = executor.step(observe(state, episode["episode"], clock))
                     controllers[1].release_all()
                     record = {"schema_version": 2, "episode": episode["episode"], "frame": current,
-                              "monotonic": now, "menu": "IN_GAME", "control": control,
-                              "stage": STAGE_NAME, "stage_id": STAGE_ID,
-                              "platforms": PLATFORMS,
-                              "players": {str(p): {"character": v.character.name, "stock": int(v.stock),
-                                  "percent": float(v.percent), "x": float(v.position.x), "y": float(v.position.y),
-                                  "action_id": int(v.action.value), "action_frame": int(v.action_frame),
-                                  "grounded": bool(v.on_ground), "jumps": int(v.jumps_left),
-                                  "support_surface_derived": support_surface(float(v.position.x), float(v.position.y), bool(v.on_ground)),
-                                  "observed_main": [float(x) for x in v.controller_state.main_stick]}
-                                  for p, v in state.players.items()}}
+                                "monotonic": now, "menu": "IN_GAME", "control": control,
+                                "stage": STAGE_NAME, "stage_id": STAGE_ID,
+                                "platforms": PLATFORMS,
+                                "players": {str(p): {"character": v.character.name, "stock": int(v.stock),
+                                    "percent": float(v.percent), "x": float(v.position.x), "y": float(v.position.y),
+                                    "action_id": int(v.action.value), "action_frame": int(v.action_frame),
+                                    "grounded": bool(v.on_ground), "jumps": int(v.jumps_left),
+                                    "support_surface_derived": support_surface(float(v.position.x), float(v.position.y), bool(v.on_ground)),
+                                    "observed_main": [float(x) for x in v.controller_state.main_stick]}
+                                    for p, v in state.players.items()}}
                     if options["policy"] == "input-probe" and current >= 120:
                         episode["elapsed_seconds"] = now - episode["started_monotonic"]
                         outcome["probe_samples"] = probe_samples
@@ -154,13 +154,13 @@ def run(run_dir):
                             outcome["status"] = "matches_complete"
                             break
                     ready = (2 in state.players and state.players[2].character == melee.Character.MARIO and
-                             state.players[2].cpu_level == 3 and state.players[2].coin_down)
+                                state.players[2].cpu_level == 3 and state.players[2].coin_down)
                     helpers[1].menu_helper_simple(state, controllers[1], melee.Character.MARIO,
                         melee.Stage.BATTLEFIELD, cpu_level=3, autostart=False)
                     helpers[0].menu_helper_simple(state, controllers[0], melee.Character.FOX,
                         melee.Stage.BATTLEFIELD, autostart=ready or state.menu_state==melee.Menu.STAGE_SELECT)
                     record = {"schema_version": 1, "menu": state.menu_state.name,
-                              "monotonic": now, "frame": int(state.frame)}
+                                "monotonic": now, "frame": int(state.frame)}
                 frames.write(json.dumps(record, allow_nan=False) + "\n")
                 if now - last_flush >= 0.5:
                     frames.flush()

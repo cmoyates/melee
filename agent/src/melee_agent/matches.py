@@ -98,7 +98,7 @@ def supervise(root, duration, episodes, policy):
             raise ValueError("Another Jev match runner owns the launch lease") from None
         # Fail closed on process inspection errors; never stop a pre-existing game.
         existing = subprocess.run(["pgrep", "-if", "Dolphin.app/Contents/MacOS|Slippi Dolphin.app/Contents/MacOS"],
-                                  capture_output=True, timeout=5)
+                                    capture_output=True, timeout=5)
         if existing.returncode != 1:
             raise ValueError("An emulator is already running or process inspection is unavailable")
         import socket
@@ -109,11 +109,11 @@ def supervise(root, duration, episodes, policy):
         run_dir.mkdir()
         (run_dir / "replays").mkdir()
         options = {"schema_version": 1, "run_id": run_id, "runtime": str(runtime), "disc": str(image),
-                   "runtime_sha256": config.runtime_sha256, "disc_sha1": STOCK_DISC_SHA1,
-                   "libmelee_commit": "bce21f09984b286e6d36bfd2939e4cd4691f94c2",
-                   "duration_seconds": duration, "port": config.slippi_port,
-                   "policy": policy, "episodes": episodes, "provider_contacted": False,
-                   "stage": STAGE_NAME, "stage_id": STAGE_ID}
+                    "runtime_sha256": config.runtime_sha256, "disc_sha1": STOCK_DISC_SHA1,
+                    "libmelee_commit": "bce21f09984b286e6d36bfd2939e4cd4691f94c2",
+                    "duration_seconds": duration, "port": config.slippi_port,
+                    "policy": policy, "episodes": episodes, "provider_contacted": False,
+                    "stage": STAGE_NAME, "stage_id": STAGE_ID}
         write_json(run_dir / "launch.json", options)
         print(json.dumps({"event": "started", "run_id": run_id}), flush=True)
         worker = emulator = None
@@ -191,11 +191,11 @@ def supervise(root, duration, episodes, policy):
                     probe_passed(result.get("probe_samples", [])))
         status = "complete" if complete else "probe_verified" if probe_ok else "incomplete"
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
-                   "policy": policy, "episodes": result["episodes"], "replays": replays,
-                   "replay_errors": replay_errors, "neutralized": result["neutralized"],
-                   "elapsed_seconds": time.monotonic() - started, "provider_contacted": False,
-                   "emulator_stopped": emulator is None or emulator.poll() is not None,
-                   "worker_stopped": worker is None or worker.poll() is not None}
+                    "policy": policy, "episodes": result["episodes"], "replays": replays,
+                    "replay_errors": replay_errors, "neutralized": result["neutralized"],
+                    "elapsed_seconds": time.monotonic() - started, "provider_contacted": False,
+                    "emulator_stopped": emulator is None or emulator.poll() is not None,
+                    "worker_stopped": worker is None or worker.poll() is not None}
         if "error_type" in result:
             summary["worker_error_type"] = result["error_type"]
         write_json(run_dir / "summary.json", summary)
@@ -231,5 +231,5 @@ if __name__ == "__main__":
         raise SystemExit(supervise(Path(sys.argv[1]).resolve(), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]))
     except Exception as error:
         print(json.dumps({"status": "blocked", "error_type": type(error).__name__,
-                          "message": "Match setup failed; check local runtime configuration and launch availability."}))
+                            "message": "Match setup failed; check local runtime configuration and launch availability."}))
         raise SystemExit(1)

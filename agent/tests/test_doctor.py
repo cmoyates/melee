@@ -136,8 +136,8 @@ class DoctorTests(unittest.TestCase):
 
     def test_invalid_budgets_and_types_fail(self):
         for line in ("max_requests = true", "max_requests = 1.5", "max_requests = 0",
-                     "max_cost_usd = nan", "max_cost_usd = inf", "max_cost_usd = -1",
-                     'max_input_tokens = "secret"'):
+                        "max_cost_usd = nan", "max_cost_usd = inf", "max_cost_usd = -1",
+                        'max_input_tokens = "secret"'):
             with self.subTest(line=line):
                 self.config.write_text("[limits]\n" + line)
                 self.assertEqual(self.report("offline")["exit_code"], 1)
@@ -151,7 +151,7 @@ class DoctorTests(unittest.TestCase):
 
     def test_nonlocal_modes_and_invalid_ports_fail(self):
         for line in ('environment = "public"', 'environment = "private_netplay"',
-                     "slippi_port = true", "slippi_port = 0", "slippi_port = 65536"):
+                        "slippi_port = true", "slippi_port = 0", "slippi_port = 65536"):
             with self.subTest(line=line):
                 self.config.write_text("[execution]\n" + line)
                 self.assertEqual(self.report()["exit_code"], 1)
@@ -169,7 +169,7 @@ class DoctorTests(unittest.TestCase):
         runtime.write_text("#!/bin/sh\nexit 99\n")
         runtime.chmod(0o700)
         self.config.write_text('[paths]\nruntime = "runtime"\nruntime_sha256 = "' +
-                               hashlib.sha256(runtime.read_bytes()).hexdigest() + '"\n')
+                                hashlib.sha256(runtime.read_bytes()).hexdigest() + '"\n')
         report = self.report()
         checks = self.checks(report)
         self.assertEqual(checks["runtime_file"]["status"], "pass")
@@ -230,7 +230,7 @@ class DoctorTests(unittest.TestCase):
 
     def test_installed_cli_exit_matches_json(self):
         result = subprocess.run([sys.executable, "-B", "-m", "melee_agent.cli", "doctor", "--json",
-                                 "--workspace", str(self.root)], capture_output=True, text=True)
+                                    "--workspace", str(self.root)], capture_output=True, text=True)
         report = json.loads(result.stdout)
         self.assertEqual(result.returncode, report["exit_code"])
         self.assertEqual(result.returncode, 2)

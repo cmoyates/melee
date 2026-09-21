@@ -13,9 +13,9 @@ class SystemClock:
 def observe(state, episode, clock):
     def fighter(player):
         return Fighter(float(player.position.x), float(player.position.y), bool(player.on_ground),
-                       int(player.jumps_left), getattr(player.action, "name", "UNKNOWN"))
+                        int(player.jumps_left), getattr(player.action, "name", "UNKNOWN"))
     return Observation(1, episode, int(state.frame), clock.now_ns(), state.stage.name,
-                       fighter(state.players[1]), fighter(state.players[2]))
+                        fighter(state.players[1]), fighter(state.players[2]))
 
 
 class LibmeleeSink:

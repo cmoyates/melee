@@ -38,9 +38,9 @@ def summarize_raw(raw):
                 "timer_seconds": int.from_bytes(event[0x15:0x19], "big"),
                 "teams": bool(event[0xD]), "items": int(event[0x10]),
                 "players": [{"port": i + 1, "character_external": int(event[0x65 + 0x24*i]),
-                             "type": int(event[0x66 + 0x24*i]),
-                             "stocks": int(event[0x67 + 0x24*i]),
-                             "cpu_level": int(event[0x74 + 0x24*i])} for i in range(4)],
+                                "type": int(event[0x66 + 0x24*i]),
+                                "stocks": int(event[0x67 + 0x24*i]),
+                                "cpu_level": int(event[0x74 + 0x24*i])} for i in range(4)],
             }
         elif command == 0x39:
             if size < 2:

@@ -2,7 +2,8 @@
 
 import time
 
-from .engine import Fighter, Observation
+from .engine import Fighter, MatchProgress, Observation
+from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
 
 
 class SystemClock:
@@ -13,9 +14,10 @@ class SystemClock:
 def observe(state, episode, clock):
     def fighter(player):
         return Fighter(float(player.position.x), float(player.position.y), bool(player.on_ground),
-                        int(player.jumps_left), getattr(player.action, "name", "UNKNOWN"))
-    return Observation(1, episode, int(state.frame), clock.now_ns(), state.stage.name,
-                        fighter(state.players[1]), fighter(state.players[2]))
+                        int(player.jumps_left), getattr(player.action, "name", "UNKNOWN"), int(player.stock))
+    return Observation(2, episode, int(state.frame), clock.now_ns(), state.stage.name,
+                        fighter(state.players[1]), fighter(state.players[2]),
+                        MatchProgress.from_frame(int(state.frame), TIME_LIMIT_SECONDS, STARTING_STOCKS))
 
 
 class LibmeleeSink:

@@ -70,11 +70,12 @@ def summarize_file(path, maximum_bytes):
 
 
 def expected_settings(settings):
+    from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
     if not settings or settings["game_mode"] != 1 or settings["stage_id"] != STAGE_ID or settings["teams"]:
         return False
-    if settings["timer_seconds"] != 480 or settings["items"] != 255:
+    if settings["timer_seconds"] != TIME_LIMIT_SECONDS or settings["items"] != 255:
         return False
     a, b, c, d = settings["players"]
-    return (a["character_external"] == 2 and a["type"] == 0 and a["stocks"] == 4 and
-            b["character_external"] == 8 and b["type"] == 1 and b["stocks"] == 4 and
+    return (a["character_external"] == 2 and a["type"] == 0 and a["stocks"] == STARTING_STOCKS and
+            b["character_external"] == 8 and b["type"] == 1 and b["stocks"] == STARTING_STOCKS and
             b["cpu_level"] == 3 and c["type"] == d["type"] == 3)

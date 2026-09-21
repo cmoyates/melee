@@ -352,6 +352,7 @@ A canned observation yields a validated tactical decision through the same API b
 - Bound request size/in-flight count and reserve token/request/spend budget before submission. Track uncertain billing for timed-out calls conservatively. No keys in arguments/logs/manifests.
 - Record requested alias and resolved model/provider identity on every run. A live probe on 2026-09-21 resolved ~typesafe/jev-latest to typesafe/jev-1.13-20260917 on TypeSafe and returned a valid Choice distribution and confidence. Preserve the leading tilde; the alias can change. Keep provider-specific types out of the game executor.
 - Represent unavailable probabilities/confidence as unavailable. Do not fabricate a Choice distribution from generated text or treat token log probabilities as calibrated tactical probabilities. Downstream calibration/personality sampling must explicitly handle the actual route capabilities.
+- Preserve match context in every tactical state: observed remaining stocks for both fighters, configured starting stocks and time limit, and simulation-frame-derived elapsed/remaining seconds. Retain derived-time provenance; countdown, stock loss, timeout and episode reset must not silently drop or reset this context.
 
 ## Acceptance
 

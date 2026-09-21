@@ -5,6 +5,7 @@ import math
 from typing import Protocol
 
 from .stage import STAGE_NAME
+from .rules import SIMULATION_FPS
 
 
 def integer(value, name, minimum=None):
@@ -35,6 +36,7 @@ class Fighter:
     grounded: bool
     jumps: int
     action: str
+    stocks_remaining: int
 
     def __post_init__(self):
         finite(self.x, "fighter x")
@@ -42,8 +44,41 @@ class Fighter:
         if type(self.grounded) is not bool:
             raise ValueError("grounded must be boolean")
         integer(self.jumps, "jumps", 0)
+        integer(self.stocks_remaining, "stocks remaining", 0)
+        if self.stocks_remaining > 99:
+            raise ValueError("Invalid stock count")
         if self.jumps > 6 or not isinstance(self.action, str) or not self.action or len(self.action) > 80:
             raise ValueError("Invalid fighter jumps/action")
+
+    @classmethod
+    def parse(cls, data):
+        exact_fields(data, cls)
+        return cls(**data)
+
+
+@dataclass(frozen=True)
+class MatchProgress:
+    time_limit_seconds: int
+    starting_stocks: int
+    elapsed_seconds_derived: float
+    remaining_seconds_derived: float
+
+    def __post_init__(self):
+        integer(self.time_limit_seconds, "match time limit", 1)
+        integer(self.starting_stocks, "starting stocks", 1)
+        if self.time_limit_seconds > 5940 or self.starting_stocks > 99:
+            raise ValueError("Unsupported match rules")
+        finite(self.elapsed_seconds_derived, "elapsed match time", 0)
+        finite(self.remaining_seconds_derived, "remaining match time", 0, self.time_limit_seconds)
+        expected = max(0, self.time_limit_seconds - self.elapsed_seconds_derived)
+        if not math.isclose(self.remaining_seconds_derived, expected, rel_tol=0, abs_tol=1e-9):
+            raise ValueError("Match times disagree")
+
+    @classmethod
+    def from_frame(cls, frame, time_limit_seconds, starting_stocks):
+        integer(frame, "match frame")
+        elapsed = max(0, frame) / SIMULATION_FPS
+        return cls(time_limit_seconds, starting_stocks, elapsed, max(0, time_limit_seconds - elapsed))
 
     @classmethod
     def parse(cls, data):
@@ -60,21 +95,30 @@ class Observation:
     stage: str
     bot: Fighter
     opponent: Fighter
+    match: MatchProgress
 
     def __post_init__(self):
         integer(self.schema_version, "schema version")
-        if self.schema_version != 1 or self.stage != STAGE_NAME:
+        if self.schema_version != 2 or self.stage != STAGE_NAME:
             raise ValueError("Unsupported observation version/stage")
         integer(self.episode, "episode", 1)
         integer(self.frame, "frame")
         integer(self.observed_ns, "observed time", 0)
         if not isinstance(self.bot, Fighter) or not isinstance(self.opponent, Fighter):
             raise ValueError("Observation requires validated fighters")
+        if not isinstance(self.match, MatchProgress):
+            raise ValueError("Observation requires validated match progress")
+        if max(self.bot.stocks_remaining, self.opponent.stocks_remaining) > self.match.starting_stocks:
+            raise ValueError("Remaining stocks exceed starting stocks")
+        if not math.isclose(self.match.elapsed_seconds_derived, max(0, self.frame) / SIMULATION_FPS,
+                            rel_tol=0, abs_tol=1e-9):
+            raise ValueError("Match elapsed time disagrees with simulation frame")
 
     @classmethod
     def parse(cls, data):
         exact_fields(data, cls)
-        return cls(**{**data, "bot": Fighter.parse(data["bot"]), "opponent": Fighter.parse(data["opponent"])})
+        return cls(**{**data, "bot": Fighter.parse(data["bot"]), "opponent": Fighter.parse(data["opponent"]),
+                        "match": MatchProgress.parse(data["match"])})
 
 
 @dataclass(frozen=True)

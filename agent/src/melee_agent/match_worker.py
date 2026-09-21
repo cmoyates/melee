@@ -10,6 +10,7 @@ import time
 from .stage import STAGE_NAME, STAGE_ID, PLATFORMS, support_surface
 from .engine import FrameExecutor, ScriptedPolicy
 from .live_control import LibmeleeSink, SystemClock, observe
+from .rules import STARTING_STOCKS
 
 
 class StopRequested(BaseException):
@@ -78,7 +79,7 @@ def run(run_dir):
                             a.cpu_level != 0 or b.cpu_level != 3 or state.stage != melee.Stage.BATTLEFIELD):
                         raise RuntimeError("unexpected matchup")
                     if not in_game:
-                        if int(a.stock) != 4 or int(b.stock) != 4:
+                        if int(a.stock) != STARTING_STOCKS or int(b.stock) != STARTING_STOCKS:
                             raise RuntimeError("unexpected starting stocks")
                         episode = {"episode": len(outcome["episodes"]) + 1, "first_frame": int(state.frame),
                                     "last_frame": int(state.frame), "observations": 0, "gaps": 0,
@@ -104,7 +105,7 @@ def run(run_dir):
                                                 "main_x": float(a.controller_state.main_stick[0])})
                     control = executor.step(observe(state, episode["episode"], clock))
                     controllers[1].release_all()
-                    record = {"schema_version": 2, "episode": episode["episode"], "frame": current,
+                    record = {"schema_version": 3, "episode": episode["episode"], "frame": current,
                                 "monotonic": now, "menu": "IN_GAME", "control": control,
                                 "stage": STAGE_NAME, "stage_id": STAGE_ID,
                                 "platforms": PLATFORMS,

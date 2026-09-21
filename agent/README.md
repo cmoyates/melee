@@ -216,9 +216,21 @@ deliberately walks Fox offstage to exercise real stock loss and end-to-next-game
 transitions quickly. Its losses are not a gameplay benchmark. `scripted` is a
 basic approach/attack/recovery placeholder that can be replaced through the
 shared `TacticalPolicy`/`FrameExecutor` boundary. Jev/OpenRouter calls are not
-made by these commands. Frame log schema 2 records the validated observation,
+made by these commands. Frame log schema 3 records the validated observation,
 decision, complete requested packet and queue timestamp under `control`.
 Controller packets reset every button, both sticks and both analog shoulders.
+
+Observation schema 2 includes each fighter's observed `stocks_remaining` and
+`match` context: `time_limit_seconds`, `starting_stocks`,
+`elapsed_seconds_derived` and `remaining_seconds_derived`. The configured rules
+are eight minutes and four stocks, checked against the completed replay.
+Libmelee does not expose the HUD timer: elapsed time is `max(frame, 0) / 60`,
+and remaining time is clamped at zero. These are simulation-frame estimates,
+not a direct timer read or the supervisor's wall-clock `--duration` limit.
+Countdown frames keep elapsed time at zero; episode resets restore the clock
+and observed stocks. Policy consumers, including the future Jev adapter, must
+retain this context and its derived-time labels. Older observations are rejected
+instead of silently assuming four stocks or a fresh clock.
 
 ## Asset-free CI slice
 

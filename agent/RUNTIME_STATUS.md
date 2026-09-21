@@ -22,6 +22,14 @@ limits, artifacts and the three current policies.
 
 ## Live evidence
 
+- Match-state regression: `match-c9e2e8991c87477ba5c64459f92c1706`.
+  Two completed Battlefield matches with verified eight-minute/four-stock
+  replay settings, **1,922 observations**, no gaps/duplicates/rollbacks, neutral
+  cleanup and both owned processes stopped. Every schema-3 frame's policy
+  observation (schema 2) matched the captured stock counts, including Fox's
+  **4 → 3 → 2 → 1 → 0** transitions. Derived elapsed/remaining time followed
+  simulation frames and reset at the next episode. This validates the state
+  transport; it does not certify exact HUD timer reads or live timeout behavior.
 - Current Battlefield regression: `match-3d484f42fb864d96aafa53e6eedbe8ea`.
   Two unattended episodes through the shared live/fake frame executor, two
   valid replays with stage ID **31**, and **1,922 observations** with no gaps,
@@ -50,11 +58,13 @@ limits, artifacts and the three current policies.
   explicit stop and killed CLI also produced a successful neutral-input flush.
   Abruptly killed or stalled workers cannot promise neutralization; the
   supervisor terminates the owned emulator and reports that limitation.
-- **45 asset-free tests** cover result parsing, malformed/truncated replays,
+- **47 asset-free tests** cover result parsing, malformed/truncated replays,
   unknown outcomes, rule mismatches, input acknowledgement versus movement,
   certificate tampering, process ownership, credentials and existing doctor checks,
   plus strict frame/decision/packet schemas, stale identities, clock rollback and
-  an intentionally incorrect controller-output fixture. The deterministic fake
+  an intentionally incorrect controller-output fixture. Match context checks
+  cover countdown, stock loss, timer expiry, episode reset and malformed values.
+  The deterministic fake
   trace covers the ground and all three Battlefield platforms.
 - All **42 protected file fingerprints** remained unchanged: original and
   preserved stock DOLs, root build configuration/environment identity, Showboat

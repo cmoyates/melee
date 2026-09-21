@@ -8,11 +8,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from melee_agent.engine import Decision, FrameExecutor, Observation, Packet, RunManifest, ScriptedPolicy
 from melee_agent.fake import FakeClock, RecordingSink, simulate
-from melee_agent.live_control import LibmeleeSink
+from melee_agent.live_control import LibmeleeSink, observe
 
 FIXTURE = Path(__file__).parent / "fixtures/battlefield.json"
 
@@ -38,7 +39,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)["status"], "fail")
 
     def test_unknown_fields_versions_and_nonfinite_values_fail(self):
-        mutations = [lambda d: d.update(extra=True), lambda d: d.update(schema_version=2),
+        mutations = [lambda d: d.update(extra=True), lambda d: d.update(schema_version=1),
                         lambda d: d.update(schema_version=True), lambda d: d.update(stage="FINAL_DESTINATION"),
                         lambda d: d["bot"].update(extra=1), lambda d: d["bot"].update(x=float("nan")),
                         lambda d: d["opponent"].update(y=float("inf")), lambda d: d.update(frame=1.2),
@@ -48,6 +49,51 @@ class EngineTests(unittest.TestCase):
             mutate(data)
             with self.assertRaises(ValueError):
                 Observation.parse(data)
+
+    def test_invalid_or_missing_match_context_is_rejected(self):
+        mutations = [lambda d: d.pop("match"), lambda d: d["bot"].pop("stocks_remaining"),
+                        lambda d: d["bot"].update(stocks_remaining=-1),
+                        lambda d: d["bot"].update(stocks_remaining=True),
+                        lambda d: d["opponent"].update(stocks_remaining=5),
+                        lambda d: d["match"].update(starting_stocks=0),
+                        lambda d: d["match"].update(time_limit_seconds=True),
+                        lambda d: d["match"].update(elapsed_seconds_derived=float("nan")),
+                        lambda d: d["match"].update(remaining_seconds_derived=float("inf")),
+                        lambda d: d["match"].update(remaining_seconds_derived=481),
+                        lambda d: d["match"].update(elapsed_seconds_derived=1, remaining_seconds_derived=479),
+                        lambda d: d["match"].update(extra="unknown")]
+        for mutate in mutations:
+            data = deepcopy(self.sample)
+            mutate(data)
+            with self.assertRaises(ValueError):
+                Observation.parse(data)
+
+    def test_live_match_context_reaches_policy_and_trace_through_stock_loss_and_reset(self):
+        def player(stocks):
+            return SimpleNamespace(position=SimpleNamespace(x=0, y=0), on_ground=True,
+                                    jumps_left=2, action=SimpleNamespace(name="STANDING"), stock=stocks)
+        state = SimpleNamespace(stage=SimpleNamespace(name="BATTLEFIELD"), frame=-123,
+                                players={1: player(4), 2: player(4)})
+        policy, clock = Mock(), FakeClock()
+        policy.decide.side_effect = lambda o: Decision(1, o.episode, o.frame, "wait")
+        executor = FrameExecutor(policy, RecordingSink(), clock)
+        # Sparse observations emulate drops; elapsed time must depend on frame, not rows received.
+        cases = [(1, -123, 4, 4, 0, 480), (1, 0, 4, 4, 0, 480),
+                    (1, 60, 3, 4, 1, 479), (1, 28740, 1, 2, 479, 1),
+                    (1, 28800, 0, 2, 480, 0), (1, 28860, 0, 2, 481, 0),
+                    (2, -123, 4, 4, 0, 480)]
+        for episode, frame, bot_stock, opponent_stock, elapsed, remaining in cases:
+            state.frame = frame
+            state.players[1].stock, state.players[2].stock = bot_stock, opponent_stock
+            row = executor.step(observe(state, episode, clock))
+            received = policy.decide.call_args.args[0]
+            self.assertEqual((received.bot.stocks_remaining, received.opponent.stocks_remaining),
+                                (bot_stock, opponent_stock))
+            # JSON round trip covers the state that a future provider adapter will serialize.
+            record = json.loads(json.dumps(row))["observation"]
+            self.assertEqual(record["match"], {"time_limit_seconds": 480, "starting_stocks": 4,
+                                "elapsed_seconds_derived": elapsed, "remaining_seconds_derived": remaining})
+            self.assertEqual(Observation.parse(record), received)
 
     def test_packet_rejects_invalid_axes_buttons_and_versions(self):
         for changes in ({"main_x": float("nan")}, {"l": 1.1}, {"c_y": -1}, {"schema_version": True},

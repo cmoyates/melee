@@ -3,7 +3,7 @@
   "cases": [
     {
       "observation": {
-        "schema_version": 1,
+        "schema_version": 2,
         "episode": 1,
         "frame": -123,
         "observed_ns": 0,
@@ -13,14 +13,22 @@
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
         },
         "opponent": {
           "x": 40.0,
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
+        },
+        "match": {
+          "time_limit_seconds": 480,
+          "starting_stocks": 4,
+          "elapsed_seconds_derived": 0.0,
+          "remaining_seconds_derived": 480.0
         }
       },
       "expected_action": "wait",
@@ -55,7 +63,7 @@
     },
     {
       "observation": {
-        "schema_version": 1,
+        "schema_version": 2,
         "episode": 1,
         "frame": 0,
         "observed_ns": 16666667,
@@ -65,14 +73,22 @@
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
         },
         "opponent": {
           "x": 40.0,
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
+        },
+        "match": {
+          "time_limit_seconds": 480,
+          "starting_stocks": 4,
+          "elapsed_seconds_derived": 0.0,
+          "remaining_seconds_derived": 480.0
         }
       },
       "expected_action": "right",
@@ -107,7 +123,7 @@
     },
     {
       "observation": {
-        "schema_version": 1,
+        "schema_version": 2,
         "episode": 1,
         "frame": 12,
         "observed_ns": 33333334,
@@ -117,14 +133,22 @@
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
         },
         "opponent": {
           "x": 10.0,
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
+        },
+        "match": {
+          "time_limit_seconds": 480,
+          "starting_stocks": 4,
+          "elapsed_seconds_derived": 0.2,
+          "remaining_seconds_derived": 479.8
         }
       },
       "expected_action": "attack",
@@ -159,7 +183,7 @@
     },
     {
       "observation": {
-        "schema_version": 1,
+        "schema_version": 2,
         "episode": 1,
         "frame": 24,
         "observed_ns": 50000001,
@@ -169,14 +193,22 @@
           "y": 27.20009994506836,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
         },
         "opponent": {
           "x": 40.0,
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
+        },
+        "match": {
+          "time_limit_seconds": 480,
+          "starting_stocks": 4,
+          "elapsed_seconds_derived": 0.4,
+          "remaining_seconds_derived": 479.6
         }
       },
       "expected_action": "right",
@@ -211,7 +243,7 @@
     },
     {
       "observation": {
-        "schema_version": 1,
+        "schema_version": 2,
         "episode": 1,
         "frame": 36,
         "observed_ns": 66666668,
@@ -221,14 +253,22 @@
           "y": 27.20009994506836,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
         },
         "opponent": {
           "x": -40.0,
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
+        },
+        "match": {
+          "time_limit_seconds": 480,
+          "starting_stocks": 4,
+          "elapsed_seconds_derived": 0.6,
+          "remaining_seconds_derived": 479.4
         }
       },
       "expected_action": "left",
@@ -263,7 +303,7 @@
     },
     {
       "observation": {
-        "schema_version": 1,
+        "schema_version": 2,
         "episode": 1,
         "frame": 48,
         "observed_ns": 83333335,
@@ -273,14 +313,22 @@
           "y": 54.40010070800781,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
         },
         "opponent": {
           "x": -40.0,
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
+        },
+        "match": {
+          "time_limit_seconds": 480,
+          "starting_stocks": 4,
+          "elapsed_seconds_derived": 0.8,
+          "remaining_seconds_derived": 479.2
         }
       },
       "expected_action": "left",
@@ -315,7 +363,7 @@
     },
     {
       "observation": {
-        "schema_version": 1,
+        "schema_version": 2,
         "episode": 1,
         "frame": 60,
         "observed_ns": 100000002,
@@ -325,14 +373,22 @@
           "y": -10.0,
           "grounded": false,
           "jumps": 1,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
         },
         "opponent": {
           "x": 0.0,
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
+        },
+        "match": {
+          "time_limit_seconds": 480,
+          "starting_stocks": 4,
+          "elapsed_seconds_derived": 1.0,
+          "remaining_seconds_derived": 479.0
         }
       },
       "expected_action": "jump_left",
@@ -367,7 +423,7 @@
     },
     {
       "observation": {
-        "schema_version": 1,
+        "schema_version": 2,
         "episode": 1,
         "frame": 61,
         "observed_ns": 116666669,
@@ -377,14 +433,22 @@
           "y": -30.0,
           "grounded": false,
           "jumps": 0,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
         },
         "opponent": {
           "x": 0.0,
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
+        },
+        "match": {
+          "time_limit_seconds": 480,
+          "starting_stocks": 4,
+          "elapsed_seconds_derived": 1.0166666666666666,
+          "remaining_seconds_derived": 478.98333333333335
         }
       },
       "expected_action": "recover_right",
@@ -419,7 +483,7 @@
     },
     {
       "observation": {
-        "schema_version": 1,
+        "schema_version": 2,
         "episode": 2,
         "frame": -123,
         "observed_ns": 133333336,
@@ -429,14 +493,22 @@
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
         },
         "opponent": {
           "x": 40.0,
           "y": 0.0,
           "grounded": true,
           "jumps": 2,
-          "action": "STANDING"
+          "action": "STANDING",
+          "stocks_remaining": 4
+        },
+        "match": {
+          "time_limit_seconds": 480,
+          "starting_stocks": 4,
+          "elapsed_seconds_derived": 0.0,
+          "remaining_seconds_derived": 480.0
         }
       },
       "expected_action": "wait",

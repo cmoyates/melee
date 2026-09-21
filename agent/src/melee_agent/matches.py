@@ -17,6 +17,7 @@ from .config import load_config, owned_path, read_path
 from .doctor import STOCK_DISC_SHA1, STOCK_DOL_SHA1, digest
 from .match_worker import write_json
 from .stage import STAGE_NAME, STAGE_ID
+from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
 
 
 def isolated_environment():
@@ -113,7 +114,8 @@ def supervise(root, duration, episodes, policy):
                     "libmelee_commit": "bce21f09984b286e6d36bfd2939e4cd4691f94c2",
                     "duration_seconds": duration, "port": config.slippi_port,
                     "policy": policy, "episodes": episodes, "provider_contacted": False,
-                    "stage": STAGE_NAME, "stage_id": STAGE_ID}
+                    "stage": STAGE_NAME, "stage_id": STAGE_ID,
+                    "match_time_limit_seconds": TIME_LIMIT_SECONDS, "starting_stocks": STARTING_STOCKS}
         write_json(run_dir / "launch.json", options)
         print(json.dumps({"event": "started", "run_id": run_id}), flush=True)
         worker = emulator = None

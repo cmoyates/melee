@@ -49,7 +49,8 @@ paths may be external read-only files. Configuration itself must stay inside the
 checkout; future run storage must resolve below `build/jev/` without symlink
 escapes. Never use `build/showboat` as Jev output storage.
 
-Jev will use **OpenRouter**. Put your token after `OPENROUTER_API_KEY=` in
+Jev uses **OpenRouter** with `OPENROUTER_MODEL=~typesafe/jev-latest`.
+Put your token after `OPENROUTER_API_KEY=` in
 `agent/.env`, which is gitignored. A fresh checkout can copy the blank
 `agent/.env.example` template to `agent/.env`. Load it explicitly from the
 repository root:
@@ -61,8 +62,20 @@ rtk proxy uv run --project agent --no-sync --env-file agent/.env melee-agent doc
 The doctor checks presence only, never displays or authenticates the token.
 Direct CLI invocations do not load `.env` automatically. No API key is accepted
 in TOML. Do not put secrets in CLI arguments, issue bodies, reports or committed
-files. The OpenRouter inference adapter and live model verification belong to
-J08/J09; adding this token does not make an API request.
+files. The production inference adapter and broader provider checks belong to
+J08/J09; adding these settings does not make an API request. The model setting
+is reserved for that adapter; the scripted match runner does not consume it.
+
+A one-question live probe on 2026-09-21 verified this alias through
+`POST https://openrouter.ai/api/alpha/decisions`. It resolved to
+`typesafe/jev-1.13-20260917` on TypeSafe and returned a typed `choice`, a valid
+probability distribution and confidence. The synthetic offstage question chose
+`recover`; usage was 345 input tokens, 31 output tokens and $0.00001449, with
+418 ms observed request latency. This is access proof, not gameplay or latency
+certification. The earlier chat-completions probe returned HTTP 400 because Jev
+requires the [Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request).
+Preserve the leading `~` and record both the requested alias and resolved model
+for every experiment, since the alias can move.
 
 The example config validates finite positive duration/request/token/cost/disk
 ceilings for future runners. J01 does not spend or enforce a running-session

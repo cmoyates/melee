@@ -347,10 +347,10 @@ A canned observation yields a validated tactical decision through the same API b
 
 ## Scope
 
-- Use OpenRouter as requested by the user, with OPENROUTER_API_KEY loaded privately from agent/.env. Put a bounded asynchronous OpenRouter transport behind the provider-neutral tactical contract. Verify which structured-output and probability fields the selected route actually supports; never assume native TypeSafe Choice/confidence fields survive this transport.
+- Use the OpenRouter Decisions API: POST /api/alpha/decisions with model ~typesafe/jev-latest, state and typed questions. Load OPENROUTER_API_KEY and OPENROUTER_MODEL privately from agent/.env. Put a bounded asynchronous transport behind the provider-neutral tactical contract; do not use chat/completions. Validate typed answers, complete finite probability distributions and confidence against the submitted candidate set.
 - Set explicit transport and end-to-end deadlines and disable automatic retries/fallback replay for stale tactical requests. Apply Retry-After/backoff to future fresh submissions, not the expired snapshot.
 - Bound request size/in-flight count and reserve token/request/spend budget before submission. Track uncertain billing for timed-out calls conservatively. No keys in arguments/logs/manifests.
-- Require an explicit verified OpenRouter model ID and record resolved model/provider identity. The public OpenRouter catalog checked on 2026-09-21 had no Jev/TypeSafe entry; obtain the intended private model ID or resolve this live prerequisite before claiming Jev access. Keep provider-specific types out of the game executor.
+- Record requested alias and resolved model/provider identity on every run. A live probe on 2026-09-21 resolved ~typesafe/jev-latest to typesafe/jev-1.13-20260917 on TypeSafe and returned a valid Choice distribution and confidence. Preserve the leading tilde; the alias can change. Keep provider-specific types out of the game executor.
 - Represent unavailable probabilities/confidence as unavailable. Do not fabricate a Choice distribution from generated text or treat token log probabilities as calibrated tactical probabilities. Downstream calibration/personality sampling must explicitly handle the actual route capabilities.
 
 ## Acceptance
@@ -397,7 +397,7 @@ A budgeted benchmark establishes actual response-age expectations before gamepla
 
 ## Scope
 
-- First verify the intended Jev model is available through the configured OpenRouter route. A present token or a generic OpenRouter model is not proof of Jev access. Record a concrete compatibility blocker if the route is unavailable.
+- Basic account access is verified: one synthetic Choice request to /api/alpha/decisions using ~typesafe/jev-latest returned HTTP 200, typesafe/jev-1.13-20260917, probabilities and confidence on 2026-09-21. Observed latency was 418 ms, with 345 input tokens, 31 output tokens and $0.00001449 reported cost. Reverify the resolved identity before benchmarking; this single probe does not satisfy latency or gameplay acceptance.
 - Run canned compact states with 5/10/16 action alternatives and single versus small independent-question batches, bounded by a hard token/request/cost limit.
 - Collect p50/p95/p99 end-to-end latency, failures, token use, resolved model and confidence; record warm/cold connection status and geographic host context without exposing private details.
 - Select initial cadence, maximum concurrent requests and semantic decision horizons from measurements. Report submitted/completed/accepted rates separately; don't promise 10 useful decisions/s from marketing latency.

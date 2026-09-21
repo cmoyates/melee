@@ -1,0 +1,473 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "observation": {
+        "schema_version": 1,
+        "episode": 1,
+        "frame": -123,
+        "observed_ns": 0,
+        "stage": "BATTLEFIELD",
+        "bot": {
+          "x": -40.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        },
+        "opponent": {
+          "x": 40.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        }
+      },
+      "expected_action": "wait",
+      "expected_packet": {
+        "schema_version": 1,
+        "main": [
+          0.5,
+          0.5
+        ],
+        "c": [
+          0.5,
+          0.5
+        ],
+        "l": 0.0,
+        "r": 0.0,
+        "buttons": {
+          "A": false,
+          "B": false,
+          "X": false,
+          "Y": false,
+          "Z": false,
+          "L": false,
+          "R": false,
+          "START": false,
+          "D_UP": false,
+          "D_DOWN": false,
+          "D_LEFT": false,
+          "D_RIGHT": false
+        }
+      },
+      "expected_support": "ground"
+    },
+    {
+      "observation": {
+        "schema_version": 1,
+        "episode": 1,
+        "frame": 0,
+        "observed_ns": 16666667,
+        "stage": "BATTLEFIELD",
+        "bot": {
+          "x": -40.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        },
+        "opponent": {
+          "x": 40.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        }
+      },
+      "expected_action": "right",
+      "expected_packet": {
+        "schema_version": 1,
+        "main": [
+          1.0,
+          0.5
+        ],
+        "c": [
+          0.5,
+          0.5
+        ],
+        "l": 0.0,
+        "r": 0.0,
+        "buttons": {
+          "A": false,
+          "B": false,
+          "X": false,
+          "Y": false,
+          "Z": false,
+          "L": false,
+          "R": false,
+          "START": false,
+          "D_UP": false,
+          "D_DOWN": false,
+          "D_LEFT": false,
+          "D_RIGHT": false
+        }
+      },
+      "expected_support": "ground"
+    },
+    {
+      "observation": {
+        "schema_version": 1,
+        "episode": 1,
+        "frame": 12,
+        "observed_ns": 33333334,
+        "stage": "BATTLEFIELD",
+        "bot": {
+          "x": 0.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        },
+        "opponent": {
+          "x": 10.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        }
+      },
+      "expected_action": "attack",
+      "expected_packet": {
+        "schema_version": 1,
+        "main": [
+          0.5,
+          0.5
+        ],
+        "c": [
+          0.5,
+          0.5
+        ],
+        "l": 0.0,
+        "r": 0.0,
+        "buttons": {
+          "A": true,
+          "B": false,
+          "X": false,
+          "Y": false,
+          "Z": false,
+          "L": false,
+          "R": false,
+          "START": false,
+          "D_UP": false,
+          "D_DOWN": false,
+          "D_LEFT": false,
+          "D_RIGHT": false
+        }
+      },
+      "expected_support": "ground"
+    },
+    {
+      "observation": {
+        "schema_version": 1,
+        "episode": 1,
+        "frame": 24,
+        "observed_ns": 50000001,
+        "stage": "BATTLEFIELD",
+        "bot": {
+          "x": -40.0,
+          "y": 27.20009994506836,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        },
+        "opponent": {
+          "x": 40.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        }
+      },
+      "expected_action": "right",
+      "expected_packet": {
+        "schema_version": 1,
+        "main": [
+          1.0,
+          0.5
+        ],
+        "c": [
+          0.5,
+          0.5
+        ],
+        "l": 0.0,
+        "r": 0.0,
+        "buttons": {
+          "A": false,
+          "B": false,
+          "X": false,
+          "Y": false,
+          "Z": false,
+          "L": false,
+          "R": false,
+          "START": false,
+          "D_UP": false,
+          "D_DOWN": false,
+          "D_LEFT": false,
+          "D_RIGHT": false
+        }
+      },
+      "expected_support": "left"
+    },
+    {
+      "observation": {
+        "schema_version": 1,
+        "episode": 1,
+        "frame": 36,
+        "observed_ns": 66666668,
+        "stage": "BATTLEFIELD",
+        "bot": {
+          "x": 40.0,
+          "y": 27.20009994506836,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        },
+        "opponent": {
+          "x": -40.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        }
+      },
+      "expected_action": "left",
+      "expected_packet": {
+        "schema_version": 1,
+        "main": [
+          0.0,
+          0.5
+        ],
+        "c": [
+          0.5,
+          0.5
+        ],
+        "l": 0.0,
+        "r": 0.0,
+        "buttons": {
+          "A": false,
+          "B": false,
+          "X": false,
+          "Y": false,
+          "Z": false,
+          "L": false,
+          "R": false,
+          "START": false,
+          "D_UP": false,
+          "D_DOWN": false,
+          "D_LEFT": false,
+          "D_RIGHT": false
+        }
+      },
+      "expected_support": "right"
+    },
+    {
+      "observation": {
+        "schema_version": 1,
+        "episode": 1,
+        "frame": 48,
+        "observed_ns": 83333335,
+        "stage": "BATTLEFIELD",
+        "bot": {
+          "x": 0.0,
+          "y": 54.40010070800781,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        },
+        "opponent": {
+          "x": -40.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        }
+      },
+      "expected_action": "left",
+      "expected_packet": {
+        "schema_version": 1,
+        "main": [
+          0.0,
+          0.5
+        ],
+        "c": [
+          0.5,
+          0.5
+        ],
+        "l": 0.0,
+        "r": 0.0,
+        "buttons": {
+          "A": false,
+          "B": false,
+          "X": false,
+          "Y": false,
+          "Z": false,
+          "L": false,
+          "R": false,
+          "START": false,
+          "D_UP": false,
+          "D_DOWN": false,
+          "D_LEFT": false,
+          "D_RIGHT": false
+        }
+      },
+      "expected_support": "top"
+    },
+    {
+      "observation": {
+        "schema_version": 1,
+        "episode": 1,
+        "frame": 60,
+        "observed_ns": 100000002,
+        "stage": "BATTLEFIELD",
+        "bot": {
+          "x": 80.0,
+          "y": -10.0,
+          "grounded": false,
+          "jumps": 1,
+          "action": "STANDING"
+        },
+        "opponent": {
+          "x": 0.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        }
+      },
+      "expected_action": "jump_left",
+      "expected_packet": {
+        "schema_version": 1,
+        "main": [
+          0.0,
+          0.5
+        ],
+        "c": [
+          0.5,
+          0.5
+        ],
+        "l": 0.0,
+        "r": 0.0,
+        "buttons": {
+          "A": false,
+          "B": false,
+          "X": true,
+          "Y": false,
+          "Z": false,
+          "L": false,
+          "R": false,
+          "START": false,
+          "D_UP": false,
+          "D_DOWN": false,
+          "D_LEFT": false,
+          "D_RIGHT": false
+        }
+      },
+      "expected_support": null
+    },
+    {
+      "observation": {
+        "schema_version": 1,
+        "episode": 1,
+        "frame": 61,
+        "observed_ns": 116666669,
+        "stage": "BATTLEFIELD",
+        "bot": {
+          "x": -80.0,
+          "y": -30.0,
+          "grounded": false,
+          "jumps": 0,
+          "action": "STANDING"
+        },
+        "opponent": {
+          "x": 0.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        }
+      },
+      "expected_action": "recover_right",
+      "expected_packet": {
+        "schema_version": 1,
+        "main": [
+          1.0,
+          1.0
+        ],
+        "c": [
+          0.5,
+          0.5
+        ],
+        "l": 0.0,
+        "r": 0.0,
+        "buttons": {
+          "A": false,
+          "B": true,
+          "X": false,
+          "Y": false,
+          "Z": false,
+          "L": false,
+          "R": false,
+          "START": false,
+          "D_UP": false,
+          "D_DOWN": false,
+          "D_LEFT": false,
+          "D_RIGHT": false
+        }
+      },
+      "expected_support": null
+    },
+    {
+      "observation": {
+        "schema_version": 1,
+        "episode": 2,
+        "frame": -123,
+        "observed_ns": 133333336,
+        "stage": "BATTLEFIELD",
+        "bot": {
+          "x": -40.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        },
+        "opponent": {
+          "x": 40.0,
+          "y": 0.0,
+          "grounded": true,
+          "jumps": 2,
+          "action": "STANDING"
+        }
+      },
+      "expected_action": "wait",
+      "expected_packet": {
+        "schema_version": 1,
+        "main": [
+          0.5,
+          0.5
+        ],
+        "c": [
+          0.5,
+          0.5
+        ],
+        "l": 0.0,
+        "r": 0.0,
+        "buttons": {
+          "A": false,
+          "B": false,
+          "X": false,
+          "Y": false,
+          "Z": false,
+          "L": false,
+          "R": false,
+          "START": false,
+          "D_UP": false,
+          "D_DOWN": false,
+          "D_LEFT": false,
+          "D_RIGHT": false
+        }
+      },
+      "expected_support": "ground"
+    }
+  ]
+}

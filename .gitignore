@@ -59,6 +59,10 @@ orig/*/sys/*
 
 # Python
 .env
+/agent/.env.*
+!/agent/.env.example
+/agent/local.toml
+/agent/*.local.toml
 .venv
 env/
 venv/

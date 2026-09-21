@@ -1,0 +1,22 @@
+# Copy to agent/local.toml only when configuring private local paths.
+# Do not put credentials here. Load OPENROUTER_API_KEY from agent/.env using uv --env-file.
+[paths]
+stock_dol = "orig/GALE01/sys/main.dol"
+# Optional read-only inputs may be absolute paths outside the checkout.
+disc_image = ""
+runtime = ""
+runtime_sha256 = ""
+
+[execution]
+environment = "local"
+run_root = "build/jev/runs"
+slippi_port = 51441
+
+# These are configuration ceilings for later runners, not automatic spending
+# authorization. J01 validates them; doctor never starts runs or spends.
+[limits]
+max_run_seconds = 120
+max_requests = 600
+max_input_tokens = 1000000
+max_cost_usd = 1.0
+max_artifact_bytes = 268435456

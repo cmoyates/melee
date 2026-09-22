@@ -17,7 +17,7 @@ from melee_agent import matches
 
 class SupervisorTests(unittest.TestCase):
     def exercise(self, *, worker_text=None, start_error=False, scan_error=False,
-                 summary_error=False, artifact_limit=False, fake_replay=False):
+                summary_error=False, artifact_limit=False, fake_replay=False):
         root = Path(tempfile.mkdtemp(prefix="jev-supervisor-test-")).resolve()
         config = Config(slippi_port=0, limits=Limits(max_artifact_bytes=1 if artifact_limit else 1_000_000))
         children = []

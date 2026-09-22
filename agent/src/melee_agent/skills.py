@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from .engine import Decision, Observation
+from .aerial import AERIAL, NAIR, ShortHopAerial, can_start_aerial
 from .ground_combat import CAPTOR, COMBAT, GroundCombat, can_start_combat
 from .stage import GROUND_EDGE, PLATFORMS, support_surface
 
@@ -19,9 +20,9 @@ class SkillSpec:
     direction: int = 0
 
     def __post_init__(self):
-        if self.name not in ("neutral", "move", "jump", "shield", *COMBAT) or type(self.direction) is not int or self.direction not in (-1, 0, 1):
+        if self.name not in ("neutral", "move", "jump", "shield", *COMBAT, *AERIAL) or type(self.direction) is not int or self.direction not in (-1, 0, 1):
             raise ValueError("Invalid skill")
-        if self.name in ("move", *COMBAT) and self.direction == 0 or self.name in ("neutral", "shield") and self.direction:
+        if self.name in ("move", *COMBAT, *AERIAL) and self.direction == 0 or self.name in ("neutral", "shield") and self.direction:
             raise ValueError("Invalid skill direction")
 
 
@@ -32,7 +33,7 @@ def relative_skill(label, observation):
     choices = {"neutral": SkillSpec("neutral"), "approach": SkillSpec("move", toward),
         "retreat": SkillSpec("move", -toward), "jump_toward": SkillSpec("jump", toward),
         "jump_away": SkillSpec("jump", -toward), "jump": SkillSpec("jump"), "shield": SkillSpec("shield"),
-        **{name: SkillSpec(name, toward) for name in COMBAT}}
+        **{name: SkillSpec(name, toward) for name in (*COMBAT, *AERIAL)}}
     try:
         return choices[label]
     except KeyError:
@@ -61,6 +62,8 @@ def can_start(spec, observation):
         return None
     if spec.name in COMBAT:
         return can_start_combat(spec.name, spec.direction, observation)
+    if spec.name in AERIAL:
+        return can_start_aerial(spec.name, spec.direction, observation)
     if not bot.grounded:
         return "requires_ground"
     if details.action_id not in GROUND_ACTIONS:
@@ -99,9 +102,11 @@ class SkillArbiter:
         self.active = {"spec": spec, "episode": observation.episode,
             "life": observation.bot.details.life_generation_derived, "start_frame": observation.frame,
             "start_x": observation.bot.x, "phase": "await_motion", "ack_frame": None,
-            "knee_start": None, "timeout": 180 if spec.name in COMBAT else 60 if spec.name == "shield" else 40}
+            "knee_start": None, "timeout": 180 if spec.name in (*COMBAT, *AERIAL) else 60 if spec.name == "shield" else 40}
         if spec.name in COMBAT:
             self.active["combat"] = GroundCombat(spec.name, spec.direction, observation)
+        elif spec.name in AERIAL:
+            self.active["aerial"] = ShortHopAerial(spec.name, spec.direction, observation)
         self.last_event = {"status": "started", "skill": spec.name, "direction": spec.direction,
             "frame": observation.frame, "episode": observation.episode, "generation": self.generation}
         return None
@@ -109,16 +114,16 @@ class SkillArbiter:
     def _finish(self, observation, status, reason):
         active = self.active
         if active is not None:
-            combat = active.get("combat")
-            if combat is not None and combat.status is None:
-                combat.finish(observation, status, reason)
+            primitive = active.get("combat") or active.get("aerial")
+            if primitive is not None and primitive.status is None:
+                primitive.finish(observation, status, reason)
             self.last_event = {"status": status, "reason": reason, "skill": active["spec"].name,
                 "direction": active["spec"].direction, "episode": observation.episode,
                 "frame": observation.frame, "source_frame": active["start_frame"],
                 "ack_frame": active["ack_frame"], "generation": self.generation,
                 "jumpsquat_observed_frames": (active["ack_frame"] - active["knee_start"])
                     if active["knee_start"] is not None and active["ack_frame"] is not None else None,
-                **({"combat": combat.trace()} if combat is not None else {})}
+                **{key: active[key].trace() for key in ("combat", "aerial") if key in active}}
             self.active = None
 
     def abort(self, observation, reason="external_abort"):
@@ -127,9 +132,10 @@ class SkillArbiter:
 
     def retains_attack_hitlag(self, observation):
         active, details = self.active, observation.bot.details
-        return bool(details.hitlag_frames_derived and not details.hitstun_frames_derived and
-            active is not None and "combat" in active and
-            details.action_id in (COMBAT[active["spec"].name]["motion"], *CAPTOR))
+        if not details.hitlag_frames_derived or details.hitstun_frames_derived or active is None:
+            return False
+        return (("combat" in active and details.action_id in (COMBAT[active["spec"].name]["motion"], *CAPTOR)) or
+            ("aerial" in active and details.action_id == NAIR))
 
     def step(self, observation):
         if not isinstance(observation, Observation):
@@ -145,13 +151,13 @@ class SkillArbiter:
         bot, details = observation.bot, observation.bot.details
         if (observation.episode, details.life_generation_derived) != (active["episode"], active["life"]):
             return self.abort(observation, "episode_or_life_changed")
-        if "combat" in active:
-            combat = active["combat"]
-            action = combat.step(observation)
-            active["ack_frame"] = combat.ack_frame
-            active["phase"] = combat.phase
-            if combat.status is not None:
-                self._finish(observation, combat.status, combat.reason)
+        primitive = active.get("combat") or active.get("aerial")
+        if primitive is not None:
+            action = primitive.step(observation)
+            active["ack_frame"] = primitive.ack_frame
+            active["phase"] = primitive.phase
+            if primitive.status is not None:
+                self._finish(observation, primitive.status, primitive.reason)
             return Decision(1, *identity, action)
         reason = inhibited(observation)
         if reason:
@@ -203,4 +209,4 @@ class SkillArbiter:
                 "active": None if active is None else {"skill": active["spec"].name,
                     "direction": active["spec"].direction, "phase": active["phase"],
                     "source_frame": active["start_frame"], "episode": active["episode"], "life": active["life"],
-                    **({"combat": active["combat"].trace()} if "combat" in active else {})}}
+                    **{key: active[key].trace() for key in ("combat", "aerial") if key in active}}}

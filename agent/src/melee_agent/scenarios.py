@@ -5,13 +5,16 @@ import hashlib
 import json
 
 from .engine import Decision, ScriptedPolicy
+from .aerial import AERIAL, can_start_aerial
 from .fox_reflex import FoxReflex
 from .ground_combat import COMBAT, can_start_combat
 from .skills import SkillArbiter, SkillSpec, inhibited
 from .stage import STAGE_ID, support_surface
 
 COMBAT_KINDS = {"combat_"+name: name for name in COMBAT}
-KINDS = ("grounded", "airborne", "offstage", "ledge", "shielded", "offstage_low", *COMBAT_KINDS)
+AERIAL_KINDS = {"aerial_"+name: name for name in AERIAL}
+PRIMITIVE_KINDS = {**COMBAT_KINDS, **AERIAL_KINDS}
+KINDS = ("grounded", "airborne", "offstage", "ledge", "shielded", "offstage_low", *PRIMITIVE_KINDS)
 RESULTS = ("setup_failed", "skill_failed", "succeeded", "timeout")
 
 
@@ -28,7 +31,7 @@ class ScenarioV1:
     def __post_init__(self):
         if (self.schema_version != 1 or self.kind not in KINDS or type(self.direction) is not int or
                 self.direction not in (-1, 1) or self.setup_timeout_frames != 480 or
-                self.measurement_timeout_frames != 180 or self.measured_policy not in ("baseline", "fox-reflex-v1", "ground-combat-v1")):
+                self.measurement_timeout_frames != 180 or self.measured_policy not in ("baseline", "fox-reflex-v1", "ground-combat-v1", "aerial-v1")):
             raise ValueError("Invalid fixed ScenarioV1 contract")
 
     def manifest(self):
@@ -47,6 +50,8 @@ class ScenarioV1:
                 "shielded": "bot stable on main ground; opponent Guard/GuardSetOff within 25 units",
                 **{kind: "known shared support; declared facing toward opponent; observed vulnerable target; legal "+name+
                     " range/input/motion predicate" for kind, name in COMBAT_KINDS.items()},
+                **{kind: "settled main ground; x opposite drift direction in [25,45]; legal fresh short-hop input"
+                    for kind in AERIAL_KINDS},
             }[self.kind], "outcome": {
                 "grounded": "observed bounded inward movement and neutral release",
                 "airborne": "observed landing on a known support surface",
@@ -56,6 +61,8 @@ class ScenarioV1:
                 "shielded": "bot shield skill reaches observed success and releases",
                 **{kind: "observed "+name+" start then actionable neutral return; contact/capture recorded separately"
                     for kind, name in COMBAT_KINDS.items()},
+                **{kind: "released jump in jumpsquat; observed takeoff, neutral aerial and grounded neutral return; L-cancel attempt separate from measured landing duration"
+                    for kind in AERIAL_KINDS},
             }[self.kind]}
 
 
@@ -67,6 +74,9 @@ RECOVERY_SUITE = tuple(ScenarioV1("recovery-"+height+"-"+("left" if direction < 
 COMBAT_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
     kind, direction, measured_policy="ground-combat-v1")
     for kind, name in COMBAT_KINDS.items() for direction in (-1, 1))
+AERIAL_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
+    kind, direction, measured_policy="aerial-v1")
+    for kind, name in AERIAL_KINDS.items() for direction in (-1, 1))
 
 
 def find_suite(name):
@@ -76,15 +86,17 @@ def find_suite(name):
         return RECOVERY_SUITE
     if name == "ground-combat-v1":
         return COMBAT_SUITE
+    if name == "aerial-v1":
+        return AERIAL_SUITE
     raise ValueError("Unknown fixed scenario suite")
 
 
 def scenario_suite(spec):
-    return {"fox-reflex-v1": "recovery-v1", "ground-combat-v1": "ground-combat-v1"}.get(spec.measured_policy, "mechanics-v1")
+    return {"fox-reflex-v1": "recovery-v1", "ground-combat-v1": "ground-combat-v1", "aerial-v1": "aerial-v1"}.get(spec.measured_policy, "mechanics-v1")
 
 
 def find_scenario(name):
-    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE:
+    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE+AERIAL_SUITE:
         if spec.name == name:
             return spec
     raise ValueError("Unknown fixed mechanical scenario")
@@ -107,6 +119,8 @@ def starting_predicate(spec, observation):
     x = spec.direction*a.x
     if spec.kind in COMBAT_KINDS:
         return can_start_combat(COMBAT_KINDS[spec.kind], spec.direction, observation) is None
+    if spec.kind in AERIAL_KINDS:
+        return -45 <= x <= -25 and can_start_aerial(AERIAL_KINDS[spec.kind], spec.direction, observation) is None
     if spec.kind == "grounded":
         return stable_ground(observation) and 25 <= x <= 50
     if spec.kind == "airborne":
@@ -162,6 +176,16 @@ class ScenarioPolicy:
     def _setup(self, observation):
         if self.spec.kind in COMBAT_KINDS:
             return self._combat_setup(observation)
+        if self.spec.kind in AERIAL_KINDS:
+            a = observation.bot
+            surface = support_surface(a.x, a.y, a.grounded)
+            if surface != "ground":
+                action = self.probe.decide(observation).action
+                return "wait" if action == "attack" else action
+            target = -35*self.spec.direction
+            if abs(a.x-target) > 5:
+                return "right" if a.x < target else "left"
+            return "wait"
         a = observation.bot
         direction = self.spec.direction
         outward, inward = ("left", "right") if direction < 0 else ("right", "left")
@@ -266,8 +290,8 @@ class ScenarioPolicy:
                 self.owner = "measured"
                 self.initial = asdict(observation)
                 self.measurement_start = observation.frame
-                if self.spec.kind in ("grounded", "shielded", *COMBAT_KINDS):
-                    skill = SkillSpec(COMBAT_KINDS[self.spec.kind], self.spec.direction) if self.spec.kind in COMBAT_KINDS else (
+                if self.spec.kind in ("grounded", "shielded", *PRIMITIVE_KINDS):
+                    skill = SkillSpec(PRIMITIVE_KINDS[self.spec.kind], self.spec.direction) if self.spec.kind in PRIMITIVE_KINDS else (
                         SkillSpec("move", -self.spec.direction) if self.spec.kind == "grounded" else SkillSpec("shield"))
                     reason = self.arbiter.request(skill, observation)
                     if reason:
@@ -277,14 +301,14 @@ class ScenarioPolicy:
             else:
                 action = "wait" if inhibited(observation) else self._setup(observation)
                 return self._decision(observation, action)
-        if inhibited(observation) and self.reflex is None and self.spec.kind not in COMBAT_KINDS:
+        if inhibited(observation) and self.reflex is None and self.spec.kind not in PRIMITIVE_KINDS:
             return self._finish(observation, "skill_failed", "measurement_inhibited:"+inhibited(observation))
         if observation.frame-self.measurement_start >= self.spec.measurement_timeout_frames:
             return self._finish(observation, "timeout", "measurement_deadline")
         a = observation.bot
         support = support_surface(a.x, a.y, a.grounded)
         known_support = support in ("ground", "left", "right", "top")
-        if self.spec.kind in ("grounded", "shielded", *COMBAT_KINDS):
+        if self.spec.kind in ("grounded", "shielded", *PRIMITIVE_KINDS):
             decision = self.arbiter.step(observation)
             if self.arbiter.active is None:
                 event = self.arbiter.last_event or {}
@@ -319,7 +343,7 @@ class ScenarioPolicy:
             "measurement_start_frame": self.measurement_start, "initial_observation": self.initial,
             "setup_privilege": "ordinary_controller_packets_only", "result": self.result,
             **({"reflex": self.reflex.trace()} if self.reflex else {}),
-            **({"skill": self.arbiter.trace()} if self.spec.kind in COMBAT_KINDS else {})}
+            **({"skill": self.arbiter.trace()} if self.spec.kind in PRIMITIVE_KINDS else {})}
 
 
 def verified_trial(report, name):

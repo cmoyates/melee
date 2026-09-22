@@ -94,8 +94,8 @@ def player_record(player, raw, episode, port, lives, zero_indices):
         raise ValueError("Action-frame normalization disagrees with pinned adapter")
     name = getattr(player.action, "name", None)
     return {"port": port, "life_generation_derived": lives.observe(episode, port, int(player.stock)),
-        "life_phase_derived": "dead" if name and name.startswith("DEAD") else
-            "respawn" if name and name.startswith("REBIRTH") else "active_or_unknown",
+        "life_phase_derived": "dead" if 0 <= action_id <= 10 else
+            "respawn" if action_id in (12, 13) else "active_or_unknown",
         "raw_post": raw, "character_mapping": CHARACTERS.get(character_id),
         "action_mapping": {"libmelee_name": name, "available": name is not None,
                             "native_motion_state_mapping": NATIVE_ACTIONS.get(action_id)},

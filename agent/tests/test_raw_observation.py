@@ -72,6 +72,13 @@ class ObservationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             tracker.observe(2, 1, 4)
 
+    def test_respawn_phase_uses_explicit_ids_despite_different_enum_names(self):
+        player = NS(character=NS(value=1), action=NS(value=12, name="ON_HALO_DESCENT"), action_frame=0,
+                    hitstun_frames_left=0, hitlag_left=0, stock=3, on_ground=True,
+                    invulnerable=True, position=NS(x=0., y=0.))
+        result = player_record(player, decode_post(event(action=12)), 1, 1, LifeTracker(), {})
+        self.assertEqual(result["life_phase_derived"], "respawn")
+
     def test_raw_hook_is_bounded_and_does_not_skip_the_original_parser(self):
         calls = []
         console = NS(_Console__post_frame=lambda state, data: calls.append(len(data)), eventsize={0x38: 0x4d})

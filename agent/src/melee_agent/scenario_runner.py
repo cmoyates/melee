@@ -93,7 +93,7 @@ def inspect_scenario(run):
     if result.get("status") == "succeeded" and measured:
         a = result["end_observation"]["bot"]
         if spec.kind in ("offstage", "ledge", "airborne"):
-            on_stage = support_surface(a["x"], a["y"], a["grounded"]) is not None
+            on_stage = support_surface(a["x"], a["y"], a["grounded"]) in ("ground", "left", "right", "top")
             ledge = spec.kind == "offstage" and a["details"]["action_id"] in (252, 253)
             if not on_stage and not ledge:
                 errors["return_or_landing_not_observed"] += 1

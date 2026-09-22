@@ -55,6 +55,12 @@ class ScenarioTests(unittest.TestCase):
         policy.decide(position(1, x=-45., y=27.2001, action_id=42))
         self.assertEqual(policy.result["status"], "succeeded")
 
+    def test_unknown_ground_collision_is_not_a_known_stage_return(self):
+        policy = ScenarioPolicy(find_scenario("offstage-left"))
+        policy.decide(position(x=-72., y=-1., grounded=False, jumps=1, action_id=29, self_velocity_y=-1.))
+        policy.decide(position(1, x=-72., y=-10., grounded=True, action_id=42))
+        self.assertFalse(policy.complete)
+
     def test_setup_failure_does_not_run_measured_controller(self):
         policy = ScenarioPolicy(find_scenario("shielded-opponent"))
         with patch.object(policy.arbiter, "request", side_effect=AssertionError("measurement forbidden")):

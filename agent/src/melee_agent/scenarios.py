@@ -189,6 +189,7 @@ class ScenarioPolicy:
             return self._finish(observation, "timeout", "measurement_deadline")
         a = observation.bot
         support = support_surface(a.x, a.y, a.grounded)
+        known_support = support in ("ground", "left", "right", "top")
         if self.spec.kind in ("grounded", "shielded"):
             decision = self.arbiter.step(observation)
             if self.arbiter.active is None:
@@ -197,8 +198,8 @@ class ScenarioPolicy:
                 return self._finish(observation, status, "skill:"+str(event.get("status")))
             return decision
         if self.spec.kind == "airborne":
-            return self._finish(observation, "succeeded", "observed_landing") if support is not None else self._decision(observation)
-        if support is not None or (self.spec.kind == "offstage" and a.details.action_id in (252, 253)):
+            return self._finish(observation, "succeeded", "observed_landing") if known_support else self._decision(observation)
+        if known_support or (self.spec.kind == "offstage" and a.details.action_id in (252, 253)):
             return self._finish(observation, "succeeded", "observed_stage_or_ledge")
         if self.spec.kind == "ledge":
             return self._decision(observation, "right" if self.spec.direction < 0 else "left")

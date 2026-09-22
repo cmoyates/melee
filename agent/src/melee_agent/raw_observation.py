@@ -23,7 +23,8 @@ NATIVE_ACTIONS = {0: "ftCo_MS_DeadDown", 12: "ftCo_MS_Rebirth", 13: "ftCo_MS_Reb
 POST_FIELDS = {"character_internal_id": (0x7, ">B"), "action_id": (0x8, ">H"),
     "x": (0xa, ">f"), "y": (0xe, ">f"), "facing": (0x12, ">f"),
     "percent": (0x16, ">f"), "shield": (0x1a, ">f"), "stocks": (0x21, ">B"),
-    "action_frame_raw": (0x22, ">f"), "hitstun_raw": (0x2b, ">f"),
+    "action_frame_raw": (0x22, ">f"), "state_flags_2": (0x27, ">B"), "state_flags_4": (0x29, ">B"),
+    "misc_as_raw": (0x2b, ">f"),
     "airborne": (0x2f, ">B"), "jumps": (0x32, ">B"), "hurtbox_state": (0x34, ">B"),
     "speed_air_x_self": (0x35, ">f"), "speed_y_self": (0x39, ">f"),
     "speed_x_attack": (0x3d, ">f"), "speed_y_attack": (0x41, ">f"),
@@ -41,6 +42,21 @@ def decode_post(event):
         result["available"][name] = present and (not isinstance(value, float) or math.isfinite(value))
         result[name] = value if result["available"][name] else None
     return result
+
+
+def combat_counters(raw):
+    """0x2B is a reused motion field; only flag 4 bit 0x02 means hitstun.
+
+    Source: project-slippi/slippi-wiki SPEC.md, Post-Frame Update/state flags.
+    A still-set flag with a zero/fractional remainder conservatively inhibits
+    actions for this observation. Original floats/flags remain in the raw trace.
+    """
+    required = ("state_flags_2", "state_flags_4", "misc_as_raw", "hitlag_raw")
+    if not all(raw["available"].get(name) for name in required):
+        raise ValueError("Combat state flags/counters unavailable")
+    hitlag = max(1, math.ceil(raw["hitlag_raw"])) if raw["state_flags_2"] & 0x20 else 0
+    hitstun = max(1, math.ceil(raw["misc_as_raw"])) if raw["state_flags_4"] & 0x02 else 0
+    return hitlag, hitstun
 
 
 class RawStreamTap:

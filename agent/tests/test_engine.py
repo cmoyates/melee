@@ -71,7 +71,10 @@ class EngineTests(unittest.TestCase):
     def test_live_match_context_reaches_policy_and_trace_through_stock_loss_and_reset(self):
         def player(stocks):
             return SimpleNamespace(position=SimpleNamespace(x=0, y=0), on_ground=True,
-                                    jumps_left=2, action=SimpleNamespace(name="STANDING"), stock=stocks)
+                jumps_left=2, action=SimpleNamespace(name="STANDING", value=14), action_frame=1, stock=stocks,
+                percent=0., facing=True, hitlag_left=0, hitstun_frames_left=0, speed_ground_x_self=0.,
+                speed_air_x_self=0., speed_y_self=0., speed_x_attack=0., speed_y_attack=0., shield_strength=60.,
+                controller_state=SimpleNamespace(button={}, main_stick=(.5,.5), c_stick=(.5,.5), l_shoulder=0., r_shoulder=0.))
         state = SimpleNamespace(stage=SimpleNamespace(name="BATTLEFIELD"), frame=-123,
                                 players={1: player(4), 2: player(4)})
         policy, clock = Mock(), FakeClock()
@@ -85,7 +88,9 @@ class EngineTests(unittest.TestCase):
         for episode, frame, bot_stock, opponent_stock, elapsed, remaining in cases:
             state.frame = frame
             state.players[1].stock, state.players[2].stock = bot_stock, opponent_stock
-            row = executor.step(observe(state, episode, clock))
+            raw = {"state_flags_2": 0, "state_flags_4": 0, "misc_as_raw": -10., "hitlag_raw": 0.,
+                    "available": {name: True for name in ("state_flags_2", "state_flags_4", "misc_as_raw", "hitlag_raw")}}
+            row = executor.step(observe(state, episode, clock, {str(p): {"raw_post": raw} for p in (1, 2)}))
             received = policy.decide.call_args.args[0]
             self.assertEqual((received.bot.stocks_remaining, received.opponent.stocks_remaining),
                                 (bot_stock, opponent_stock))
@@ -100,6 +105,19 @@ class EngineTests(unittest.TestCase):
                         {"held": ("A", "A")}, {"held": ("UNKNOWN",)}, {"main_y": False}):
             with self.assertRaises(ValueError):
                 Packet(**changes)
+
+    def test_details_and_life_identity_cannot_be_missing_or_nonfinite(self):
+        mutations = [lambda d: d.update(schema_version=2), lambda d: d["bot"].pop("details"),
+            lambda d: d["bot"]["details"].update(hitlag_frames_derived=-1),
+            lambda d: d["bot"]["details"].update(action_id=65536),
+            lambda d: d["bot"]["details"].update(self_velocity_x=float("nan")),
+            lambda d: d["bot"]["details"].update(input_neutral_derived=1),
+            lambda d: d["bot"]["details"].update(life_generation_derived=2)]
+        for mutate in mutations:
+            data = deepcopy(self.sample)
+            mutate(data)
+            with self.assertRaises(ValueError):
+                Observation.parse(data)
 
     def test_stale_decision_cannot_reach_sink(self):
         observation = Observation.parse(self.sample)

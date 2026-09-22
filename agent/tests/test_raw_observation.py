@@ -4,7 +4,7 @@ import re
 import struct
 import unittest
 
-from melee_agent.raw_observation import CHARACTERS, NATIVE_ACTIONS, LifeTracker, RawStreamTap, decode_post, player_record, stage_record
+from melee_agent.raw_observation import CHARACTERS, NATIVE_ACTIONS, LifeTracker, RawStreamTap, combat_counters, decode_post, player_record, stage_record
 from melee_agent.input_trace import InputTrace, same_input
 from melee_agent.engine import Packet
 
@@ -21,6 +21,17 @@ def event(frame=-123, port=1, action=14, character=1, action_frame=0., size=0x4d
 
 
 class ObservationTests(unittest.TestCase):
+    def test_misc_motion_field_is_hitstun_only_when_its_flag_is_set(self):
+        data = event()
+        for value in (-20., .9, 50.):
+            struct.pack_into(">f", data, 0x2b, value)
+            self.assertEqual(combat_counters(decode_post(data)), (0, 0))
+        data[0x29] = 0x02
+        self.assertEqual(combat_counters(decode_post(data)), (0, 50))
+        struct.pack_into(">f", data, 0x2b, 0.)
+        self.assertEqual(combat_counters(decode_post(data)), (0, 1))
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            combat_counters(decode_post(data[:0x26]))
     def test_explicit_action_subset_matches_native_enum_not_css_ids(self):
         path = Path(__file__).resolve().parents[2] / "src/melee/ft/kinds/ftCommon/forward.h"
         source = path.read_text().split("typedef enum ftCommon_MotionState {")[1].split("}")[0]

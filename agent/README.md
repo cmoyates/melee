@@ -294,7 +294,7 @@ made by these commands. Frame log schema 4 records the validated observation,
 decision, complete requested packet and queue timestamp under `control`.
 Controller packets reset every button, both sticks and both analog shoulders.
 
-Observation schema 2 includes each fighter's observed `stocks_remaining` and
+Observation schema 3 includes each fighter's observed `stocks_remaining` and
 `match` context: `time_limit_seconds`, `starting_stocks`,
 `elapsed_seconds_derived` and `remaining_seconds_derived`. The configured rules
 are eight minutes and four stocks, checked against the completed replay.
@@ -345,7 +345,7 @@ last match can be partial, with unknown outcome; this does not count as a win or
 a completed match. Normal `match` timeouts still return incomplete. Both modes
 use the same supervisor, private profiles, watchdog and configured limits.
 
-Frame schema 4 adds run identity, RawObservationV1, and controller provenance.
+Frame schema 4 adds run identity, raw observations, and controller provenance.
 The pinned Slippi parser hook retains original post-frame values and availability
 flags before libmelee adjusts them. Each fighter has position, action ID/raw
 floating-point frame, normalized action frame/adjustment, velocity components,
@@ -382,3 +382,43 @@ worker summary, and reports stock/grounded transitions and trace SHA-256. A pass
 describes trace consistency; consult the separate run status for completion.
 The immutable launch manifest records agent source hashes as well as runtime,
 disc and dependency identity. Historical frame schemas are not silently upgraded.
+
+## Observed local skills
+
+```sh
+rtk proxy agent/.venv/bin/melee-agent skill-check --repeats 20 --duration 600
+```
+
+`SkillArbiter` owns one interruptible movement/jump/shield/neutral commitment.
+It selects a complete packet through the same frame executor used by fake and
+live runs. Movement must show displacement in the requested direction; jumps
+must show jumpsquat followed by upward airborne motion; shield must be observed
+held for its bounded interval. Success also requires observed input release.
+Sending a packet is never sufficient. Missing frames, hitlag/hitstun, death,
+respawn, explicit emergency abort and timeouts release input. Noninterruptible
+motions and unsafe support edges produce named refusals. Landing is excluded
+from start conditions because a jump pressed before the landing window opens
+can be ignored and then remain held without a new press edge.
+
+Relative labels (`approach`, `retreat`, `jump_toward`, `jump_away`) resolve the
+opponent's side when a skill starts and retain that direction for its commitment.
+There is no native CPU fallback for Fox. Waiting/abort behavior is local neutral
+input; robust recovery and broader combat are later issues.
+
+The live suite records 20 counted outcomes for each of seven skill/direction
+cases, retrying interruptions separately. A counted outcome is observed success
+or a specific state-dependent refusal. Every case must have at least one observed
+success, and no timeouts may occur for the suite to pass. CPU interruptions are
+not counted as successes. The final summary recomputes reported counts from the
+trial list; incomplete or failed suites exit nonzero. The replay can be partial
+because completing a skill suite is distinct from winning or completing a match.
+
+Observation schema 3 adds validated fighter details: motion ID/frame, derived
+life generation, percent, facing, velocity components, shield strength and
+observed input state. Hitlag/hitstun availability is derived from Slippi flags.
+RawObservationV2 renames the old `hitstun_raw` field to `misc_as_raw` and records
+the state flags: [Slippi's specification](https://github.com/project-slippi/slippi-wiki/blob/master/SPEC.md#post-frame-update)
+defines this as a reused motion field that represents hitstun only when its
+hitstun flag is set. A still-set flag with zero/fractional remainder conservatively
+blocks the skill for the current observation; original values remain in the raw
+trace. Earlier v1 captures retain their original field names and source hashes.

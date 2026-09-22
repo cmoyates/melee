@@ -65,6 +65,8 @@ class WorkerRecorderTests(unittest.TestCase):
                         stock=4, percent=0., position=NS(x=0., y=0.), on_ground=True, jumps_left=2,
                         action=NS(value=14, name="STANDING"), action_frame=1, hitstun_frames_left=0,
                         hitlag_left=0, invulnerable=False,
+                        facing=True, speed_ground_x_self=0., speed_air_x_self=0., speed_y_self=0.,
+                        speed_x_attack=0., speed_y_attack=0., shield_strength=60.,
                         controller_state=NS(main_stick=(.5, .5), c_stick=(.5, .5), l_shoulder=0., r_shoulder=0.,
                             button={buttons["BUTTON_" + name]: False for name in BUTTONS}))
                 return NS(frame=self.frame, players=players, stage=stages.BATTLEFIELD, is_teams=False, menu_state=menus.IN_GAME)

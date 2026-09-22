@@ -22,6 +22,9 @@ def main(argv=None):
     capture = commands.add_parser("capture", help="Capture until a wall-clock deadline, retaining partial final match")
     capture.add_argument("--duration", type=int, default=600)
     capture.add_argument("--policy", choices=("scripted", "smoke"), default="scripted")
+    skills = commands.add_parser("skill-check", help="Observed movement/jump/shield repetitions on Battlefield")
+    skills.add_argument("--repeats", type=int, default=20)
+    skills.add_argument("--duration", type=int, default=600)
     smoke = commands.add_parser("smoke", help="Asset-free deterministic frame-to-controller regression")
     smoke.add_argument("--backend", choices=("fake",), default="fake")
     smoke.add_argument("--fixture", type=Path)
@@ -46,6 +49,7 @@ def main(argv=None):
         command.add_argument("run_id")
         if name == "inspect":
             command.add_argument("--integrity", action="store_true")
+            command.add_argument("--skills", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
     if args.command == "provider":
@@ -86,6 +90,9 @@ def main(argv=None):
     if args.command == "capture":
         from .matches import launch
         return launch(root, args.duration, 100, args.policy, capture=True)
+    if args.command == "skill-check":
+        from .matches import launch
+        return launch(root, args.duration, 10, "skill-check", skill_repeats=args.repeats)
     if args.command in ("inspect", "stop"):
         from .matches import locate_run
         try:
@@ -95,7 +102,12 @@ def main(argv=None):
                     (run / "stop.request").touch(exist_ok=True)
                 print(json.dumps({"run_id": args.run_id, "stop_requested": True}))
             else:
-                if args.integrity:
+                if args.skills:
+                    from .skill_evidence import inspect_skills
+                    report = inspect_skills(run)
+                    print(json.dumps(report, allow_nan=False))
+                    return 0 if report["status"] == "pass" else 1
+                elif args.integrity:
                     from .integrity import inspect_integrity
                     report = inspect_integrity(run)
                     print(json.dumps(report, allow_nan=False))

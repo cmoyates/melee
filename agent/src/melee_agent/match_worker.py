@@ -32,6 +32,7 @@ def run(run_dir):
     console = None
     controllers = []
     recorder = None
+    policy = None
     outcome = {"status": "error", "episodes": [], "neutralized": False}
     def interrupted(signum, frame):
         raise StopRequested()
@@ -57,7 +58,12 @@ def run(run_dir):
         for controller in controllers:
             controller.connect()
         clock = SystemClock()
-        executor = FrameExecutor(ScriptedPolicy(options["policy"]), LibmeleeSink(controllers[0], melee.Button), clock)
+        if options["policy"] == "skill-check":
+            from .skill_check import SkillCheckPolicy
+            policy = SkillCheckPolicy(options["skill_repeats"])
+        else:
+            policy = ScriptedPolicy(options["policy"])
+        executor = FrameExecutor(policy, LibmeleeSink(controllers[0], melee.Button), clock)
         in_game = False
         last_frame = None
         episode = None
@@ -114,13 +120,13 @@ def run(run_dir):
                     provenance = input_trace.observation(episode["episode"], current, a.controller_state)
                     raw_players = {str(p): player_record(v, raw_stream.take(current, p),
                         episode["episode"], p, lives, console.zero_indices) for p, v in state.players.items()}
-                    control = executor.step(observe(state, episode["episode"], clock))
+                    control = executor.step(observe(state, episode["episode"], clock, raw_players))
                     packet_id = input_trace.queue(control)
                     controllers[1].release_all()
                     record = {"schema_version": 4, "run_id": options["run_id"],
                                 "episode": episode["episode"], "frame": current,
                                 "monotonic": now, "menu": "IN_GAME", "control": control,
-                                "raw_observation": {"schema_version": 1, "players": raw_players,
+                                "raw_observation": {"schema_version": 2, "players": raw_players,
                                     "slippi_version": [int(v) for v in console.slp_version_tuple], "stage": stage_record()},
                                 "attempted_packet_id": packet_id, "input_provenance": provenance,
                                 "stage": STAGE_NAME, "stage_id": STAGE_ID,
@@ -132,6 +138,12 @@ def run(run_dir):
                                     "support_surface_derived": support_surface(float(v.position.x), float(v.position.y), bool(v.on_ground)),
                                     "observed_main": [float(x) for x in v.controller_state.main_stick]}
                                     for p, v in state.players.items()}}
+                    if hasattr(policy, "trace"):
+                        record["skill"] = policy.trace()
+                    if options["policy"] == "skill-check" and policy.complete:
+                        frames.publish(record)
+                        outcome["status"] = "skill_check_complete"
+                        break
                     if options["policy"] == "input-probe" and current >= 120:
                         episode["elapsed_seconds"] = now - episode["started_monotonic"]
                         outcome["probe_samples"] = probe_samples
@@ -199,6 +211,8 @@ def run(run_dir):
             except (OSError, RuntimeError):
                 neutralized = False
         outcome["neutralized"] = neutralized
+        if options["policy"] == "skill-check" and policy is not None:
+            outcome["skill_check"] = policy.report()
         if recorder is not None:
             try:
                 recorder.close()

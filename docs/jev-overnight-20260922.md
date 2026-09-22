@@ -14,7 +14,8 @@ The initial checkout was `ea74132b3425f3d18aefae39435e20c54af29982`.
 The initial order was J08/J09 provider validation, then J04/J05 lifecycle,
 J06 recording, J07 skills and J10 live asynchronous decisions. J11 live provider
 control, J12 fault containment and J13 incident replay now have acceptance
-evidence below. J14 mechanical scenarios is the next dependent slice.
+evidence below. J14 mechanical scenarios has now passed its full acceptance run;
+J15 local Fox recovery is the next dependent slice.
 
 J08 is now open as [PR #33](https://github.com/cmoyates/melee/pull/33), stacked
 on [PR #32](https://github.com/cmoyates/melee/pull/32). Its 66-test offline CI
@@ -352,7 +353,7 @@ The smaller CLI-selected stale-response incident at frame 178 also passes exact
 replay. Evidence: `j13-full-live-replay.json`, `j13-live-capture-audit.json` and
 `j13-historical-explanation.json`. The shared paid ledger remains unchanged.
 
-## J14: mechanical scenario acceptance in progress
+## J14: mechanical scenario acceptance passed
 
 The fixed `mechanics-v1` suite creates one fresh Battlefield match per trial,
 uses ordinary controller inputs for setup, and verifies a neutral handoff before
@@ -362,7 +363,7 @@ ordering has seed zero; game and CPU RNG remain unseeded and are not claimed
 deterministic. Savestate loading is unsupported rather than accepting unpinned
 state files.
 
-183 offline tests pass. The nine-trial pilot
+184 offline tests pass for the final slice; agent CI and native build pass. The nine-trial pilot
 `scenarios-aba1221b86a047ff81ec9953e788f7ac` completed in 153.27 seconds.
 All six mirrored movement/airborne/offstage setups reached their predicates and
 their measured probes succeeded. Ledge-left, ledge-right and shielding-opponent
@@ -374,7 +375,36 @@ Each audit checks raw Slippi fields, setup release/ownership, actual mechanical
 outcome, replay rules, recorder integrity and owned-process cleanup. Success,
 skill failure, setup failure and measurement timeout remain separate. The
 ninety-trial acceptance run `scenarios-a89512b7f04143aabc2e39bc32e72a62`
-is in progress. Do not infer ten-repeat acceptance from the pilot alone.
+completed in 1,521.47 seconds with 31,200 game records and all audits passing.
+
+| Scenario | Setup reached | Skill succeeded | Skill failed | Setup failed |
+| --- | ---: | ---: | ---: | ---: |
+| Grounded left | 10 | 10 | 0 | 0 |
+| Grounded right | 10 | 10 | 0 | 0 |
+| Airborne left | 10 | 5 | 5 | 0 |
+| Airborne right | 10 | 10 | 0 | 0 |
+| Offstage left | 10 | 10 | 0 | 0 |
+| Offstage right | 10 | 10 | 0 | 0 |
+| Ledge left | 0 | 0 | 0 | 10 |
+| Ledge right | 0 | 0 | 0 | 10 |
+| Shielded opponent | 0 | 0 | 0 | 10 |
+
+The five airborne-left failures were measured interruptions, not setup failures.
+The three unreached predicates remain explicit limitations. All 90 runs were
+re-audited after tightening the oracle to reject unknown support geometry, and
+all 31,200 recorded control steps reproduced identical decisions, packets and
+scenario reports under the final `bfd86ac0b` implementation. This comparison
+stops on divergence and makes no counterfactual physics claim. The full schedule
+used the same fixed predicates; its per-trial source manifests retain actual
+source identity. The final suite runner also reserves one absolute child timeout
+across startup and completion instead of renewing that timeout after startup.
+
+All owned processes closed, replay settings matched and no provider was contacted.
+All 42 protected files remain unchanged; retained artifacts total 249,631,680 bytes.
+Evidence: `j14-final-suite.json`; suite summary SHA-256:
+`cb5d6481acce4c5500f811316ee734c05484b9f8e8f4483ed9e178d850a1681f`.
+The paid ledger remains $0.019222398 conservatively accounted. PR #42 stays open
+for review, as do the earlier stacked slices.
 
 ## Durable local state
 

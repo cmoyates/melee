@@ -10,7 +10,7 @@ def stop_state_receiver(console):
         return {"stopped": True, "kind": "test_console"}
     worker = stream._worker
     report = {"kind": "libmelee_receiver", "pid": worker.pid if worker is not None else None,
-              "stopped": worker is None, "terminated": False, "killed": False}
+                "stopped": worker is None, "terminated": False, "killed": False}
     if worker is not None:
         stream._shutdown.set()
         # libmelee joins before closing this read end. If its child is blocked

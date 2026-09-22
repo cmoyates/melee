@@ -272,7 +272,7 @@ $0.013222398 reported plus the original $0.006 uncertain reservation. It records
 312 requests and 410,819 accounted input tokens, leaving the original global
 limits unchanged. The two J11 runs added no uncertain reservations.
 
-## J12: runtime fault soak (validation in progress)
+## J12: runtime fault soak passed
 
 The first short network probe `match-181fbe552ea04d368e879cced61dcdb9`
 passed with eight audited simulated choices while exercising disconnect,
@@ -297,11 +297,26 @@ The logger probe `match-43a1f8e4889c470cadb7e9fc8eb7d2fc` retained all 856
 accepted records plus its rejected final record, neutralized input, and cleaned
 up in 5.29 seconds. Evidence: `j12-logger-probe.json`.
 
-155 offline tests pass. The restarted thirty-minute schedule
-`soak-e2e03533731e428c99a20633dc9a5d4e` has passed all five terminal cases
-and is running its longer network/frame-gap/rate-cap phases. Certification is
-pending the complete schedule and aggregate evidence; do not infer a pass from
-these intermediate results.
+155 offline tests pass for this slice. The restarted schedule
+`soak-e2e03533731e428c99a20633dc9a5d4e` passed all 11 phases over 1,801.13
+seconds, recording 97,119 game frames. Every required fault occurred. Independent
+audits found no invalid accepted decision among 167 simulated acceptances;
+151 skills reached observed success, 15 aborted and one timed out. This certifies
+runtime containment, not gameplay competence or a perfect skill success rate.
+
+All owned workers, emulators and state receivers stopped. Maximum terminal
+fault-to-cleanup time was 16.27 seconds; the worker-death case correctly reports
+neutralization unavailable. Other cases confirmed neutralization. Peak in-flight
+work was one, the mailbox reached two, and the largest per-phase p95 controller
+queue delay was 0.093 ms. The oldest accepted response was 34.99 ms. The unrelated
+sentinel survived and all 42 protected source/asset/profile files remain unchanged.
+
+The schedule retained 729,210,156 bytes of private artifacts and made zero
+external HTTP calls. The paid ledger remains $0.019222398 conservatively
+accounted, including its existing $0.006 uncertain reservation. The source tested
+was `5bec1e936`; the following correction only fixes continuation indentation in
+receiver shutdown. Evidence index: `j12-final-soak.json`; aggregate summary SHA-256:
+`9a8b062799ccd4591350cd06e640f465c05564a0e9637dde56dfa53b360ced16`.
 
 ## Durable local state
 

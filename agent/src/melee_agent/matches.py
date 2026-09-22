@@ -54,12 +54,14 @@ def terminate_child(child):
         child.wait(timeout=3)
 
 
-def preflight(root, duration, episodes, policy):
+def preflight(root, duration, episodes, policy, capture=False):
     config = load_config(root)
     if type(duration) is not int or not 1 <= duration <= config.limits.max_run_seconds:
         raise ValueError("Duration must fit the configured run limit")
-    if type(episodes) is not int or not 1 <= episodes <= 10 or (policy == "input-probe" and episodes != 1):
-        raise ValueError("Choose 1-10 matches, or exactly one input probe")
+    if type(capture) is not bool:
+        raise ValueError("Invalid capture mode")
+    if type(episodes) is not int or not 1 <= episodes <= (100 if capture else 10) or (policy == "input-probe" and episodes != 1):
+        raise ValueError("Choose 1-10 matches, or exactly one input probe; captures allow 100 episodes")
     if policy not in ("smoke", "scripted", "input-probe"):
         raise ValueError("Unknown local policy")
     if not config.disc_image or not config.runtime or not config.runtime_sha256:
@@ -106,14 +108,22 @@ def read_worker_result(path):
                 type(result.get("neutralized")) is not bool or
                 result.get("status") not in ("error", "interrupted", "matches_complete", "probe_complete")):
             raise ValueError("Invalid worker result")
+        if "recorder" in result:
+            recorder = result["recorder"]
+            if (not isinstance(recorder, dict) or recorder.get("status") not in ("running", "closed", "error") or
+                    type(recorder.get("writer_stopped")) is not bool or
+                    any(type(recorder.get(k)) is not int or recorder[k] < 0
+                        for k in ("accepted", "written", "unwritten", "rejected")) or
+                    recorder["accepted"] != recorder["written"] + recorder["unwritten"]):
+                raise ValueError("Invalid recorder result")
         return result, None
     except (OSError, ValueError, UnicodeError) as error:
         return empty, type(error).__name__
 
 
-def supervise(root, duration, episodes, policy):
+def supervise(root, duration, episodes, policy, capture=False):
     from .replay import expected_settings, summarize_file
-    config, runtime, image = preflight(root, duration, episodes, policy)
+    config, runtime, image = preflight(root, duration, episodes, policy, capture)
     base = owned_path(root, config.run_root)
     base.mkdir(parents=True, exist_ok=True)
     lock_path = root / "build/jev/match.lock"
@@ -135,10 +145,13 @@ def supervise(root, duration, episodes, policy):
         run_dir = base / run_id
         run_dir.mkdir()
         (run_dir / "replays").mkdir()
-        options = {"schema_version": 1, "run_id": run_id, "runtime": str(runtime), "disc": str(image),
+        options = {"schema_version": 2, "run_id": run_id, "runtime": str(runtime), "disc": str(image),
                     "runtime_sha256": config.runtime_sha256, "disc_sha1": STOCK_DISC_SHA1,
                     "libmelee_commit": "bce21f09984b286e6d36bfd2939e4cd4691f94c2",
                     "duration_seconds": duration, "port": config.slippi_port,
+                    "max_frame_bytes": config.limits.max_artifact_bytes * 7 // 8,
+                    "capture_until_deadline": capture,
+                    "source_sha256": {p.name: digest(p, "sha256") for p in sorted(Path(__file__).parent.glob("*.py"))},
                     "policy": policy, "episodes": episodes, "provider_contacted": False,
                     "stage": STAGE_NAME, "stage_id": STAGE_ID,
                     "match_time_limit_seconds": TIME_LIMIT_SECONDS, "starting_stocks": STARTING_STOCKS}
@@ -237,7 +250,15 @@ def supervise(root, duration, episodes, policy):
         stopped = all(child is None or child.poll() is not None for child in (worker, emulator))
         if cleanup_errors or not stopped or not result["neutralized"]:
             complete = probe_ok = False
-        status = "complete" if complete else "probe_verified" if probe_ok else "incomplete"
+        recorder = result.get("recorder", {})
+        if recorder and (recorder["status"] != "closed" or recorder["unwritten"] or recorder["rejected"] or
+                            not recorder["writer_stopped"]):
+            complete = probe_ok = False
+        captured = (capture and reason == "timeout" and result.get("status") == "interrupted" and
+                    result["neutralized"] and stopped and not cleanup_errors and bool(result["episodes"]) and
+                    recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
+                    recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
+        status = "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
                     "policy": policy, "episodes": result["episodes"], "replays": replays,
                     "replay_errors": replay_errors, "neutralized": result["neutralized"],
@@ -257,19 +278,22 @@ def supervise(root, duration, episodes, policy):
             summary["cleanup_errors"] = cleanup_errors
         if "error_type" in result:
             summary["worker_error_type"] = result["error_type"]
+        for key in ("recorder", "failure_reason"):
+            if key in result:
+                summary[key] = result[key]
         try:
             write_json(run_dir / "summary.json", summary)
         except OSError as error:
             # Disk-full cannot promise a durable report. Preserve truthful stdout.
             summary.update(status="incomplete", reason="summary_write_failed",
                             prior_reason=reason, summary_error_type=type(error).__name__)
-            complete = probe_ok = False
+            complete = probe_ok = captured = False
         print(json.dumps(summary), flush=True)
-        return 0 if complete or probe_ok else 2
+        return 0 if complete or probe_ok or captured else 2
 
 
-def launch(root, duration, episodes, policy):
-    command = [sys.executable, "-B", "-m", "melee_agent.matches", str(root), str(duration), str(episodes), policy]
+def launch(root, duration, episodes, policy, capture=False):
+    command = [sys.executable, "-B", "-m", "melee_agent.matches", str(root), str(duration), str(episodes), policy, str(int(capture))]
     supervisor = subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True, env=isolated_environment())
     try:
         return supervisor.wait()
@@ -293,7 +317,8 @@ def locate_run(root, run_id):
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(supervise(Path(sys.argv[1]).resolve(), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]))
+        raise SystemExit(supervise(Path(sys.argv[1]).resolve(), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4],
+                                    len(sys.argv) > 5 and sys.argv[5] == "1"))
     except Exception as error:
         print(json.dumps({"status": "blocked", "error_type": type(error).__name__,
                             "message": "Match setup failed; check local runtime configuration and launch availability."}))

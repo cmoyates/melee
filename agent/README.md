@@ -4,8 +4,9 @@ Fox first; build the common foundation for natural-language personality control
 and a future Showboat Captain Falcon. Existing Showboat remains a separate
 historical implementation and baseline.
 
-The workspace includes bootstrap, doctor, and a first supervised local match
-runner. Paid inference and personality control are not implemented yet. The
+The workspace includes bootstrap, doctor, supervised local matches and a bounded
+paid Decisions adapter/benchmark. Live Jev control and personality control remain
+later slices. The
 scripted policy is a temporary controller test; it is not a Jev-powered bot.
 
 ## Setup
@@ -62,9 +63,9 @@ rtk proxy uv run --project agent --no-sync --env-file agent/.env melee-agent doc
 The doctor checks presence only, never displays or authenticates the token.
 Direct CLI invocations do not load `.env` automatically. No API key is accepted
 in TOML. Do not put secrets in CLI arguments, issue bodies, reports or committed
-files. The production inference adapter and broader provider checks belong to
-J08/J09; adding these settings does not make an API request. The model setting
-is reserved for that adapter; the scripted match runner does not consume it.
+files. The J08/J09 adapter and benchmark consume these settings only through
+explicit provider commands; adding settings does not make an API request. The
+scripted match runner does not consume them.
 
 A one-question live probe on 2026-09-21 verified this alias through
 `POST https://openrouter.ai/api/alpha/decisions`. It resolved to
@@ -289,7 +290,7 @@ deliberately walks Fox offstage to exercise real stock loss and end-to-next-game
 transitions quickly. Its losses are not a gameplay benchmark. `scripted` is a
 basic approach/attack/recovery placeholder that can be replaced through the
 shared `TacticalPolicy`/`FrameExecutor` boundary. Jev/OpenRouter calls are not
-made by these commands. Frame log schema 3 records the validated observation,
+made by these commands. Frame log schema 4 records the validated observation,
 decision, complete requested packet and queue timestamp under `control`.
 Controller packets reset every button, both sticks and both analog shoulders.
 
@@ -326,8 +327,58 @@ Platform surfaces are approximate static geometry from pinned libmelee; derived
 support labels are not native collision certification. No new platform tactics
 are claimed by this infrastructure change.
 
-This first runner uses buffered synchronous frame logging with watchdog shutdown
-on stalls; an off-loop logger and richer per-packet flush provenance remain J06
-work. Artifact limits are sampled once per second and can overshoot briefly.
+Frame logging uses a bounded off-loop writer. Artifact limits are sampled once
+per second and can overshoot briefly.
 It runs the graphical OpenGL runtime, with background controller input and audio
 disabled; headless macOS support has not been established.
+
+## Frame capture and provenance
+
+```sh
+rtk proxy agent/.venv/bin/melee-agent capture --policy smoke --duration 600
+rtk proxy agent/.venv/bin/melee-agent inspect match-RUN_ID --integrity
+```
+
+`capture` continues through completed matches until its configured wall-clock
+deadline. A clean, fully drained capture returns `captured` and exits zero. The
+last match can be partial, with unknown outcome; this does not count as a win or
+a completed match. Normal `match` timeouts still return incomplete. Both modes
+use the same supervisor, private profiles, watchdog and configured limits.
+
+Frame schema 4 adds run identity, RawObservationV1, and controller provenance.
+The pinned Slippi parser hook retains original post-frame values and availability
+flags before libmelee adjusts them. Each fighter has position, action ID/raw
+floating-point frame, normalized action frame/adjustment, velocity components,
+stocks, percent, hitlag/hitstun, jumps and hurtbox state. A missing or nonfinite
+raw optional field is null and marked unavailable; a libmelee default is not
+proof that the raw field existed. Unknown animation IDs are preserved.
+
+Fox's internal/native fighter ID is 1 and external selection ID is 2; Mario's
+are 0 and 8. Battlefield's Slippi/libmelee ID is 31, while native `GrKind` is
+0x24. Mappings are explicit and tested against the decomp headers. Only a small
+common motion-state subset has a native mapping; character-specific semantics
+remain J18 work. Platform/support geometry and life generations are derived.
+The life generation increments on stock loss, including the death/respawn
+interval, and resets each episode; it is not a native spawn identifier.
+
+`input_provenance` separates the queued packet from a successfully completed
+controller pipe flush and the subsequently observed input values. Value matching
+can be ambiguous and never claims a per-packet application receipt. Slippi's
+observed analog shoulders contain the game's merged trigger value. The controlled
+input probe measures distinct left/right/neutral transition lag separately.
+
+The recorder owns a 256-record queue, serializes/writes on a daemon thread, and
+flushes at least every 250 ms while making progress. The producer never waits for
+queue space. Queue-full, encoding, short-write, I/O and drain-timeout failures
+stop the worker explicitly. Controllers are neutralized before the bounded writer
+join. The supervisor still stops a hung worker/emulator. Accepted/written/rejected
+counts and remaining unwritten records appear in the final summary; a full disk
+can prevent a durable report, in which case stdout reports failure. Flush is an
+OS write boundary, not a power-loss durability guarantee.
+
+The read-only integrity command streams the trace, checks record/run/episode
+identity and action-frame adjustments, recomputes frame accounting against the
+worker summary, and reports stock/grounded transitions and trace SHA-256. A pass
+describes trace consistency; consult the separate run status for completion.
+The immutable launch manifest records agent source hashes as well as runtime,
+disc and dependency identity. Historical frame schemas are not silently upgraded.

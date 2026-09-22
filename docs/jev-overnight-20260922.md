@@ -87,6 +87,41 @@ PID/PGID/exit status and summary hashes are retained in
 necessarily limited to stdout if the summary cannot be persisted; the supervisor
 returns failure rather than claiming durable completion.
 
+## J06 raw observations and bounded recording
+
+102 offline tests pass, including worker-level full/stalled-disk failures,
+bounded queue/drain behavior, short writes, raw event boundaries, explicit native
+ID mappings, action-frame normalization, corrupted traces and failed pipe flushes.
+
+The ten-minute Battlefield capture `match-6710ce637a254072855df9cee65007e5`
+finished cleanly at its deadline (601.15 seconds including cleanup). Its
+independent integrity audit passed: **28,123 game frames, 31,936 total records,
+30 episodes, zero gaps/duplicates/rollbacks, 117 observed Fox stock losses**.
+There are 29 verified completed replays and one partial final replay with unknown
+outcome. All accepted records were written, none rejected, and the sampled queue
+high-water mark was one of 256. Trace size: 159,875,009 bytes. Controllers were
+neutralized and both owned processes stopped. All 42 protected baseline files
+remain unchanged.
+
+Capture trace SHA-256:
+`ebca3ba541a445632741a924882a37b007e3be852518fea56b3fa7947751b975`.
+Summary SHA-256:
+`1b905832760d7a5f559c21ac956413890aa2d2d74500fa69a2cbd33eef9b28cd`.
+The launch manifest pins the source hashes used in this run; short-write and
+corrupt-recorder-result guards were added afterwards. A fresh final-source match,
+`match-1cb7190129044e77ad125e4c86d06b6a`, then completed with 961 game frames,
+a verified replay and a passing integrity audit; its recorded source hashes
+match the committed module contents. Retained integrity reports are `j06-final-match.json`, `j06-capture-600.json` and
+`j06-input-probe.json` in the overnight evidence directory.
+
+The controlled input probe `match-e54ace98f136408281686c26a8e73048` accounts
+for all 244 game frames, including 123 countdown frames, and measures one frame
+for all four right/neutral/left/neutral transitions. This is a measured transition
+lag, not an inferred per-packet application receipt. Two earlier failed probes
+exposed NumPy JSON values and the parser's remaining-stream buffer convention;
+their artifacts are retained and both shut down cleanly. No provider calls were
+made by this slice.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.

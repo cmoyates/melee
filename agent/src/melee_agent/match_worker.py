@@ -11,6 +11,9 @@ from .stage import STAGE_NAME, STAGE_ID, PLATFORMS, support_surface
 from .engine import FrameExecutor, ScriptedPolicy
 from .live_control import LibmeleeSink, SystemClock, observe
 from .rules import STARTING_STOCKS
+from .recorder import FrameRecorder, RecorderError
+from .raw_observation import LifeTracker, RawStreamTap, player_record, stage_record
+from .input_trace import InputTrace
 
 
 class StopRequested(BaseException):
@@ -28,6 +31,7 @@ def run(run_dir):
     options = json.loads((run_dir / "launch.json").read_text())
     console = None
     controllers = []
+    recorder = None
     outcome = {"status": "error", "episodes": [], "neutralized": False}
     def interrupted(signum, frame):
         raise StopRequested()
@@ -42,7 +46,10 @@ def run(run_dir):
             slippi_port=options["port"], replay_dir=str(run_dir / "replays"),
             replay_monthly_folders=False, save_replays=True,
             infinite_time=False, instant_match_restart=False)
+        raw_stream = RawStreamTap(console)
+        lives = LifeTracker()
         controllers = [melee.Controller(console, port) for port in (1, 2)]
+        input_trace = InputTrace(controllers[0])
         helpers = [melee.MenuHelper(), melee.MenuHelper()]
         write_json(run_dir / "ready.json", {"ready": True})
         if not console.connect():
@@ -55,11 +62,12 @@ def run(run_dir):
         last_frame = None
         episode = None
         probe_samples = []
-        last_flush = time.monotonic()
         menu_identity = None
-        menu_started = last_flush
-        with (run_dir / "frames.jsonl").open("x", buffering=65536) as frames:
+        menu_started = time.monotonic()
+        recorder = FrameRecorder(run_dir / "frames.jsonl", max_bytes=options["max_frame_bytes"])
+        with recorder as frames:
             while True:
+                frames.check()
                 state = console.step()  # Flushes preceding complete controller packet first.
                 if state is None:
                     continue
@@ -103,10 +111,18 @@ def run(run_dir):
                     if options["policy"] == "input-probe" and 0 <= current <= 100:
                         probe_samples.append({"frame": current, "x": float(a.position.x),
                                                 "main_x": float(a.controller_state.main_stick[0])})
+                    provenance = input_trace.observation(episode["episode"], current, a.controller_state)
+                    raw_players = {str(p): player_record(v, raw_stream.take(current, p),
+                        episode["episode"], p, lives, console.zero_indices) for p, v in state.players.items()}
                     control = executor.step(observe(state, episode["episode"], clock))
+                    packet_id = input_trace.queue(control)
                     controllers[1].release_all()
-                    record = {"schema_version": 3, "episode": episode["episode"], "frame": current,
+                    record = {"schema_version": 4, "run_id": options["run_id"],
+                                "episode": episode["episode"], "frame": current,
                                 "monotonic": now, "menu": "IN_GAME", "control": control,
+                                "raw_observation": {"schema_version": 1, "players": raw_players,
+                                    "slippi_version": [int(v) for v in console.slp_version_tuple], "stage": stage_record()},
+                                "attempted_packet_id": packet_id, "input_provenance": provenance,
                                 "stage": STAGE_NAME, "stage_id": STAGE_ID,
                                 "platforms": PLATFORMS,
                                 "players": {str(p): {"character": v.character.name, "stock": int(v.stock),
@@ -120,7 +136,7 @@ def run(run_dir):
                         episode["elapsed_seconds"] = now - episode["started_monotonic"]
                         outcome["probe_samples"] = probe_samples
                         outcome["status"] = "probe_complete"
-                        frames.write(json.dumps(record, allow_nan=False) + "\n")
+                        frames.publish(record)
                         break
                 else:
                     if in_game:
@@ -149,6 +165,7 @@ def run(run_dir):
                         episode["winner_port"] = verified["winner_port"]
                         episode["elapsed_seconds"] = now - episode["started_monotonic"]
                         in_game = False
+                        input_trace.leave_game()
                         if len(outcome["episodes"]) >= options["episodes"]:
                             # Allow the runtime's replay writer to finish the end event.
                             time.sleep(1)
@@ -160,14 +177,13 @@ def run(run_dir):
                         melee.Stage.BATTLEFIELD, cpu_level=3, autostart=False)
                     helpers[0].menu_helper_simple(state, controllers[0], melee.Character.FOX,
                         melee.Stage.BATTLEFIELD, autostart=ready or state.menu_state==melee.Menu.STAGE_SELECT)
-                    record = {"schema_version": 1, "menu": state.menu_state.name,
+                    record = {"schema_version": 1, "run_id": options["run_id"], "menu": state.menu_state.name,
                                 "monotonic": now, "frame": int(state.frame)}
-                frames.write(json.dumps(record, allow_nan=False) + "\n")
-                if now - last_flush >= 0.5:
-                    frames.flush()
-                    last_flush = now
+                frames.publish(record)
     except StopRequested:
         outcome["status"] = "interrupted"
+    except RecorderError as error:
+        outcome.update(status="error", error_type="RecorderError", failure_reason=str(error))
     except Exception as error:
         # Detailed traceback stays in private worker.log. Public summary gets a type only.
         import traceback
@@ -183,10 +199,18 @@ def run(run_dir):
             except (OSError, RuntimeError):
                 neutralized = False
         outcome["neutralized"] = neutralized
-        write_json(run_dir / "worker-result.json", outcome)
-        if console is not None:
-            # No console.run(): emulator belongs to the supervisor. No temporary-home deletion.
-            console.stop()
+        if recorder is not None:
+            try:
+                recorder.close()
+            except RecorderError as error:
+                outcome.update(status="error", error_type="RecorderError", failure_reason=str(error))
+            outcome["recorder"] = recorder.report()
+        try:
+            if console is not None:
+                # No console.run(): emulator belongs to the supervisor. No temporary-home deletion.
+                console.stop()
+        finally:
+            write_json(run_dir / "worker-result.json", outcome)
 
 
 if __name__ == "__main__":

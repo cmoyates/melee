@@ -19,6 +19,9 @@ def main(argv=None):
     match.add_argument("--policy", choices=("scripted", "smoke", "input-probe"), default="scripted")
     match.add_argument("--duration", type=int, default=120, help="Hard wall-clock limit including setup")
     match.add_argument("--episodes", type=int, default=1)
+    capture = commands.add_parser("capture", help="Capture until a wall-clock deadline, retaining partial final match")
+    capture.add_argument("--duration", type=int, default=600)
+    capture.add_argument("--policy", choices=("scripted", "smoke"), default="scripted")
     smoke = commands.add_parser("smoke", help="Asset-free deterministic frame-to-controller regression")
     smoke.add_argument("--backend", choices=("fake",), default="fake")
     smoke.add_argument("--fixture", type=Path)
@@ -41,6 +44,8 @@ def main(argv=None):
     for name in ("inspect", "stop"):
         command = commands.add_parser(name)
         command.add_argument("run_id")
+        if name == "inspect":
+            command.add_argument("--integrity", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
     if args.command == "provider":
@@ -78,6 +83,9 @@ def main(argv=None):
     if args.command == "match":
         from .matches import launch
         return launch(root, args.duration, args.episodes, args.policy)
+    if args.command == "capture":
+        from .matches import launch
+        return launch(root, args.duration, 100, args.policy, capture=True)
     if args.command in ("inspect", "stop"):
         from .matches import locate_run
         try:
@@ -87,10 +95,16 @@ def main(argv=None):
                     (run / "stop.request").touch(exist_ok=True)
                 print(json.dumps({"run_id": args.run_id, "stop_requested": True}))
             else:
-                summary = run / "summary.json"
-                print(summary.read_text() if summary.exists() else json.dumps({"run_id": args.run_id, "status": "running_or_interrupted"}))
+                if args.integrity:
+                    from .integrity import inspect_integrity
+                    report = inspect_integrity(run)
+                    print(json.dumps(report, allow_nan=False))
+                    return 0 if report["status"] == "pass" else 1
+                else:
+                    summary = run / "summary.json"
+                    print(summary.read_text() if summary.exists() else json.dumps({"run_id": args.run_id, "status": "running_or_interrupted"}))
             return 0
-        except (ValueError, OSError):
+        except (ValueError, OSError, KeyError, TypeError):
             print(json.dumps({"status": "error", "message": "Invalid or unavailable run"}))
             return 1
     report = diagnose(args.workspace, args.config, args.require)

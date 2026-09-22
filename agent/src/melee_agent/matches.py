@@ -30,9 +30,14 @@ def isolated_environment():
 
 def artifact_bytes(root):
     total = 0
-    for directory, dirs, files in os.walk(root, followlinks=False):
+    def scan_error(error):
+        raise error
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=scan_error):
         for name in files:
-            info = (Path(directory) / name).lstat()
+            try:
+                info = (Path(directory) / name).lstat()
+            except FileNotFoundError:
+                continue  # The runtime may rename a replay while we scan it.
             if stat.S_ISREG(info.st_mode):
                 total += info.st_size
     return total
@@ -53,8 +58,10 @@ def preflight(root, duration, episodes, policy):
     config = load_config(root)
     if type(duration) is not int or not 1 <= duration <= config.limits.max_run_seconds:
         raise ValueError("Duration must fit the configured run limit")
-    if not 1 <= episodes <= 10 or (policy == "input-probe" and episodes != 1):
+    if type(episodes) is not int or not 1 <= episodes <= 10 or (policy == "input-probe" and episodes != 1):
         raise ValueError("Choose 1-10 matches, or exactly one input probe")
+    if policy not in ("smoke", "scripted", "input-probe"):
+        raise ValueError("Unknown local policy")
     if not config.disc_image or not config.runtime or not config.runtime_sha256:
         raise ValueError("Configure the verified local disc and runtime first")
     runtime = read_path(root, config.runtime).resolve()
@@ -83,6 +90,25 @@ def probe_passed(samples):
             any(s["main_x"] < 0.1 for s in left) and
             any(abs(s["main_x"] - 0.5) < 0.01 for s in neutral) and
             right[-1]["x"] > right[0]["x"] + 1 and left[-1]["x"] < left[0]["x"] - 1)
+
+
+def read_worker_result(path):
+    """A crashed worker may leave no result or a partial JSON file."""
+    empty = {"episodes": [], "neutralized": False}
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(1_048_577)
+        if len(raw) > 1_048_576:
+            raise ValueError("Worker result exceeds bound")
+        result = json.loads(raw)
+        if (not isinstance(result, dict) or not isinstance(result.get("episodes"), list) or
+                not all(isinstance(e, dict) for e in result["episodes"]) or
+                type(result.get("neutralized")) is not bool or
+                result.get("status") not in ("error", "interrupted", "matches_complete", "probe_complete")):
+            raise ValueError("Invalid worker result")
+        return result, None
+    except (OSError, ValueError, UnicodeError) as error:
+        return empty, type(error).__name__
 
 
 def supervise(root, duration, episodes, policy):
@@ -123,15 +149,17 @@ def supervise(root, duration, episodes, policy):
         started = time.monotonic()
         deadline = started + duration
         requested_stop = False
+        supervisor_error = None
+        cleanup_errors = []
         def stop(signum, frame):
             nonlocal requested_stop
             requested_stop = True
-        signal.signal(signal.SIGINT, stop)
-        signal.signal(signal.SIGTERM, stop)
+        previous_signals = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
         try:
             with (run_dir / "worker.log").open("x") as worker_log, (run_dir / "emulator.log").open("x") as emulator_log:
                 worker = subprocess.Popen([sys.executable, "-B", "-m", "melee_agent.match_worker", str(run_dir)],
                     stdout=worker_log, stderr=subprocess.STDOUT, env=isolated_environment(), start_new_session=True)
+                write_json(run_dir / "worker-process.json", {"pid": worker.pid, "pgid": worker.pid})
                 last_size_check = 0
                 while True:
                     now = time.monotonic()
@@ -152,7 +180,8 @@ def supervise(root, duration, episodes, policy):
                         emulator = subprocess.Popen([str(runtime), "-e", str(image), "-u", str(run_dir / "profile")],
                             stdout=emulator_log, stderr=subprocess.STDOUT, env=isolated_environment(), start_new_session=True)
                         write_json(run_dir / "processes.json", {"supervisor_pid": os.getpid(),
-                            "worker_pid": worker.pid, "emulator_pid": emulator.pid})
+                            "supervisor_pgid": os.getpgrp(), "worker_pid": worker.pid,
+                            "worker_pgid": worker.pid, "emulator_pid": emulator.pid, "emulator_pgid": emulator.pid})
                     if emulator is not None and emulator.poll() is not None:
                         reason = "emulator_exited"
                         break
@@ -169,14 +198,22 @@ def supervise(root, duration, episodes, policy):
                             break
                         last_size_check = now
                     time.sleep(0.1)
+        except Exception as error:
+            reason = "supervisor_error"
+            supervisor_error = type(error).__name__
         finally:
-            # A controller cleanup failure cannot prevent emulator cleanup.
-            try:
-                terminate_child(worker)
-            finally:
-                terminate_child(emulator)
+            # Attempt each cleanup even when its sibling's cleanup fails.
+            for name, child in (("worker", worker), ("emulator", emulator)):
+                try:
+                    terminate_child(child)
+                except (OSError, subprocess.SubprocessError) as error:
+                    cleanup_errors.append({"process": name, "error_type": type(error).__name__})
+            for sig, handler in previous_signals.items():
+                signal.signal(sig, handler)
         result_path = run_dir / "worker-result.json"
-        result = json.loads(result_path.read_text()) if result_path.exists() else {"episodes": [], "neutralized": False}
+        result, result_error = read_worker_result(result_path)
+        if reason == "worker_finished" and result_error:
+            reason = "worker_result_invalid"
         if reason == "worker_finished" and result.get("status") == "error":
             reason = "worker_error"
         replays = []
@@ -187,10 +224,19 @@ def supervise(root, duration, episodes, policy):
             except (ValueError, OSError, KeyError, TypeError):
                 replay_errors += 1
         complete = (reason == "worker_finished" and result.get("status") == "matches_complete" and
+                    len(result["episodes"]) == episodes and
+                    all(e.get("result_event_verified") is True for e in result["episodes"]) and
                     len(replays) == episodes and replay_errors == 0 and
                     all(r["outcome"] in ("game", "time") and expected_settings(r["settings"]) for r in replays))
-        probe_ok = (reason == "worker_finished" and result.get("status") == "probe_complete" and
-                    probe_passed(result.get("probe_samples", [])))
+        try:
+            probe_ok = (reason == "worker_finished" and result.get("status") == "probe_complete" and
+                        probe_passed(result.get("probe_samples", [])))
+        except (KeyError, TypeError, ValueError):
+            probe_ok = False
+            reason = "worker_result_invalid"
+        stopped = all(child is None or child.poll() is not None for child in (worker, emulator))
+        if cleanup_errors or not stopped or not result["neutralized"]:
+            complete = probe_ok = False
         status = "complete" if complete else "probe_verified" if probe_ok else "incomplete"
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
                     "policy": policy, "episodes": result["episodes"], "replays": replays,
@@ -198,9 +244,26 @@ def supervise(root, duration, episodes, policy):
                     "elapsed_seconds": time.monotonic() - started, "provider_contacted": False,
                     "emulator_stopped": emulator is None or emulator.poll() is not None,
                     "worker_stopped": worker is None or worker.poll() is not None}
+        summary["processes"] = {name: None if child is None else
+            {"pid": child.pid, "pgid": child.pid, "exit_code": child.poll()}
+            for name, child in (("worker", worker), ("emulator", emulator))}
+        if not result["neutralized"]:
+            summary["neutralization_failure"] = "worker_result_unavailable" if result_error else "worker_reported_failure"
+        if supervisor_error:
+            summary["supervisor_error_type"] = supervisor_error
+        if result_error:
+            summary["worker_result_error_type"] = result_error
+        if cleanup_errors:
+            summary["cleanup_errors"] = cleanup_errors
         if "error_type" in result:
             summary["worker_error_type"] = result["error_type"]
-        write_json(run_dir / "summary.json", summary)
+        try:
+            write_json(run_dir / "summary.json", summary)
+        except OSError as error:
+            # Disk-full cannot promise a durable report. Preserve truthful stdout.
+            summary.update(status="incomplete", reason="summary_write_failed",
+                            prior_reason=reason, summary_error_type=type(error).__name__)
+            complete = probe_ok = False
         print(json.dumps(summary), flush=True)
         return 0 if complete or probe_ok else 2
 

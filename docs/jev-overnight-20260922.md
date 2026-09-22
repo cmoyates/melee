@@ -67,6 +67,26 @@ $0.005140422 reported, $0.006 reserved for one unknown timed-out batch, and
 $0.011140422 total accounted** against the $1 cap. Do not refund the unknown
 reservation without verified billing evidence.
 
+## J04 supervisor failure paths
+
+80 offline tests pass. New tests exercise the actual supervisor with real owned
+child processes, injected launch/scan/disk failures, corrupt result files and
+an unrelated process that must survive. A completed run now also requires the
+requested number of verified episodes and successful neutralization.
+
+Two fresh Battlefield smoke matches completed with verified replays and no
+frame gaps (`match-ca25892edc9e4e0c9f25968000f7d248`). Five additional live fault
+runs verified SIGINT, killed worker, stopped worker/state stall, competing launch
+rejection, and killed CLI cleanup. All owned children stopped; the unrelated
+dummy survived every case. The killed/stopped workers correctly report unknown
+neutralization, while orderly stops report successful neutralization. Subsequent
+runs acquired the persistent lock after the previous owner's exit.
+
+PID/PGID/exit status and summary hashes are retained in
+`build/jev/overnight-20260922/j04-lifecycle.json`. Physical disk-full reporting is
+necessarily limited to stdout if the summary cannot be persisted; the supervisor
+returns failure rather than claiming durable completion.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.

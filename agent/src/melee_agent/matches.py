@@ -62,7 +62,7 @@ def preflight(root, duration, episodes, policy, capture=False):
         raise ValueError("Invalid capture mode")
     if type(episodes) is not int or not 1 <= episodes <= (100 if capture else 10) or (policy == "input-probe" and episodes != 1):
         raise ValueError("Choose 1-10 matches, or exactly one input probe; captures allow 100 episodes")
-    if policy not in ("smoke", "scripted", "input-probe", "skill-check"):
+    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake"):
         raise ValueError("Unknown local policy")
     if not config.disc_image or not config.runtime or not config.runtime_sha256:
         raise ValueError("Configure the verified local disc and runtime first")
@@ -116,6 +116,17 @@ def read_worker_result(path):
                         for k in ("accepted", "written", "unwritten", "rejected")) or
                     recorder["accepted"] != recorder["written"] + recorder["unwritten"]):
                 raise ValueError("Invalid recorder result")
+        if "async_policy" in result:
+            report = result["async_policy"]
+            if not isinstance(report, dict) or not isinstance(report.get("bridge"), dict) or not isinstance(report.get("policy"), dict):
+                raise ValueError("Invalid policy report")
+            bridge = report["bridge"]
+            if (any(type(bridge.get(k)) is not int or bridge[k] < 0 for k in
+                    ("worker_limit", "workers_alive", "inflight", "mailbox_remaining")) or
+                    not 1 <= bridge["worker_limit"] <= 4 or bridge["workers_alive"] > bridge["worker_limit"] or
+                    bridge["inflight"] > bridge["worker_limit"] or bridge["mailbox_remaining"] > 32 or
+                    any(type(v) is not int or v < 0 for v in report["policy"].values())):
+                raise ValueError("Invalid policy counters")
         return result, None
     except (OSError, ValueError, UnicodeError) as error:
         return empty, type(error).__name__
@@ -261,6 +272,11 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20)
                     result["neutralized"] and stopped and not cleanup_errors and bool(result["episodes"]) and
                     recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
                     recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
+        if policy == "delayed-fake":
+            bridge_report = result.get("async_policy", {}).get("bridge", {})
+            async_closed = (bridge_report.get("workers_alive") == 0 and bridge_report.get("inflight") == 0)
+            if not async_closed:
+                captured = complete = probe_ok = False
         skill_report = result.get("skill_check", {})
         from .skill_check import verified_report
         skill_ok = (policy == "skill-check" and reason == "worker_finished" and result.get("status") == "skill_check_complete" and
@@ -286,7 +302,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20)
             summary["cleanup_errors"] = cleanup_errors
         if "error_type" in result:
             summary["worker_error_type"] = result["error_type"]
-        for key in ("recorder", "failure_reason", "skill_check"):
+        for key in ("recorder", "failure_reason", "skill_check", "async_policy"):
             if key in result:
                 summary[key] = result[key]
         try:

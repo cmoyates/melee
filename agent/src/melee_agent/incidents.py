@@ -99,7 +99,7 @@ def compact_record(row):
             "events": [{"sequence": event["delivery"]["expected"]["sequence"],
                 "accepted": event["accepted"], "reason": event["reason"]} for event in skill["policy_events"]],
             "skill": {key: skill[key] for key in ("generation", "active", "event")},
-            "input_owner": skill.get("input_owner")}}
+            "input_owner": skill.get("input_owner"), "reflex": skill.get("reflex")}}
 
 
 def validate_clock(row, observation):
@@ -203,6 +203,7 @@ def explain_manifest(manifest, focus):
         "latest_completed_flush": {key: value for key, value in
             (focus.get("input_provenance", {}).get("latest_completed_flush") or {}).items() if key != "packet"},
         "active_skill": skill["active"], "last_observed_skill_event": skill["event"],
+        "local_reflex": skill.get("reflex"),
         "provider_decisions": [{"sequence": e["delivery"]["expected"]["sequence"],
             "action": e["delivery"]["reply"]["action"], "accepted": e["accepted"], "reason": e["reason"]}
             for e in skill["policy_events"]], "contact": "not_measured", "outcome_attribution": "not_established",
@@ -333,7 +334,8 @@ def replay_incident(root, folder):
         events = [{"sequence": e["delivery"]["expected"]["sequence"], "accepted": e["accepted"], "reason": e["reason"]}
             for e in trace["policy_events"]]
         actual = {"decision": control["decision"], "packet": control["packet"], "events": events,
-            "skill": {key: trace[key] for key in ("generation", "active", "event")}, "input_owner": trace["input_owner"]}
+            "skill": {key: trace[key] for key in ("generation", "active", "event")},
+            "input_owner": trace["input_owner"], "reflex": trace.get("reflex")}
         count += 1
         accepted += sum(e["accepted"] for e in events)
         decisions.update(canonical({"decision": control["decision"], "events": events})+b"\n")

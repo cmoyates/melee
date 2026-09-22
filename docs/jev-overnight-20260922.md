@@ -216,6 +216,62 @@ hashes match the final modules, both audits pass, all workers stop, and 133
 offline tests pass. Evidence: `j10-final-fault-check.json`; trace SHA-256:
 `a671fbf958654413fcb0220cfa7af2e2acc7053e6d05c4da06ceea37065ad651`.
 
+## J11: real Jev choices in live Battlefield play
+
+Two 150-second captures passed frame integrity, decision accounting and the
+independent raw acknowledgement audit. Both had over 140 continuous seconds
+in one episode, at least 20 observed policy completions and all four available
+skill classes. No invalid choice was applied. Their final replay is partial;
+neither capture establishes a completed match win or competitive strength.
+
+| Evidence | First run | Repeat |
+| --- | ---: | ---: |
+| Game frames | 8,399 | 8,421 |
+| HTTP returns / validated | 88 / 87 | 91 / 90 |
+| Accepted decisions | 58 | 59 |
+| Observed move / neutral / jump / shield | 46 / 4 / 3 / 1 | 40 / 4 / 2 / 8 |
+| Interrupted accepted skills | 4 | 5 |
+| Simulation FPS | 59.77 | 59.76 |
+| Source-to-reply p95 | 485.06 ms | 518.77 ms |
+| Observed-to-flushed p95 | 12.38 ms | 12.38 ms |
+
+The other returns were rejected for changed skill generation/context or an
+invalid probability sum (one per run). Every provider attempt has one recorded
+outcome; no pending accepted skills remain. One HTTP request was in flight at
+most. All inference workers, timers and HTTP exchanges stopped; both owned
+processes exited and inputs were neutralized. All records drained with zero
+gaps, duplicates, rollbacks or recording errors. 141 offline tests pass.
+
+The repeat records input ownership explicitly: 471 provider-owned frames,
+137 local-fallback frames, 5,831 idle/neutral frames and 1,982 emergency frames
+(including countdown). Provider ownership is 5.59% of all game observations,
+or 5.68% after countdown. Local behavior still accounts for most of play; this
+slice proves useful live choices without claiming sustained tactical control.
+
+Requested model: `~typesafe/jev-latest`; resolved model:
+`typesafe/jev-1.13-20260917`, provider TypeSafe. Configuration SHA-256:
+`ba493eef644befac9ce765395800fd89e89971b05aedf6a01c4ea7c85b55ed1e`.
+The repeat's actuating/provider module hashes match its launch manifest; the
+read-only audit was extended afterwards. All 42 protected baseline files remain
+unchanged. No game assets, credentials or raw captures were published.
+
+First run: `match-174cf2be0aac46a6a10e5db01310c189`, evidence
+`j11-first-live.json`. Trace SHA-256:
+`dde3c4275f1059090fae3a81f7eeb7c80853040c721bb4b265eeab631edf468c`.
+Summary SHA-256:
+`50f50eb4c79ef71132eab9f2d51fee0b77afaeed50805fe0fcfeeae8f7f89f67`.
+
+Repeat: `match-a0bfc93878194bf1b39f2ccca20b3af4`, evidence
+`j11-second-live.json`. Trace SHA-256:
+`f3705e746ff8b888251a0b1a8b842d6f2aecc30ef458eaeba92a76c7fd961a9c`.
+Summary SHA-256:
+`1dc1be1cdb6ee3774e77f6eecc37608c6c20bc1db6cf9d4f1aa85e6169050733`.
+
+The shared ledger now accounts for $0.019222398 against the $1 limit:
+$0.013222398 reported plus the original $0.006 uncertain reservation. It records
+312 requests and 410,819 accounted input tokens, leaving the original global
+limits unchanged. The two J11 runs added no uncertain reservations.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.

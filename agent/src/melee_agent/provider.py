@@ -160,6 +160,8 @@ class DecisionsClient:
         self._backoff_until = 0
         self._closed = False
         self._futures = set()
+        self._workers = set()
+        self._timers = set()
 
     def submit(self, observation, candidates, *, deadline_ns, instructions="Choose the best available action for Fox.",
                 additional_questions=None):
@@ -265,12 +267,24 @@ class DecisionsClient:
             finally:
                 timer.cancel()
                 self._slots.release()
+                with self._lock:
+                    self._workers.discard(threading.current_thread())
+                    self._timers.discard(timer)
 
-        timer.start()
-        threading.Thread(target=work, name="jev-decision", daemon=True).start()
+        worker = threading.Thread(target=work, name="jev-decision", daemon=True)
+        with self._lock:
+            if self._closed:
+                self._slots.release()
+                return future
+            self._workers.add(worker)
+            self._timers.add(timer)
+            timer.start()
+            worker.start()
         return future
 
-    def close(self):
+    def close(self, timeout=0):
+        if type(timeout) not in (int, float) or not 0 <= timeout <= 5:
+            raise ProviderError("invalid_shutdown_timeout")
         with self._lock:
             self._closed = True
             futures = tuple(self._futures)
@@ -278,3 +292,10 @@ class DecisionsClient:
             for future in futures:
                 if not future.done():
                     future.set_exception(ProviderError("client_closed"))
+            workers, timers = tuple(self._workers), tuple(self._timers)
+        deadline = time.monotonic() + timeout
+        for thread in (*workers, *timers):
+            if thread is not threading.current_thread():
+                thread.join(max(0., deadline - time.monotonic()))
+        return {"workers_alive": sum(t.is_alive() for t in workers),
+                "timers_alive": sum(t.is_alive() for t in timers)}

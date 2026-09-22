@@ -53,6 +53,8 @@ class Reply:
     action: str
     received_ns: int
     fault: str = "none"
+    error: str | None = None
+    metadata: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,8 @@ def rejection(delivery, observation, run_id, generation, last_applied, now_ns, c
     """Apply-time checks; submitting a newer request does not supersede a reply."""
     expected, reply = delivery.expected, delivery.reply
     c = reply.context
+    if reply.error:
+        return "backend:" + reply.error
     if c != expected or candidate_hash(delivery.candidates) != c.candidate_hash:
         return "request_binding"
     if c.run_id != run_id:
@@ -161,7 +165,7 @@ class LatestBridge:
             with self.lock:
                 latest = self.latest
                 now = time.monotonic()
-                if latest is None or now < self.next_request:
+                if latest is None or now < self.next_request or getattr(self.backend, "exhausted", False):
                     continue
                 observation, generation, candidates = latest
                 source = (observation.episode, observation.frame)
@@ -197,7 +201,12 @@ class LatestBridge:
         deadline = time.monotonic() + 2.5
         for thread in self.threads:
             thread.join(max(0., deadline - time.monotonic()))
-        return self.report()
+        backend_report = self.backend.close() if hasattr(self.backend, "close") else None
+        with self.lock:
+            discarded = [asdict(delivery) for delivery in self.deliveries]
+            self.deliveries.clear()
+            self.counts["shutdown_discarded"] = len(discarded)
+        return {**self.report(), "shutdown_deliveries": discarded, "provider": backend_report}
 
     def report(self):
         with self.lock:
@@ -219,10 +228,27 @@ class AsyncPolicy:
         self.counts = Counter()
         self.last_invalidation = None
         self.last_frame = None
+        self.skill_events = []
+        self.owner = "idle"
+        self.last_owner = "idle"
+
+    def _record_skill_event(self):
+        event = self.arbiter.last_event
+        if event is not None and event not in self.skill_events:
+            self.skill_events.append(dict(event))
+
+    def _record_owner(self, owner, observation):
+        self.last_owner = owner
+        self.counts["frames:" + owner] += 1
+        if observation.frame >= 0:
+            self.counts["play_frames:" + owner] += 1
 
     def decide(self, observation):
         now = self.clock()
         self.events = []
+        self.skill_events = []
+        if self.arbiter.active is None:
+            self.owner = "idle"
         a = observation.bot
         emergency = inhibited(observation) or ("offstage" if abs(a.x) > 65 or a.y < -5 else None)
         identity = (observation.episode, a.details.life_generation_derived,
@@ -232,6 +258,7 @@ class AsyncPolicy:
         if identity != self.last_invalidation or discontinuity:
             if self.last_invalidation is not None:
                 self.arbiter.abort(observation, emergency or "context_generation_changed")
+                self._record_skill_event()
                 self.arbiter.generation += 1
                 self.counts["generation_invalidations"] += 1
             self.last_invalidation = identity
@@ -253,23 +280,31 @@ class AsyncPolicy:
             if accepted:
                 self.last_applied = delivery.expected.sequence
                 self.next_fallback_ns = now + 1_500_000_000
+                self.owner = "provider"
+                self._record_skill_event()
             self.counts["accepted" if accepted else "rejected:" + reason] += 1
             self.events.append({"delivery": asdict(delivery), "accepted": accepted, "reason": reason,
                 "apply_ns": now, "generation_before": generation, "last_applied_before": previous,
                 "committed_before": committed, "emergency": emergency})
         decision = self.arbiter.step(observation)
+        self._record_skill_event()
         if emergency:
             self.counts["emergency_frames"] += 1
+            self._record_owner("emergency", observation)
             return self.recovery.decide(observation) if emergency == "offstage" else Decision(1, observation.episode, observation.frame, "wait")
+        self._record_owner(self.owner, observation)
         if self.arbiter.active is None and now >= self.next_fallback_ns:
             label = "approach" if "approach" in candidates else "neutral"
             if self.arbiter.request(relative_skill(label, observation), observation) is None:
                 self.next_fallback_ns = now + 1_500_000_000
                 self.counts["local_fallbacks"] += 1
+                self.owner = "fallback"
+                self._record_skill_event()
         return decision
 
     def trace(self):
-        return {**self.arbiter.trace(), "policy_events": self.events, "last_applied_sequence": self.last_applied}
+        return {**self.arbiter.trace(), "policy_events": self.events, "last_applied_sequence": self.last_applied,
+                "transitions": self.skill_events, "input_owner": self.last_owner}
 
     def close(self):
         return {"schema_version": 1, "max_age_ns": MAX_AGE_NS, "max_frame_age": MAX_FRAME_AGE,

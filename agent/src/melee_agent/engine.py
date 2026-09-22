@@ -30,6 +30,43 @@ def exact_fields(data, cls):
 
 
 @dataclass(frozen=True)
+class FighterDetails:
+    action_id: int
+    action_frame: int
+    life_generation_derived: int
+    percent: float
+    facing_right: bool
+    hitlag_frames_derived: int
+    hitstun_frames_derived: int
+    self_velocity_x: float
+    self_velocity_y: float
+    attack_velocity_x: float
+    attack_velocity_y: float
+    shield_strength: float
+    input_neutral_derived: bool
+    input_jump_held: bool
+    input_shield_held: bool
+
+    def __post_init__(self):
+        for name in ("action_id", "hitlag_frames_derived", "hitstun_frames_derived"):
+            integer(getattr(self, name), name, 0)
+        integer(self.action_frame, "action frame")
+        integer(self.life_generation_derived, "life generation", 1)
+        if self.action_id > 65535 or self.life_generation_derived > 100:
+            raise ValueError("Invalid fighter identity")
+        for name in ("percent", "self_velocity_x", "self_velocity_y", "attack_velocity_x", "attack_velocity_y", "shield_strength"):
+            finite(getattr(self, name), name)
+        for name in ("facing_right", "input_neutral_derived", "input_jump_held", "input_shield_held"):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError("Invalid fighter boolean")
+
+    @classmethod
+    def parse(cls, data):
+        exact_fields(data, cls)
+        return cls(**data)
+
+
+@dataclass(frozen=True)
 class Fighter:
     x: float
     y: float
@@ -37,6 +74,7 @@ class Fighter:
     jumps: int
     action: str
     stocks_remaining: int
+    details: FighterDetails
 
     def __post_init__(self):
         finite(self.x, "fighter x")
@@ -49,11 +87,13 @@ class Fighter:
             raise ValueError("Invalid stock count")
         if self.jumps > 6 or not isinstance(self.action, str) or not self.action or len(self.action) > 80:
             raise ValueError("Invalid fighter jumps/action")
+        if not isinstance(self.details, FighterDetails):
+            raise ValueError("Fighter requires validated details")
 
     @classmethod
     def parse(cls, data):
         exact_fields(data, cls)
-        return cls(**data)
+        return cls(**{**data, "details": FighterDetails.parse(data["details"])})
 
 
 @dataclass(frozen=True)
@@ -99,7 +139,7 @@ class Observation:
 
     def __post_init__(self):
         integer(self.schema_version, "schema version")
-        if self.schema_version != 2 or self.stage != STAGE_NAME:
+        if self.schema_version != 3 or self.stage != STAGE_NAME:
             raise ValueError("Unsupported observation version/stage")
         integer(self.episode, "episode", 1)
         integer(self.frame, "frame")
@@ -110,6 +150,9 @@ class Observation:
             raise ValueError("Observation requires validated match progress")
         if max(self.bot.stocks_remaining, self.opponent.stocks_remaining) > self.match.starting_stocks:
             raise ValueError("Remaining stocks exceed starting stocks")
+        for fighter in (self.bot, self.opponent):
+            if fighter.details.life_generation_derived != self.match.starting_stocks - fighter.stocks_remaining + 1:
+                raise ValueError("Life generation disagrees with observed stocks")
         if not math.isclose(self.match.elapsed_seconds_derived, max(0, self.frame) / SIMULATION_FPS,
                             rel_tol=0, abs_tol=1e-9):
             raise ValueError("Match elapsed time disagrees with simulation frame")
@@ -171,6 +214,7 @@ ACTION_PACKETS = {
     "jump_left": Packet(main_x=0.0, held=("X",)), "jump_right": Packet(main_x=1.0, held=("X",)),
     "recover_left": Packet(main_x=0.0, main_y=1.0, held=("B",)),
     "recover_right": Packet(main_x=1.0, main_y=1.0, held=("B",)),
+    "jump": Packet(held=("X",)), "shield": Packet(l=1., held=("L",)),
 }
 
 

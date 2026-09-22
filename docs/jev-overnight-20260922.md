@@ -122,6 +122,56 @@ exposed NumPy JSON values and the parser's remaining-stream buffer convention;
 their artifacts are retained and both shut down cleanly. No provider calls were
 made by this slice.
 
+## J07 observed local skills
+
+The first complete 20-repetition suite, `match-8674dfd5f2b74a659bd95c59706c5cbd`,
+passed after **303.22 seconds across four Battlefield episodes**. It recorded
+123 observed successes, 17 explicit state-dependent refusals and 13 separately
+logged/retried interruptions, with zero timeouts. Each of seven skill/direction
+groups reached 20 counted outcomes. All successful jumps showed three observed
+jumpsquat frames. An independent raw-trace audit confirmed all 123 successes,
+including input release; trace integrity passed for all 16,772 game frames.
+
+| Skill | Successes | Refusals | Interruptions |
+| --- | ---: | ---: | ---: |
+| Neutral | 20 | 0 | 0 |
+| Move left | 17 | 3 | 1 |
+| Move right | 13 | 7 | 0 |
+| Jump left | 19 | 1 | 0 |
+| Jump right | 19 | 1 | 4 |
+| Jump neutral | 19 | 1 | 2 |
+| Shield | 16 | 4 | 6 |
+
+The early runs exposed a real telemetry trap: Slippi's 0x2B field is reused by
+other motions and only contains hitstun when its hitstun flag is set. The skill
+adapter now gates the derived counter on that flag and preserves the original
+value/flags in RawObservationV2. Landing is excluded from skill start conditions
+after a trace showed a jump pressed too early being ignored and left held.
+Failed runs remain retained, with clean shutdown evidence.
+
+The final observation schema labels derived combat counters explicitly. The
+final-source suite `match-013a7d9f350d4720a5d863f2c5282eaf` also passed:
+129 observed successes, 11 explicit refusals, nine interruptions and zero
+timeouts in 245.54 seconds over three episodes. All 13,570 game frames passed
+integrity checks; all 129 successes passed the independent motion/release audit.
+All 14,094 records drained, with queue high-water one. Source hashes match the
+committed modules, all 42 protected files remain unchanged, and 119 offline
+tests pass. Earlier development traces retain their original schema layouts
+and exact source hashes.
+
+Final evidence: `j07-final-full-suite.json`. Trace SHA-256:
+`5723dd007d3fb5858208a67577d27fa430327bf50f22f96851a7453f90d090f2`.
+Summary SHA-256:
+`5648d4ae8e433f6c03b2ec496aeaa6ab3d18ce170d97e9f282fcf3e891fbca3d`.
+
+First full-suite evidence: `j07-first-full-suite.json`. Trace SHA-256:
+`3cfcb90f74dc70d0cb9dd49d357df6974bb69398273c9ae320e2a3e8784429f1`.
+Summary SHA-256:
+`e4a76ca0b76377453d7047263aac1d1788e97b672d6bcc7028ae42d8fd6f420b`.
+No provider spending occurred in this slice. Movement/defense tests do not
+establish recovery or competitive strength; the suite includes three CPU wins
+and a partial final replay.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.

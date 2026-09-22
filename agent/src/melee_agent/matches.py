@@ -62,7 +62,7 @@ def preflight(root, duration, episodes, policy, capture=False):
         raise ValueError("Invalid capture mode")
     if type(episodes) is not int or not 1 <= episodes <= (100 if capture else 10) or (policy == "input-probe" and episodes != 1):
         raise ValueError("Choose 1-10 matches, or exactly one input probe; captures allow 100 episodes")
-    if policy not in ("smoke", "scripted", "input-probe"):
+    if policy not in ("smoke", "scripted", "input-probe", "skill-check"):
         raise ValueError("Unknown local policy")
     if not config.disc_image or not config.runtime or not config.runtime_sha256:
         raise ValueError("Configure the verified local disc and runtime first")
@@ -106,7 +106,7 @@ def read_worker_result(path):
         if (not isinstance(result, dict) or not isinstance(result.get("episodes"), list) or
                 not all(isinstance(e, dict) for e in result["episodes"]) or
                 type(result.get("neutralized")) is not bool or
-                result.get("status") not in ("error", "interrupted", "matches_complete", "probe_complete")):
+                result.get("status") not in ("error", "interrupted", "matches_complete", "probe_complete", "skill_check_complete")):
             raise ValueError("Invalid worker result")
         if "recorder" in result:
             recorder = result["recorder"]
@@ -121,9 +121,11 @@ def read_worker_result(path):
         return empty, type(error).__name__
 
 
-def supervise(root, duration, episodes, policy, capture=False):
+def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20):
     from .replay import expected_settings, summarize_file
     config, runtime, image = preflight(root, duration, episodes, policy, capture)
+    if type(skill_repeats) is not int or not 1 <= skill_repeats <= 100:
+        raise ValueError("Invalid skill repetitions")
     base = owned_path(root, config.run_root)
     base.mkdir(parents=True, exist_ok=True)
     lock_path = root / "build/jev/match.lock"
@@ -151,6 +153,7 @@ def supervise(root, duration, episodes, policy, capture=False):
                     "duration_seconds": duration, "port": config.slippi_port,
                     "max_frame_bytes": config.limits.max_artifact_bytes * 7 // 8,
                     "capture_until_deadline": capture,
+                    "skill_repeats": skill_repeats,
                     "source_sha256": {p.name: digest(p, "sha256") for p in sorted(Path(__file__).parent.glob("*.py"))},
                     "policy": policy, "episodes": episodes, "provider_contacted": False,
                     "stage": STAGE_NAME, "stage_id": STAGE_ID,
@@ -258,7 +261,12 @@ def supervise(root, duration, episodes, policy, capture=False):
                     result["neutralized"] and stopped and not cleanup_errors and bool(result["episodes"]) and
                     recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
                     recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
-        status = "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
+        skill_report = result.get("skill_check", {})
+        from .skill_check import verified_report
+        skill_ok = (policy == "skill-check" and reason == "worker_finished" and result.get("status") == "skill_check_complete" and
+                    verified_report(skill_report, skill_repeats) and result["neutralized"] and stopped and not cleanup_errors and
+                    recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and recorder.get("rejected") == 0)
+        status = "skills_verified" if skill_ok else "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
                     "policy": policy, "episodes": result["episodes"], "replays": replays,
                     "replay_errors": replay_errors, "neutralized": result["neutralized"],
@@ -278,7 +286,7 @@ def supervise(root, duration, episodes, policy, capture=False):
             summary["cleanup_errors"] = cleanup_errors
         if "error_type" in result:
             summary["worker_error_type"] = result["error_type"]
-        for key in ("recorder", "failure_reason"):
+        for key in ("recorder", "failure_reason", "skill_check"):
             if key in result:
                 summary[key] = result[key]
         try:
@@ -287,13 +295,14 @@ def supervise(root, duration, episodes, policy, capture=False):
             # Disk-full cannot promise a durable report. Preserve truthful stdout.
             summary.update(status="incomplete", reason="summary_write_failed",
                             prior_reason=reason, summary_error_type=type(error).__name__)
-            complete = probe_ok = captured = False
+            complete = probe_ok = captured = skill_ok = False
         print(json.dumps(summary), flush=True)
-        return 0 if complete or probe_ok or captured else 2
+        return 0 if complete or probe_ok or captured or skill_ok else 2
 
 
-def launch(root, duration, episodes, policy, capture=False):
-    command = [sys.executable, "-B", "-m", "melee_agent.matches", str(root), str(duration), str(episodes), policy, str(int(capture))]
+def launch(root, duration, episodes, policy, capture=False, skill_repeats=20):
+    command = [sys.executable, "-B", "-m", "melee_agent.matches", str(root), str(duration), str(episodes), policy,
+                str(int(capture)), str(skill_repeats)]
     supervisor = subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True, env=isolated_environment())
     try:
         return supervisor.wait()
@@ -318,7 +327,7 @@ def locate_run(root, run_id):
 if __name__ == "__main__":
     try:
         raise SystemExit(supervise(Path(sys.argv[1]).resolve(), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4],
-                                    len(sys.argv) > 5 and sys.argv[5] == "1"))
+                                    len(sys.argv) > 5 and sys.argv[5] == "1", int(sys.argv[6]) if len(sys.argv) > 6 else 20))
     except Exception as error:
         print(json.dumps({"status": "blocked", "error_type": type(error).__name__,
                             "message": "Match setup failed; check local runtime configuration and launch availability."}))

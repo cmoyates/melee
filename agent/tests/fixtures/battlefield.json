@@ -3,7 +3,7 @@
   "cases": [
     {
       "observation": {
-        "schema_version": 2,
+        "schema_version": 3,
         "episode": 1,
         "frame": -123,
         "observed_ns": 0,
@@ -14,7 +14,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": true,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "opponent": {
           "x": 40.0,
@@ -22,7 +39,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": false,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "match": {
           "time_limit_seconds": 480,
@@ -63,7 +97,7 @@
     },
     {
       "observation": {
-        "schema_version": 2,
+        "schema_version": 3,
         "episode": 1,
         "frame": 0,
         "observed_ns": 16666667,
@@ -74,7 +108,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": true,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "opponent": {
           "x": 40.0,
@@ -82,7 +133,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": false,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "match": {
           "time_limit_seconds": 480,
@@ -123,7 +191,7 @@
     },
     {
       "observation": {
-        "schema_version": 2,
+        "schema_version": 3,
         "episode": 1,
         "frame": 12,
         "observed_ns": 33333334,
@@ -134,7 +202,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": true,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "opponent": {
           "x": 10.0,
@@ -142,7 +227,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": false,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "match": {
           "time_limit_seconds": 480,
@@ -183,7 +285,7 @@
     },
     {
       "observation": {
-        "schema_version": 2,
+        "schema_version": 3,
         "episode": 1,
         "frame": 24,
         "observed_ns": 50000001,
@@ -194,7 +296,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": true,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "opponent": {
           "x": 40.0,
@@ -202,7 +321,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": false,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "match": {
           "time_limit_seconds": 480,
@@ -243,7 +379,7 @@
     },
     {
       "observation": {
-        "schema_version": 2,
+        "schema_version": 3,
         "episode": 1,
         "frame": 36,
         "observed_ns": 66666668,
@@ -254,7 +390,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": true,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "opponent": {
           "x": -40.0,
@@ -262,7 +415,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": false,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "match": {
           "time_limit_seconds": 480,
@@ -303,7 +473,7 @@
     },
     {
       "observation": {
-        "schema_version": 2,
+        "schema_version": 3,
         "episode": 1,
         "frame": 48,
         "observed_ns": 83333335,
@@ -314,7 +484,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": true,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "opponent": {
           "x": -40.0,
@@ -322,7 +509,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": false,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "match": {
           "time_limit_seconds": 480,
@@ -363,7 +567,7 @@
     },
     {
       "observation": {
-        "schema_version": 2,
+        "schema_version": 3,
         "episode": 1,
         "frame": 60,
         "observed_ns": 100000002,
@@ -374,7 +578,24 @@
           "grounded": false,
           "jumps": 1,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": true,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "opponent": {
           "x": 0.0,
@@ -382,7 +603,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": false,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "match": {
           "time_limit_seconds": 480,
@@ -423,7 +661,7 @@
     },
     {
       "observation": {
-        "schema_version": 2,
+        "schema_version": 3,
         "episode": 1,
         "frame": 61,
         "observed_ns": 116666669,
@@ -434,7 +672,24 @@
           "grounded": false,
           "jumps": 0,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": true,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "opponent": {
           "x": 0.0,
@@ -442,7 +697,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": false,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "match": {
           "time_limit_seconds": 480,
@@ -483,7 +755,7 @@
     },
     {
       "observation": {
-        "schema_version": 2,
+        "schema_version": 3,
         "episode": 2,
         "frame": -123,
         "observed_ns": 133333336,
@@ -494,7 +766,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": true,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "opponent": {
           "x": 40.0,
@@ -502,7 +791,24 @@
           "grounded": true,
           "jumps": 2,
           "action": "STANDING",
-          "stocks_remaining": 4
+          "stocks_remaining": 4,
+          "details": {
+            "action_id": 14,
+            "action_frame": 1,
+            "life_generation_derived": 1,
+            "percent": 0.0,
+            "facing_right": false,
+            "hitlag_frames_derived": 0,
+            "hitstun_frames_derived": 0,
+            "self_velocity_x": 0.0,
+            "self_velocity_y": 0.0,
+            "attack_velocity_x": 0.0,
+            "attack_velocity_y": 0.0,
+            "shield_strength": 60.0,
+            "input_neutral_derived": true,
+            "input_jump_held": false,
+            "input_shield_held": false
+          }
         },
         "match": {
           "time_limit_seconds": 480,

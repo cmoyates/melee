@@ -31,6 +31,14 @@ def main(argv=None):
     skills = commands.add_parser("skill-check", help="Observed movement/jump/shield repetitions on Battlefield")
     skills.add_argument("--repeats", type=int, default=20)
     skills.add_argument("--duration", type=int, default=600)
+    scenarios = commands.add_parser("scenarios", help="Fresh-match mechanical scenario suite with explicit setup outcomes")
+    scenarios.add_argument("--suite", choices=("mechanics-v1",), default="mechanics-v1")
+    scenarios.add_argument("--repeats", type=int, default=10)
+    scenarios.add_argument("--duration", type=int, default=2400, help="Hard wall-clock suite limit")
+    scenarios.add_argument("--seed", type=int, default=0, help="Trial ordering only; does not seed game RNG")
+    scenario = commands.add_parser("scenario-run", help="One ordinary-input fresh-match mechanical trial")
+    scenario.add_argument("--name", required=True)
+    scenario.add_argument("--duration", type=int, default=30)
     explain = commands.add_parser("explain", help="Extract a private incident and print a shareable decision explanation")
     explain.add_argument("run_id")
     explain.add_argument("--episode", type=int, default=1)
@@ -69,6 +77,16 @@ def main(argv=None):
             command.add_argument("--policy-evidence", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
+    if args.command == "scenario-run":
+        from .matches import launch
+        return launch(root, args.duration, 1, "scenario", scenario_name=args.name)
+    if args.command == "scenarios":
+        from .scenario_runner import run_suite
+        try:
+            return run_suite(root, args.repeats, args.duration, args.seed)
+        except (ValueError, OSError):
+            print(json.dumps({"status": "blocked", "reason": "scenario_preflight_failed"}))
+            return 1
     if args.command in ("explain", "replay-incident"):
         from .config import owned_path
         from .incidents import IncidentError, export_incident, replay_incident

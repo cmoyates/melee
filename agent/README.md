@@ -565,3 +565,41 @@ fixture and assert the intended narrow behavior. The included stale-response
 regression fails with a deliberately weakened freshness guard and passes with
 the real guard; two unchanged replays yield identical decision/packet hashes.
 Live gameplay improvements still require new supervised matches.
+
+## Fresh-match mechanical scenarios
+
+```sh
+rtk proxy agent/.venv/bin/melee-agent scenario-run --name offstage-left --duration 30
+rtk proxy agent/.venv/bin/melee-agent scenarios --suite mechanics-v1 --repeats 10 --duration 2400 --seed 0
+```
+
+The fixed `ScenarioV1` suite covers left/right grounded spacing, rising jump and
+landing, recoverable offstage positions, actual ledge catch/hang, and a shielding
+opponent. Each trial launches a fresh stock Fox versus Mario CPU3 Battlefield
+match. The manifest declares its target predicate, setup inputs, resources,
+timeouts, rules and outcome. Setup uses ordinary controller packets, then requires
+a queued and observed neutral release before the measured policy takes ownership.
+No positions, velocities, states or timers are written. Savestate loading is not
+implemented; an alternate state/build cannot be passed through this interface.
+
+`--seed` controls trial ordering only. Game/CPU RNG is not seeded, so repeatability
+means reaching the declared observed predicates, not identical emulation. Every
+run retains its initial observation and hash, source/runtime/disc identity,
+setup/measurement boundary, raw frames, replay settings and separate outcome:
+`setup_failed`, `skill_failed`, `succeeded`, or `timeout`. A setup failure never
+starts the measured skill. The initial offstage probe uses the existing scripted
+baseline; it is not the later Fox recovery FSM. Returning to any known Battlefield
+platform or the ledge counts as regained stage support.
+
+The suite stores its manifest, per-trial audits and aggregate summary under
+`build/jev/scenarios/`. Audits cross-check observations against raw Slippi fields,
+setup release and ownership, actual movement/landing/shield evidence, replay rules,
+recorder integrity and process cleanup. An audit failure stops the schedule.
+`scenario_recorded` and a completed suite mean the outcome was retained and
+validated, not that the tested skill succeeded. The suite stops before its wall
+deadline or 2 GiB artifact cap; each child has its own thirty-second limit.
+
+The initial pilot reached and passed all six mirrored movement/airborne/offstage
+cases. Ledge hanging and a shielding CPU did not reach setup within eight game
+seconds. Those remain explicit setup limitations for later mechanical work;
+they are not silently replaced with easier predicates.

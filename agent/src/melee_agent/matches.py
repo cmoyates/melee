@@ -62,7 +62,7 @@ def preflight(root, duration, episodes, policy, capture=False):
         raise ValueError("Invalid capture mode")
     if type(episodes) is not int or not 1 <= episodes <= (100 if capture else 10) or (policy == "input-probe" and episodes != 1):
         raise ValueError("Choose 1-10 matches, or exactly one input probe; captures allow 100 episodes")
-    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake", "jev", "faults"):
+    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake", "jev", "faults", "scenario"):
         raise ValueError("Unknown local policy")
     if not config.disc_image or not config.runtime or not config.runtime_sha256:
         raise ValueError("Configure the verified local disc and runtime first")
@@ -106,7 +106,7 @@ def read_worker_result(path):
         if (not isinstance(result, dict) or not isinstance(result.get("episodes"), list) or
                 not all(isinstance(e, dict) for e in result["episodes"]) or
                 type(result.get("neutralized")) is not bool or
-                result.get("status") not in ("error", "interrupted", "matches_complete", "probe_complete", "skill_check_complete")):
+                result.get("status") not in ("error", "interrupted", "matches_complete", "probe_complete", "skill_check_complete", "scenario_complete")):
             raise ValueError("Invalid worker result")
         if "recorder" in result:
             recorder = result["recorder"]
@@ -144,13 +144,20 @@ def read_worker_result(path):
         return empty, type(error).__name__
 
 
-def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None):
+def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None):
     from .replay import expected_settings, summarize_file
     from .live_provider import preflight as provider_preflight, provider_environment
     provider_budget = provider_preflight(root, policy, budget_directory, max_requests)
     from .runtime_faults import MODES
     if (policy == "faults" and fault_mode not in MODES) or (policy != "faults" and fault_mode is not None):
         raise ValueError("Runtime fault injection requires its explicit policy and mode")
+    from .scenarios import find_scenario, verified_trial
+    if policy == "scenario":
+        find_scenario(scenario_name)
+        if capture or episodes != 1:
+            raise ValueError("Scenarios require one fresh-match trial")
+    elif scenario_name is not None:
+        raise ValueError("Scenario setup requires its explicit policy")
     config, runtime, image = preflight(root, duration, episodes, policy, capture)
     if type(skill_repeats) is not int or not 1 <= skill_repeats <= 100:
         raise ValueError("Invalid skill repetitions")
@@ -186,6 +193,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
                     "provider_enabled": policy == "jev", "budget_directory": budget_directory,
                     "max_provider_requests": max_requests, "provider_budget_before": provider_budget,
                     "skill_repeats": skill_repeats,
+                    "scenario_name": scenario_name,
                     "source_sha256": {p.name: digest(p, "sha256") for p in sorted(Path(__file__).parent.glob("*.py"))},
                     "policy": policy, "episodes": episodes, "provider_contacted": False,
                     "stage": STAGE_NAME, "stage_id": STAGE_ID,
@@ -311,7 +319,11 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
         skill_ok = (policy == "skill-check" and reason == "worker_finished" and result.get("status") == "skill_check_complete" and
                     verified_report(skill_report, skill_repeats) and result["neutralized"] and stopped and receiver_closed and not cleanup_errors and
                     recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and recorder.get("rejected") == 0)
-        status = "skills_verified" if skill_ok else "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
+        scenario_ok = (policy == "scenario" and reason == "worker_finished" and result.get("status") == "scenario_complete" and
+            verified_trial(result.get("scenario", {}), scenario_name) and result["neutralized"] and stopped and receiver_closed and
+            not cleanup_errors and recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
+            recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
+        status = "scenario_recorded" if scenario_ok else "skills_verified" if skill_ok else "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
                     "policy": policy, "episodes": result["episodes"], "replays": replays,
                     "replay_errors": replay_errors, "neutralized": result["neutralized"],
@@ -332,7 +344,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             summary["cleanup_errors"] = cleanup_errors
         if "error_type" in result:
             summary["worker_error_type"] = result["error_type"]
-        for key in ("recorder", "failure_reason", "skill_check", "async_policy", "fault_injection", "last_unrecorded_record", "state_receiver"):
+        for key in ("recorder", "failure_reason", "skill_check", "async_policy", "fault_injection", "last_unrecorded_record", "state_receiver", "scenario"):
             if key in result:
                 summary[key] = result[key]
         try:
@@ -341,15 +353,15 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             # Disk-full cannot promise a durable report. Preserve truthful stdout.
             summary.update(status="incomplete", reason="summary_write_failed",
                             prior_reason=reason, summary_error_type=type(error).__name__)
-            complete = probe_ok = captured = skill_ok = False
+            complete = probe_ok = captured = skill_ok = scenario_ok = False
         print(json.dumps(summary), flush=True)
-        return 0 if complete or probe_ok or captured or skill_ok else 2
+        return 0 if complete or probe_ok or captured or skill_ok or scenario_ok else 2
 
 
-def launch(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None):
+def launch(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None):
     from .live_provider import provider_environment
     command = [sys.executable, "-B", "-m", "melee_agent.matches", str(root), str(duration), str(episodes), policy,
-                str(int(capture)), str(skill_repeats), budget_directory or "", str(max_requests or 0), fault_mode or ""]
+                str(int(capture)), str(skill_repeats), budget_directory or "", str(max_requests or 0), fault_mode or "", scenario_name or ""]
     supervisor = subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True, env=provider_environment(policy))
     try:
         return supervisor.wait()
@@ -377,7 +389,8 @@ if __name__ == "__main__":
                                     len(sys.argv) > 5 and sys.argv[5] == "1", int(sys.argv[6]) if len(sys.argv) > 6 else 20,
                                     sys.argv[7] or None if len(sys.argv) > 7 else None,
                                     (int(sys.argv[8]) or None) if len(sys.argv) > 8 else None,
-                                    (sys.argv[9] or None) if len(sys.argv) > 9 else None))
+                                    (sys.argv[9] or None) if len(sys.argv) > 9 else None,
+                                    (sys.argv[10] or None) if len(sys.argv) > 10 else None))
     except Exception as error:
         print(json.dumps({"status": "blocked", "error_type": type(error).__name__,
                             "message": "Match setup failed; check local runtime configuration and launch availability."}))

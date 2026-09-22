@@ -9,7 +9,7 @@ import os
 import threading
 import time
 
-from .async_policy import Reply
+from .async_policy import MIN_CONFIDENCE, Reply
 from .budget import BudgetError, SpendLedger
 from .config import owned_path
 from .provider import DecisionsClient, MODEL_ALIAS, OpenRouterTransport, ProviderError
@@ -95,9 +95,13 @@ class ProviderBackend:
         self.counts = Counter()
         self.attempts = []
         self.exhausted = False
+        self.failures = 0
+        self.open_until_ns = 0
+        self.health_events = []
         self.config_hash = hashlib.sha256(json.dumps({"model": MODEL_ALIAS, "descriptions": DESCRIPTIONS,
             "instructions": INSTRUCTIONS, "max_inflight": 1, "interval_seconds": 1,
-            "response_timeout_seconds": 1}, sort_keys=True).encode()).hexdigest()
+            "response_timeout_seconds": 1, "minimum_confidence": MIN_CONFIDENCE,
+            "circuit_failure_threshold": 3, "circuit_open_seconds": 2}, sort_keys=True).encode()).hexdigest()
 
     def call(self, observation, context, candidates, stop):
         if stop.is_set() or time.monotonic_ns() + 3_000_000_000 >= self.run_deadline_ns:
@@ -110,6 +114,8 @@ class ProviderBackend:
             "episode": observation.episode, "submitted_ns": time.monotonic_ns()}
         self.attempts.append(attempt)
         try:
+            if time.monotonic_ns() < self.open_until_ns:
+                raise ProviderError("circuit_open")
             result = self.client.submit(observation, {label: DESCRIPTIONS[label] for label in candidates},
                 deadline_ns=min(time.monotonic_ns() + 1_000_000_000, self.run_deadline_ns - 2_000_000_000),
                 instructions=INSTRUCTIONS).result(timeout=1.5)
@@ -119,11 +125,21 @@ class ProviderBackend:
             attempt.update(status="validated", request_id=result.request_id,
                 received_ns=result.received_ns, result=metadata)
             self.counts["validated"] += 1
+            if self.failures:
+                self.health_events.append({"state": "recovered", "sequence": context.sequence,
+                    "source_frame": observation.frame, "monotonic_ns": time.monotonic_ns()})
+            self.failures = 0
             return [Reply(context, result.action, result.received_ns, metadata=metadata)]
         except (ProviderError, BudgetError) as error:
             reason = str(error) if isinstance(error, ProviderError) else "budget_refused"
             if isinstance(error, BudgetError):
                 self.exhausted = True
+            elif reason not in ("circuit_open", "provider_backoff", "in_flight_limit"):
+                self.failures += 1
+                if self.failures >= 3:
+                    self.open_until_ns = time.monotonic_ns() + 2_000_000_000
+                    self.health_events.append({"state": "open", "sequence": context.sequence,
+                        "source_frame": observation.frame, "monotonic_ns": time.monotonic_ns()})
             attempt.update(status="rejected", reason=reason, received_ns=time.monotonic_ns())
             self.counts["errors:" + reason] += 1
             return [Reply(context, "", attempt["received_ns"], error=reason)]
@@ -139,5 +155,6 @@ class ProviderBackend:
         closed = self.client.close(timeout=1.25)
         return {"schema_version": 1, "requested_model": MODEL_ALIAS, "config_sha256": self.config_hash,
             "max_requests": self.max_requests, "attempts": self.attempts, "counts": dict(self.counts),
+            "health_events": self.health_events,
             "http_calls": self.transport.calls, "http_active": self.transport.active,
             "client_shutdown": closed, "budget_before": self.budget_before, "budget_after": self.ledger.report()}

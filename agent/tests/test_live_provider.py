@@ -115,6 +115,27 @@ class LiveProviderTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 preflight(self.root, "jev", "build/jev/budget", 201)
 
+    def test_circuit_opens_then_recovers_on_a_fresh_request(self):
+        calls = []
+        def transport(payload, timeout):
+            calls.append(payload)
+            if len(calls) <= 3:
+                raise OSError("disconnect")
+            return self.response(payload, timeout)
+        backend = ProviderBackend(self.root, "build/jev/budget", 10, time.monotonic_ns()+10_000_000_000, transport=transport)
+        try:
+            for sequence in (1,2,3):
+                self.assertEqual(self.call(backend, sequence)[0].error, "transport_or_accounting_error")
+            self.assertEqual(self.call(backend, 4)[0].error, "circuit_open")
+            self.assertEqual(len(calls), 3)
+            backend.open_until_ns = 0
+            reply = self.call(backend, 5)[0]
+            self.assertIsNone(reply.error)
+            self.assertEqual(reply.context.sequence, 5)
+            self.assertEqual([event["state"] for event in backend.health_events], ["open", "recovered"])
+        finally:
+            self.assertEqual(backend.close()["client_shutdown"]["workers_alive"], 0)
+
     def test_client_shutdown_reports_stalled_worker_instead_of_claiming_it_stopped(self):
         from melee_agent.provider import DecisionsClient, ProviderError
         entered, release = threading.Event(), threading.Event()

@@ -14,6 +14,7 @@ from .stage import support_surface
 LABELS = ("neutral", "approach", "retreat", "jump", "shield")
 MAX_AGE_NS = 1_000_000_000
 MAX_FRAME_AGE = 60
+MIN_CONFIDENCE = .15
 
 
 def candidate_hash(candidates):
@@ -72,6 +73,9 @@ def rejection(delivery, observation, run_id, generation, last_applied, now_ns, c
         return "backend:" + reply.error
     if c != expected or candidate_hash(delivery.candidates) != c.candidate_hash:
         return "request_binding"
+    confidence = (reply.metadata or {}).get("confidence")
+    if confidence is not None and confidence < MIN_CONFIDENCE:
+        return "low_confidence"
     if c.run_id != run_id:
         return "wrong_run"
     if c.episode != observation.episode:

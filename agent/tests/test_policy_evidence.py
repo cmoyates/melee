@@ -51,6 +51,14 @@ class PolicyEvidenceTests(unittest.TestCase):
         self.assertIn("accepted_wrong_life", report["errors"])
         self.assertIn("source_life_mismatch", report["errors"])
 
+    def test_terminal_record_supplement_accounts_for_last_packet_after_logger_failure(self):
+        rows, summary = self.fixture()
+        summary["last_unrecorded_record"] = rows.pop()
+        report = self.audit(rows, summary)
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["supplemental_records"], 1)
+        self.assertEqual(report["outcomes"], {"accepted": 1})
+
     def test_rejects_claimed_success_without_actual_skill_start(self):
         rows, summary = self.fixture()
         rows[-1]["skill"]["active"] = None

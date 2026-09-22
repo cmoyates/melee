@@ -215,6 +215,14 @@ ACTION_PACKETS = {
     "recover_left": Packet(main_x=0.0, main_y=1.0, held=("B",)),
     "recover_right": Packet(main_x=1.0, main_y=1.0, held=("B",)),
     "jump": Packet(held=("X",)), "shield": Packet(l=1., held=("L",)),
+    "special_up": Packet(main_y=1., held=("B",)),
+    "aim_up": Packet(main_y=1.),
+    "aim_steep_left": Packet(main_x=.25, main_y=1.),
+    "aim_steep_right": Packet(main_x=.75, main_y=1.),
+    "aim_diagonal_left": Packet(main_x=0., main_y=1.),
+    "aim_diagonal_right": Packet(main_x=1., main_y=1.),
+    "aim_shallow_left": Packet(main_x=0., main_y=.75),
+    "aim_shallow_right": Packet(main_x=1., main_y=.75),
 }
 
 

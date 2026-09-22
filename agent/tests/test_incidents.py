@@ -76,6 +76,15 @@ class IncidentTests(unittest.TestCase):
         self.assertEqual(broken["replayed_records"], 66)  # Stops before using the counterfactual next frame.
         self.assertEqual(replay_incident(self.root, self.folder)["status"], "pass")
 
+    def test_changed_reflex_state_is_detected_even_before_it_changes_a_packet(self):
+        from melee_agent.fox_reflex import FoxReflex
+        original = FoxReflex.trace
+        with patch.object(FoxReflex, "trace", lambda policy: {**original(policy), "phase": "wrong_phase"}):
+            broken = replay_incident(self.root, self.folder)
+        self.assertEqual(broken["status"], "fail")
+        self.assertEqual(broken["divergence"]["frame"], 0)
+        self.assertEqual(broken["divergence"]["different_fields"], ["reflex"])
+
     def test_tampered_or_truncated_prefix_fails_integrity(self):
         path = self.folder / "prefix.jsonl"
         original = path.read_bytes()

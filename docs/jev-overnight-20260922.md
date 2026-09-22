@@ -406,6 +406,64 @@ Evidence: `j14-final-suite.json`; suite summary SHA-256:
 The paid ledger remains $0.019222398 conservatively accounted. PR #42 stays open
 for review, as do the earlier stacked slices.
 
+## J15: local Fox recovery acceptance passed
+
+The local recovery/reflex state machine uses observed Fox jump resources and
+native motion phases, with separate jump press/release, Fire Fox startup, charge
+aim, travel, special fall and ledge-return handling. It preempts tactical skills
+through the same arbiter/executor. Damage and life/frame changes invalidate old
+commitments; missing acknowledgements and unsupported geometry terminate locally.
+DI and tech attempts are documented conservative heuristics, not optimized claims.
+
+PR #43 remains open. The recovery slice has 205 passing offline tests; agent CI
+and native build pass. The current editorconfig gate retains the existing 190
+repository errors. Incident replay also verifies reflex state and detects a
+changed phase before it changes a packet.
+
+The exact acceptance command `skill-check --suite recovery-v1 --repeats 20
+--policy offline` passed all 80 fresh Battlefield trials in 1,256.70 seconds:
+20/20 returns for high-left, high-right, low-left and low-right. High trials use
+an observed double jump; low trials start with zero jumps and show actual Fire
+Fox charge/travel/fall before a platform landing. The threshold is at least
+18/20 in every scenario, with setup failures counted against it.
+
+Suite `scenarios-de552876cd6f49a795f45b04bcf836a5` retained 23,160 game
+records. Every raw-state/ownership/cleanup audit passed, and every recorded
+decision, packet and full scenario/reflex trace reproduced identically offline.
+All 42 protected files remain unchanged; private artifacts total 196,285,897
+bytes. Summary SHA-256:
+`70a4f650768cfd6662bde52f4231557548ad6e1b5f23d29f7d49e0af77979c9f`.
+Evidence index: `j15-final-suite.json`. No API calls occurred, and the shared
+ledger remains $0.019222398 conservatively accounted.
+
+These trials establish the four declared starting cases, not arbitrary knockback
+recovery. Ledge occupancy/get-up and DI/tech edge cases have host coverage; a
+live success rate for those behaviors is not asserted. The first ordinary
+capture exposed a false recovery from an airborne origin slightly below zero
+near center stage. It subsequently aimed Fire Fox outward and self-destructed;
+Fox ended at zero stocks against Mario's four. The fix preserves a conservative
+ordinary-landing corridor and aims any in-stage charge upward. Both the boundary
+case and the unwanted follow-up special have regression coverage. All 80
+recorded recovery trials reproduce identically under the correction.
+
+Corrected capture `match-2aa8f92fa72f4dc889c9c042d04a3fcb` retained 10,202
+game records at 59.80 observed FPS without gaps, duplicates or rollbacks. The
+specific boundary behaved correctly: frame 744 waited at x=-12.07, y=-3.46 and
+landed on frame 745. Eight double jumps were acknowledged and eight stage
+returns observed, with 45 damage interruptions. Thirty tech attempts and two
+native tech-state entries remain separate observations, not a calibrated rate.
+Fox had two stocks against Mario's four at capture end; no win is claimed.
+
+All 102 simulated tactical acceptances passed the decision audit. Full incident
+`incident-29c8a649f0b248de9dcddcfd0494fa7c` replayed twice identically with
+network/process constructors forbidden, including every reflex phase. All owned
+processes closed, neutral input was confirmed, protected files remained unchanged
+and no provider was contacted. Evidence: `j15-live-capture-audit.json`; packet
+SHA-256 `4491c486fb876f4368be333c97756603123bf357f33db21373d4fb5bd1ad09c0`;
+capture summary SHA-256:
+`41fd31342ae385bc471a8afbcf42005b71bd60a32122b65e56fb3f8f444a91b5`.
+The failed predecessor is retained in `j15-initial-live-capture-audit.json`.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.

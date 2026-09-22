@@ -124,7 +124,9 @@ removing those fixtures, resolve each path and use `/usr/bin/trash` explicitly.
 ## Agent workflow
 
 1. Read the [roadmap](https://github.com/cmoyates/melee/issues/2), inspect actual
-   checkout/status and select an open issue whose native blockers are closed.
+   checkout/status and select an issue whose dependencies are implemented and
+   verified. While PRs await review, stack new slices on their dependency branch
+   and explicitly name that unmerged dependency; do not claim it has landed.
    Use `gh ... --repo cmoyates/melee`; don't accidentally target upstream.
 2. Run doctor. Continue offline work if live prerequisites are missing. A blocked
    live check is not a green skip or proof of gameplay.
@@ -149,6 +151,50 @@ commands in the roadmap are proposed interfaces; `match`, `stop` and `inspect`
 are now available as described below. Until the remaining slices land,
 use the GitHub dependency UI and existing explicit tools. Never permanently
 delete files, reset the worktree, or overwrite historical captures to resume.
+
+## Bounded Jev Decisions adapter
+
+J08 exposes a typed asynchronous `DecisionsClient` and injectable transport.
+It preserves observation identity and match context, verifies candidate labels,
+finite complete distributions, optional confidence, usage and the currently
+verified resolved model. It never writes controller input. The frame-loop
+integration and acceptance-age checks remain J10 work.
+
+Initialize an experiment budget once, then explicitly opt into paid probes:
+
+```sh
+rtk proxy agent/.venv/bin/melee-agent provider init-budget \
+  --directory build/jev/my-experiment --deadline-utc 2026-09-22T10:30:00+00:00 --limit-usd 1
+rtk proxy uv run --project agent --no-sync --env-file agent/.env melee-agent provider probe \
+  --budget build/jev/my-experiment --timeout 5
+rtk proxy agent/.venv/bin/melee-agent provider budget --directory build/jev/my-experiment
+```
+
+Choose the actual authorized deadline rather than reusing an expired example.
+All runs in one authorized experiment must use the same budget directory;
+creating another budget does not authorize additional spending. The append-only
+ledger serializes reservations across processes and refuses changed limits,
+truncated journals, expired deadlines and exhausted request/token/cost caps.
+Costs are integer nano-USD (divide by 1,000,000,000 for dollars). A request
+reserves $0.002 and 32,000 input tokens until validated usage is received;
+unknown billing retains the full reservation. A provider exceeding a reservation
+blocks subsequent requests. No automatic retries occur. HTTP 429/5xx applies
+backoff to future fresh submissions.
+
+Requests use `~typesafe/jev-latest`, TypeSafe-only routing, no provider fallback
+and a maximum price of $0.042/M input tokens and $0 output tokens. The known
+32k model context costs at most $0.001344 at that rate; identity changes fail
+closed pending verification. These routing controls follow the
+[Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request)
+and [provider routing contract](https://openrouter.ai/docs/guides/routing/provider-selection).
+
+Live HTTP exchanges use an owned short-lived subprocess, stdin credentials,
+bounded response size, refused redirects and independent wall-clock deadlines.
+Caller deadlines/close invalidate results promptly; in-flight slots remain held
+until transport cleanup completes. Submitting/reserving is an off-frame-loop
+operation because durable journal writes may block. Offline tests inject a fake
+transport and never need a key. Synthetic probe reports establish access and
+contract behavior, not latency percentiles or gameplay competence.
 
 ## Autonomous local matches
 

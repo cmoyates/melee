@@ -22,11 +22,45 @@ def main(argv=None):
     smoke = commands.add_parser("smoke", help="Asset-free deterministic frame-to-controller regression")
     smoke.add_argument("--backend", choices=("fake",), default="fake")
     smoke.add_argument("--fixture", type=Path)
+    provider = commands.add_parser("provider", help="Explicit provider probes with persistent experiment budgets")
+    provider_commands = provider.add_subparsers(dest="provider_command", required=True)
+    budget = provider_commands.add_parser("init-budget", help="Create an immutable budget; existing limits cannot increase")
+    budget.add_argument("--directory", required=True)
+    budget.add_argument("--deadline-utc", required=True)
+    budget.add_argument("--limit-usd", default="1")
+    budget.add_argument("--max-requests", type=int, default=600)
+    budget.add_argument("--max-input-tokens", type=int, default=1000000)
+    provider_probe = provider_commands.add_parser("probe", help="Make one paid synthetic Decisions request, with no retries")
+    provider_probe.add_argument("--budget", required=True)
+    provider_probe.add_argument("--timeout", type=float, default=5)
+    provider_report = provider_commands.add_parser("budget", help="Read recorded and uncertain provider costs")
+    provider_report.add_argument("--directory", required=True)
     for name in ("inspect", "stop"):
         command = commands.add_parser(name)
         command.add_argument("run_id")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
+    if args.command == "provider":
+        from .budget import BudgetError, SpendLedger
+        from .config import owned_path
+        from .provider import ProviderError
+        try:
+            if args.provider_command == "init-budget":
+                ledger = SpendLedger.create(root, args.directory, deadline_utc=args.deadline_utc,
+                    limit_usd=args.limit_usd, max_requests=args.max_requests, max_input_tokens=args.max_input_tokens)
+                report = ledger.report()
+            elif args.provider_command == "budget":
+                report = SpendLedger(owned_path(root, args.directory) / "spend.jsonl").report()
+            else:
+                from .provider_commands import probe
+                report = probe(root, args.budget, args.timeout)
+            print(json.dumps(report, allow_nan=False))
+            return 1 if report.get("status") == "fail" else 0
+        except (ValueError, OSError, TimeoutError) as error:
+            print(json.dumps({"status": "blocked", "error_type": type(error).__name__,
+                                "reason": str(error) if isinstance(error, (BudgetError, ProviderError)) else "local_io_or_configuration",
+                                "message": "Provider setup or budget check failed; no automatic retry."}))
+            return 1
     if args.command == "smoke":
         from .fake import smoke
         try:

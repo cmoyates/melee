@@ -21,7 +21,9 @@ def main(argv=None):
     match.add_argument("--episodes", type=int, default=1)
     capture = commands.add_parser("capture", help="Capture until a wall-clock deadline, retaining partial final match")
     capture.add_argument("--duration", type=int, default=600)
-    capture.add_argument("--policy", choices=("scripted", "smoke", "delayed-fake"), default="scripted")
+    capture.add_argument("--policy", choices=("scripted", "smoke", "delayed-fake", "jev"), default="scripted")
+    capture.add_argument("--budget", help="Existing shared budget directory; required for jev")
+    capture.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
     skills = commands.add_parser("skill-check", help="Observed movement/jump/shield repetitions on Battlefield")
     skills.add_argument("--repeats", type=int, default=20)
     skills.add_argument("--duration", type=int, default=600)
@@ -90,7 +92,8 @@ def main(argv=None):
         return launch(root, args.duration, args.episodes, args.policy)
     if args.command == "capture":
         from .matches import launch
-        return launch(root, args.duration, 100, args.policy, capture=True)
+        return launch(root, args.duration, 100, args.policy, capture=True,
+                        budget_directory=args.budget, max_requests=args.max_requests)
     if args.command == "skill-check":
         from .matches import launch
         return launch(root, args.duration, 10, "skill-check", skill_repeats=args.repeats)

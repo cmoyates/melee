@@ -21,7 +21,7 @@ from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
 
 
 def isolated_environment():
-    # Emulator/worker do not need provider credentials or dotenv configuration.
+    # Emulator and ordinary workers never receive provider credentials.
     keep = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "DISPLAY")
     env = {key: os.environ[key] for key in keep if key in os.environ}
     env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -62,7 +62,7 @@ def preflight(root, duration, episodes, policy, capture=False):
         raise ValueError("Invalid capture mode")
     if type(episodes) is not int or not 1 <= episodes <= (100 if capture else 10) or (policy == "input-probe" and episodes != 1):
         raise ValueError("Choose 1-10 matches, or exactly one input probe; captures allow 100 episodes")
-    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake"):
+    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake", "jev"):
         raise ValueError("Unknown local policy")
     if not config.disc_image or not config.runtime or not config.runtime_sha256:
         raise ValueError("Configure the verified local disc and runtime first")
@@ -127,13 +127,24 @@ def read_worker_result(path):
                     bridge["inflight"] > bridge["worker_limit"] or bridge["mailbox_remaining"] > 32 or
                     any(type(v) is not int or v < 0 for v in report["policy"].values())):
                 raise ValueError("Invalid policy counters")
+            provider = bridge.get("provider")
+            if provider is not None:
+                if (not isinstance(provider, dict) or not isinstance(provider.get("attempts"), list) or
+                        len(provider["attempts"]) > 200 or not all(isinstance(a, dict) for a in provider["attempts"]) or
+                        not isinstance(provider.get("client_shutdown"), dict) or
+                        any(type(provider.get(k)) is not int or provider[k] < 0 for k in ("http_calls", "http_active")) or
+                        any(type(provider["client_shutdown"].get(k)) is not int or provider["client_shutdown"][k] < 0
+                            for k in ("workers_alive", "timers_alive"))):
+                    raise ValueError("Invalid provider shutdown report")
         return result, None
     except (OSError, ValueError, UnicodeError) as error:
         return empty, type(error).__name__
 
 
-def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20):
+def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None):
     from .replay import expected_settings, summarize_file
+    from .live_provider import preflight as provider_preflight, provider_environment
+    provider_budget = provider_preflight(root, policy, budget_directory, max_requests)
     config, runtime, image = preflight(root, duration, episodes, policy, capture)
     if type(skill_repeats) is not int or not 1 <= skill_repeats <= 100:
         raise ValueError("Invalid skill repetitions")
@@ -164,6 +175,9 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20)
                     "duration_seconds": duration, "port": config.slippi_port,
                     "max_frame_bytes": config.limits.max_artifact_bytes * 7 // 8,
                     "capture_until_deadline": capture,
+                    "run_deadline_ns": time.monotonic_ns() + int(duration * 1e9),
+                    "provider_enabled": policy == "jev", "budget_directory": budget_directory,
+                    "max_provider_requests": max_requests, "provider_budget_before": provider_budget,
                     "skill_repeats": skill_repeats,
                     "source_sha256": {p.name: digest(p, "sha256") for p in sorted(Path(__file__).parent.glob("*.py"))},
                     "policy": policy, "episodes": episodes, "provider_contacted": False,
@@ -185,7 +199,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20)
         try:
             with (run_dir / "worker.log").open("x") as worker_log, (run_dir / "emulator.log").open("x") as emulator_log:
                 worker = subprocess.Popen([sys.executable, "-B", "-m", "melee_agent.match_worker", str(run_dir)],
-                    stdout=worker_log, stderr=subprocess.STDOUT, env=isolated_environment(), start_new_session=True)
+                    stdout=worker_log, stderr=subprocess.STDOUT, env=provider_environment(policy), start_new_session=True)
                 write_json(run_dir / "worker-process.json", {"pid": worker.pid, "pgid": worker.pid})
                 last_size_check = 0
                 while True:
@@ -272,9 +286,14 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20)
                     result["neutralized"] and stopped and not cleanup_errors and bool(result["episodes"]) and
                     recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
                     recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
-        if policy == "delayed-fake":
+        if policy in ("delayed-fake", "jev"):
             bridge_report = result.get("async_policy", {}).get("bridge", {})
             async_closed = (bridge_report.get("workers_alive") == 0 and bridge_report.get("inflight") == 0)
+            if policy == "jev":
+                provider_report = bridge_report.get("provider") or {}
+                client_shutdown = provider_report.get("client_shutdown") or {}
+                async_closed = (async_closed and provider_report.get("http_active") == 0 and
+                    client_shutdown.get("workers_alive") == 0 and client_shutdown.get("timers_alive") == 0)
             if not async_closed:
                 captured = complete = probe_ok = False
         skill_report = result.get("skill_check", {})
@@ -286,7 +305,8 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20)
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
                     "policy": policy, "episodes": result["episodes"], "replays": replays,
                     "replay_errors": replay_errors, "neutralized": result["neutralized"],
-                    "elapsed_seconds": time.monotonic() - started, "provider_contacted": False,
+                    "elapsed_seconds": time.monotonic() - started,
+                    "provider_contacted": bool(policy == "jev" and provider_report.get("http_calls", 0)),
                     "emulator_stopped": emulator is None or emulator.poll() is not None,
                     "worker_stopped": worker is None or worker.poll() is not None}
         summary["processes"] = {name: None if child is None else
@@ -316,10 +336,11 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20)
         return 0 if complete or probe_ok or captured or skill_ok else 2
 
 
-def launch(root, duration, episodes, policy, capture=False, skill_repeats=20):
+def launch(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None):
+    from .live_provider import provider_environment
     command = [sys.executable, "-B", "-m", "melee_agent.matches", str(root), str(duration), str(episodes), policy,
-                str(int(capture)), str(skill_repeats)]
-    supervisor = subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True, env=isolated_environment())
+                str(int(capture)), str(skill_repeats), budget_directory or "", str(max_requests or 0)]
+    supervisor = subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True, env=provider_environment(policy))
     try:
         return supervisor.wait()
     except KeyboardInterrupt:
@@ -343,7 +364,9 @@ def locate_run(root, run_id):
 if __name__ == "__main__":
     try:
         raise SystemExit(supervise(Path(sys.argv[1]).resolve(), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4],
-                                    len(sys.argv) > 5 and sys.argv[5] == "1", int(sys.argv[6]) if len(sys.argv) > 6 else 20))
+                                    len(sys.argv) > 5 and sys.argv[5] == "1", int(sys.argv[6]) if len(sys.argv) > 6 else 20,
+                                    sys.argv[7] or None if len(sys.argv) > 7 else None,
+                                    (int(sys.argv[8]) or None) if len(sys.argv) > 8 else None))
     except Exception as error:
         print(json.dumps({"status": "blocked", "error_type": type(error).__name__,
                             "message": "Match setup failed; check local runtime configuration and launch availability."}))

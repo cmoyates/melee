@@ -61,9 +61,15 @@ def run(run_dir):
         if options["policy"] == "skill-check":
             from .skill_check import SkillCheckPolicy
             policy = SkillCheckPolicy(options["skill_repeats"])
-        elif options["policy"] == "delayed-fake":
-            from .async_policy import AsyncPolicy
-            policy = AsyncPolicy(options["run_id"])
+        elif options["policy"] in ("delayed-fake", "jev"):
+            from .async_policy import AsyncPolicy, LatestBridge
+            bridge = None
+            if options["policy"] == "jev":
+                from .live_provider import ProviderBackend
+                backend = ProviderBackend(Path(__file__).resolve().parents[3], options["budget_directory"],
+                    options["max_provider_requests"], options["run_deadline_ns"])
+                bridge = LatestBridge(options["run_id"], backend)
+            policy = AsyncPolicy(options["run_id"], bridge)
         else:
             policy = ScriptedPolicy(options["policy"])
         executor = FrameExecutor(policy, LibmeleeSink(controllers[0], melee.Button), clock)

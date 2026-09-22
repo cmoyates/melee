@@ -262,7 +262,10 @@ watchdog process detects CLI disconnection, worker exit, startup/state stalls,
 stop requests, time limits and artifact limits. Teardown attempts a neutral
 controller packet before bounded termination of the owned emulator. A sent
 neutral packet does not prove the game simulated another neutral frame.
-Provider credentials are excluded from emulator and controller environments.
+Provider credentials are excluded from the emulator and ordinary controller
+environments. Explicit `capture --policy jev` passes the key only to its
+supervisor/worker; the worker removes it from its environment when constructing
+the private HTTP transport. Keys never enter launch manifests or controller packets.
 
 Artifacts live under `build/jev/runs/match-<id>/`:
 
@@ -451,3 +454,35 @@ reply and its acceptance/rejection reason. The independent audit checks each
 accepted choice against both retained source and application observations,
 measures observed-to-queued/flushed latency, and checks bounded worker shutdown.
 These timing metrics describe input delivery, not proven game application time.
+
+## Real Jev match capture
+
+```sh
+rtk proxy uv run --project agent --no-sync --env-file agent/.env melee-agent capture \
+  --policy jev --duration 150 --budget build/jev/overnight-20260922 --max-requests 110
+rtk proxy agent/.venv/bin/melee-agent inspect RUN_ID --policy-evidence
+```
+
+Use an already initialized budget owned by the current experiment. The example
+names the overnight experiment; its deadline is immutable, so it will refuse
+paid work after that experiment ends. A run cap never resets the shared ledger.
+The explicit Jev policy uses the same mailbox, arbiter, fallback, emergency
+behavior and one-second/60-frame freshness gates as the delayed fake. Only the
+backend changes: one in-flight Decisions request at most, no retries, one
+question, at most five described skills and a one-second response deadline.
+The budget reservation and HTTP call run entirely outside the input thread.
+
+The 150-second capture leaves room for setup plus at least two continuous
+minutes of play. It retains a partial final replay and does not claim a match
+win. Provider reports retain every request outcome, validated probabilities,
+requested/resolved model, usage, configuration hash and ledger snapshots.
+Replies discarded during shutdown remain explicitly accounted for. Shutdown
+checks transport workers/timers and active HTTP exchanges, then reports failure
+if any remain. The native CPU never takes over Fox.
+
+`--policy-evidence` independently checks accepted choices and their raw motion
+acknowledgements, reports input ownership/fallback participation, and exposes
+`live_acceptance.criteria_met` for the two-minute, 20-observed-success,
+three-skill-class tracer-bullet criteria. The general audit can pass with fewer
+opportunities, so consult that separate field when certifying J11. Confidence
+values are retained as model output, not interpreted as win probabilities.

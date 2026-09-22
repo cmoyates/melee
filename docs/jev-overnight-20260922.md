@@ -352,6 +352,30 @@ The smaller CLI-selected stale-response incident at frame 178 also passes exact
 replay. Evidence: `j13-full-live-replay.json`, `j13-live-capture-audit.json` and
 `j13-historical-explanation.json`. The shared paid ledger remains unchanged.
 
+## J14: mechanical scenario acceptance in progress
+
+The fixed `mechanics-v1` suite creates one fresh Battlefield match per trial,
+uses ordinary controller inputs for setup, and verifies a neutral handoff before
+measurement. It declares mirrored grounded spacing, rising jump/landing,
+recoverable offstage, actual ledge catch/hang and a shielding opponent. Trial
+ordering has seed zero; game and CPU RNG remain unseeded and are not claimed
+deterministic. Savestate loading is unsupported rather than accepting unpinned
+state files.
+
+183 offline tests pass. The nine-trial pilot
+`scenarios-aba1221b86a047ff81ec9953e788f7ac` completed in 153.27 seconds.
+All six mirrored movement/airborne/offstage setups reached their predicates and
+their measured probes succeeded. Ledge-left, ledge-right and shielding-opponent
+setups timed out explicitly, with no measured skill started. The initial offstage
+probe had exposed an overly narrow main-floor success rule; the corrected oracle
+recognizes all known Battlefield platforms as regained stage support.
+
+Each audit checks raw Slippi fields, setup release/ownership, actual mechanical
+outcome, replay rules, recorder integrity and owned-process cleanup. Success,
+skill failure, setup failure and measurement timeout remain separate. The
+ninety-trial acceptance run `scenarios-a89512b7f04143aabc2e39bc32e72a62`
+is in progress. Do not infer ten-repeat acceptance from the pilot alone.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.

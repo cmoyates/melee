@@ -68,7 +68,10 @@ def run(run_dir):
         for controller in controllers:
             controller.connect()
         clock = SystemClock()
-        if options["policy"] == "skill-check":
+        if options["policy"] == "scenario":
+            from .scenarios import ScenarioPolicy, find_scenario
+            policy = ScenarioPolicy(find_scenario(options["scenario_name"]))
+        elif options["policy"] == "skill-check":
             from .skill_check import SkillCheckPolicy
             policy = SkillCheckPolicy(options["skill_repeats"])
         elif options["policy"] in ("delayed-fake", "jev", "faults"):
@@ -175,7 +178,13 @@ def run(run_dir):
                                     "observed_main": [float(x) for x in v.controller_state.main_stick]}
                                     for p, v in state.players.items()}}
                     if hasattr(policy, "trace"):
-                        record["skill"] = policy.trace()
+                        record["scenario" if options["policy"] == "scenario" else "skill"] = policy.trace()
+                    if options["policy"] == "scenario" and policy.complete:
+                        pending_record = record
+                        frames.publish(record)
+                        pending_record = None
+                        outcome["status"] = "scenario_complete"
+                        break
                     if options["policy"] == "skill-check" and policy.complete:
                         pending_record = record
                         frames.publish(record)
@@ -264,6 +273,8 @@ def run(run_dir):
                 outcome.update(status="error", failure_reason="policy_shutdown_failed")
         if options["policy"] == "skill-check" and policy is not None:
             outcome["skill_check"] = policy.report()
+        if options["policy"] == "scenario" and policy is not None:
+            outcome["scenario"] = policy.report()
         if recorder is not None:
             try:
                 recorder.close()

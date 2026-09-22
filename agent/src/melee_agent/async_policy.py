@@ -235,6 +235,8 @@ class AsyncPolicy:
         self.skill_events = []
         self.owner = "idle"
         self.last_owner = "idle"
+        self.decision_ns = None
+        self.exchange_busy = False
 
     def _record_skill_event(self):
         event = self.arbiter.last_event
@@ -249,6 +251,7 @@ class AsyncPolicy:
 
     def decide(self, observation):
         now = self.clock()
+        self.decision_ns = now
         self.events = []
         self.skill_events = []
         if self.arbiter.active is None:
@@ -268,6 +271,7 @@ class AsyncPolicy:
             self.last_invalidation = identity
         candidates = tuple(label for label in LABELS if can_start(relative_skill(label, observation), observation) is None)
         deliveries = self.bridge.exchange(observation, self.arbiter.generation, candidates if not emergency else ())
+        self.exchange_busy = deliveries is None
         if deliveries is None:
             self.counts["mailbox_busy"] += 1
             deliveries = []
@@ -308,7 +312,8 @@ class AsyncPolicy:
 
     def trace(self):
         return {**self.arbiter.trace(), "policy_events": self.events, "last_applied_sequence": self.last_applied,
-                "transitions": self.skill_events, "input_owner": self.last_owner}
+                "transitions": self.skill_events, "input_owner": self.last_owner,
+                "decision_ns": self.decision_ns, "exchange_busy": self.exchange_busy}
 
     def close(self):
         return {"schema_version": 1, "max_age_ns": MAX_AGE_NS, "max_frame_age": MAX_FRAME_AGE,

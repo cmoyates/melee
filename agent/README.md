@@ -147,7 +147,7 @@ removing those fixtures, resolve each path and use `/usr/bin/trash` explicitly.
    and take another ready issue instead of reporting simulated work as live.
    Do not auto-merge or close unrelated issues.
 
-`work ready`, `match`, `run`, `stop`, `evaluate`, incident replay and personality
+`work ready`, `run`, `evaluate` and personality
 commands in the roadmap are proposed interfaces; `match`, `stop` and `inspect`
 are now available as described below. Until the remaining slices land,
 use the GitHub dependency UI and existing explicit tools. Never permanently
@@ -527,3 +527,41 @@ Soak artifacts live beside the existing experiment ledger under `soaks/`.
 Per-phase JSON records audited decisions, input timing, fault counts, cleanup
 time, receiver liveness and an unrelated sentinel process. The first failed
 phase stops certification; retained failures are investigated before a rerun.
+
+## Explain and replay an incident offline
+
+```sh
+rtk proxy agent/.venv/bin/melee-agent explain RUN_ID --episode 1 --frame 600
+rtk proxy agent/.venv/bin/melee-agent explain RUN_ID --request-id REQUEST_ID --after-frames 60
+rtk proxy agent/.venv/bin/melee-agent replay-incident build/jev/incidents/INCIDENT_ID --verify
+```
+
+After a failed acceptance command, inspect the retained run and select the first
+relevant frame or consumed request ID. `explain` extracts a private sealed bundle
+and prints a shareable summary. It distinguishes the queued decision, latest
+completed controller flush and observed skill event; contact and causal match
+outcome remain unmeasured. Raw observations, provider answers, candidate bindings,
+transitions and packets stay under ignored `build/jev/incidents/`.
+
+Replay feeds the recorded observations and reply deliveries through the same
+`AsyncPolicy`, skill arbiter and frame executor. Exact executor/policy/queue clocks
+and mailbox-busy observations are recorded at their existing reads; replay never
+constructs a provider, emulator, controller or network transport. It verifies the
+bundle's checksums, record order, schemas, rules, pinned runtime/disc/dependency,
+policy source and provider configuration before executing the prefix. Verification
+is mandatory even without the `--verify` spelling. No game assets are read.
+
+The prefix starts at the run's first game observation rather than inventing a
+policy checkpoint. Extractions are bounded to 40,000 game records and 128 MiB;
+the selected frame may include up to 300 following frames. Historical captures
+without exact timing or matching policy source can be explained but explicitly
+cannot be certified as exact replays. Restore the matching source checkout to
+replay an older contract; never rewrite its declared hashes to make it pass.
+
+Replay stops at the first changed decision, packet, acceptance or skill state.
+Subsequent historical observations are not a counterfactual game future. For a
+confirmed bug, reduce the relevant observations into an asset-free synthetic
+fixture and assert the intended narrow behavior. The included stale-response
+regression fails with a deliberately weakened freshness guard and passes with
+the real guard; two unchanged replays yield identical decision/packet hashes.
+Live gameplay improvements still require new supervised matches.

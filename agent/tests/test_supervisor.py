@@ -91,7 +91,8 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(summary["reason"], "artifact_limit")
 
     def test_partial_and_wrong_shape_worker_results_are_incomplete(self):
-        for value in ('{"episodes":', '[]', '{"episodes": [], "neutralized": 1}', '{}'):
+        for value in ('{"episodes":', '[]', '{"episodes": [], "neutralized": 1}', '{}',
+                        '{"episodes": [], "neutralized": true, "status": "matches_complete", "recorder": []}'):
             with self.subTest(value=value):
                 code, summary = self.exercise(worker_text=value)
                 self.assertEqual(code, 2)

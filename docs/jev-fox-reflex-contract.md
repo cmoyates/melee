@@ -1,8 +1,9 @@
 # Fox local recovery and defense contract
 
-Status: integrated through the shared executor and tactical arbiter. The first
-four live Battlefield probes succeeded; the full 20-per-scenario acceptance run
-is pending. This document distinguishes native mechanics from agent heuristics.
+Status: integrated through the shared executor and tactical arbiter. The full
+Battlefield acceptance run passed with 20/20 returns in each of four mirrored
+scenarios. This document distinguishes native mechanics from agent heuristics;
+arbitrary knockback recovery and DI/tech effectiveness are not certified.
 
 ## Native mechanics used
 
@@ -106,3 +107,50 @@ each and showed native aerial jump 28 with a resource decrement. Low trials
 took 85 frames each and showed charge 354 (42 frames), travel 356 (30 frames),
 fall 358 and grounded landing 357 on the side platform. This confirms the
 actual Fox motions even where libmelee prints another character's enum names.
+
+The final suite `scenarios-de552876cd6f49a795f45b04bcf836a5` completed all 80
+trials in 1,256.70 seconds: 20/20 high-left, high-right, low-left and low-right.
+All 23,160 game records passed raw-state/ownership/cleanup audits and reproduced
+the same decisions, packets and full scenario/reflex traces offline. All 42
+protected files stayed unchanged; private artifacts total 196,285,897 bytes.
+No provider was contacted. Suite summary SHA-256:
+`70a4f650768cfd6662bde52f4231557548ad6e1b5f23d29f7d49e0af77979c9f`.
+
+205 offline tests pass for the recovery slice. The eighteen reflex tests exercise
+resource acknowledgements, held-input release, missed-start/deadline failures,
+life/episode/frame-gap resets, hitlag/hitstun, occupancy-aware aim, known-support
+returns and shared-writer tactical preemption. Incident replay now includes the
+reflex state; a deliberately changed phase is detected even before its packet
+differs. Host edge-case coverage does not imply a live DI/tech success rate or
+live certification of ledge occupancy/get-up behavior.
+
+An ordinary-play capture exposed a boundary case absent from the four offstage
+setups: frame 275 of `match-4002c36b8445446ba1335663cc4a4699` had an
+airborne origin at x=16.93, y=-3.46 during JumpF near center stage. Treating
+origin y<-3 as offstage started an unnecessary recovery. The later charge at
+x=-3.6 aimed toward the nearest edge and launched outward. That capture ended
+with Fox at zero stocks and Mario at four.
+
+The correction treats small negative origins inside a conservative main-stage
+landing corridor as awaiting ordinary landing. An engaged recovery inside that
+corridor does not start another up-B; any already-active charge inside the stage
+aims upward. The corridor uses x margin8 and minimum origin y=-12 as explicit
+heuristics, not native ECB queries. Two regression tests pin this case. All 80
+earlier trials still reproduce identical decisions, packets and full traces
+under the correction.
+
+The corrected ordinary capture `match-2aa8f92fa72f4dc889c9c042d04a3fcb`
+retained 10,202 game records at 59.80 observed simulation FPS with no frame gaps,
+duplicates or rollbacks. Frame 744 waited at x=-12.07, y=-3.46, then landed on
+frame 745. The run recorded eight acknowledged double jumps/eight stage returns,
+45 damage interruptions, 30 tech-input attempts and two native tech-state entries.
+Those last two counts are not a calibrated tech success rate. Fox had two stocks
+against Mario's four when the bounded capture ended; this is not a won match.
+
+All 102 simulated tactical acceptances passed the freshness/legality audit, with
+no invalid decisions applied. The complete 10,202-frame incident replayed twice
+identically, including reflex phases, with network/process constructors forbidden.
+Owned processes closed, inputs were neutralized, protected files stayed unchanged,
+and no provider was contacted. Evidence: `j15-live-capture-audit.json`; packet
+SHA-256 `4491c486fb876f4368be333c97756603123bf357f33db21373d4fb5bd1ad09c0`.
+The earlier failed capture and its explanation remain preserved separately.

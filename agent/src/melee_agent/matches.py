@@ -43,12 +43,14 @@ def artifact_bytes(root):
     return total
 
 
-def terminate_child(child):
+def terminate_child(child, *, grace_seconds=3):
+    if type(grace_seconds) is not int or not 1 <= grace_seconds <= 8:
+        raise ValueError("Invalid bounded shutdown grace")
     if child is None or child.poll() is not None:
         return
     child.terminate()
     try:
-        child.wait(timeout=3)
+        child.wait(timeout=grace_seconds)
     except subprocess.TimeoutExpired:
         child.kill()
         child.wait(timeout=3)
@@ -62,7 +64,7 @@ def preflight(root, duration, episodes, policy, capture=False):
         raise ValueError("Invalid capture mode")
     if type(episodes) is not int or not 1 <= episodes <= (100 if capture else 10) or (policy == "input-probe" and episodes != 1):
         raise ValueError("Choose 1-10 matches, or exactly one input probe; captures allow 100 episodes")
-    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake", "jev", "faults", "scenario"):
+    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake", "jev", "faults", "scenario", "heuristic", "random-legal"):
         raise ValueError("Unknown local policy")
     if not config.disc_image or not config.runtime or not config.runtime_sha256:
         raise ValueError("Configure the verified local disc and runtime first")
@@ -116,6 +118,14 @@ def read_worker_result(path):
                         for k in ("accepted", "written", "unwritten", "rejected")) or
                     recorder["accepted"] != recorder["written"] + recorder["unwritten"]):
                 raise ValueError("Invalid recorder result")
+        if "local_policy" in result:
+            report = result["local_policy"]
+            if (not isinstance(report, dict) or report.get("schema_version") != 1 or
+                    report.get("mode") not in ("heuristic", "random-legal") or type(report.get("seed")) is not int or
+                    report.get("cadence_frames") != 60 or report.get("provider_contacted") is not False or
+                    not isinstance(report.get("counts"), dict) or
+                    any(type(value) is not int or value < 0 for value in report["counts"].values())):
+                raise ValueError("Invalid local policy report")
         if "async_policy" in result:
             report = result["async_policy"]
             if not isinstance(report, dict) or not isinstance(report.get("bridge"), dict) or not isinstance(report.get("policy"), dict):
@@ -261,7 +271,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             # Attempt each cleanup even when its sibling's cleanup fails.
             for name, child in (("worker", worker), ("emulator", emulator)):
                 try:
-                    terminate_child(child)
+                    terminate_child(child, grace_seconds=8 if name == "emulator" else 3)
                 except (OSError, subprocess.SubprocessError) as error:
                     cleanup_errors.append({"process": name, "error_type": type(error).__name__})
             for sig, handler in previous_signals.items():
@@ -302,6 +312,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             complete = probe_ok = False
         captured = (capture and reason == "timeout" and result.get("status") == "interrupted" and
                     result["neutralized"] and stopped and receiver_closed and not cleanup_errors and bool(result["episodes"]) and
+                    bool(replays) and replay_errors == 0 and all(expected_settings(r["settings"]) for r in replays) and
                     recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
                     recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
         if policy in ("delayed-fake", "jev", "faults"):
@@ -321,6 +332,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
                     recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and recorder.get("rejected") == 0)
         scenario_ok = (policy == "scenario" and reason == "worker_finished" and result.get("status") == "scenario_complete" and
             verified_trial(result.get("scenario", {}), scenario_name) and result["neutralized"] and stopped and receiver_closed and
+            bool(replays) and replay_errors == 0 and all(expected_settings(r["settings"]) for r in replays) and
             not cleanup_errors and recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
             recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
         status = "scenario_recorded" if scenario_ok else "skills_verified" if skill_ok else "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
@@ -334,6 +346,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
         summary["processes"] = {name: None if child is None else
             {"pid": child.pid, "pgid": child.pid, "exit_code": child.poll()}
             for name, child in (("worker", worker), ("emulator", emulator))}
+        summary["shutdown_grace_seconds"] = {"worker": 3, "emulator": 8}
         if not result["neutralized"]:
             summary["neutralization_failure"] = "worker_result_unavailable" if result_error else "worker_reported_failure"
         if supervisor_error:
@@ -344,7 +357,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             summary["cleanup_errors"] = cleanup_errors
         if "error_type" in result:
             summary["worker_error_type"] = result["error_type"]
-        for key in ("recorder", "failure_reason", "skill_check", "async_policy", "fault_injection", "last_unrecorded_record", "state_receiver", "scenario"):
+        for key in ("recorder", "failure_reason", "skill_check", "async_policy", "local_policy", "fault_injection", "last_unrecorded_record", "state_receiver", "scenario"):
             if key in result:
                 summary[key] = result[key]
         try:

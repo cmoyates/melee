@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import select
 import unittest
 from unittest.mock import patch
 
@@ -63,6 +64,26 @@ class ReplayTests(unittest.TestCase):
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_emulator_grace_allows_a_slow_owned_writer_to_finalize_before_kill(self):
+        code = ("import signal,time; "
+            "signal.signal(signal.SIGTERM, lambda *_: (time.sleep(3.2), print('finalized', flush=True), exit(0))); "
+            "print('ready', flush=True); time.sleep(30)")
+        child = subprocess.Popen([sys.executable, "-u", "-c", code], stdout=subprocess.PIPE)
+        try:
+            self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+            self.assertEqual(child.stdout.readline(), b"ready\n")
+            terminate_child(child, grace_seconds=8)
+            self.assertEqual(child.returncode, 0)
+            self.assertEqual(child.stdout.read(), b"finalized\n")
+        finally:
+            terminate_child(child)
+            child.stdout.close()
+
+    def test_shutdown_grace_cannot_be_unbounded(self):
+        for value in (0, 9, True, 1.5):
+            with self.assertRaises(ValueError):
+                terminate_child(None, grace_seconds=value)
+
     def test_runtime_certificate_requires_distinct_untampered_successful_runs(self):
         root = Path(tempfile.mkdtemp(prefix="jev-certificate-test-")).resolve()
         folder = root / "build/jev/runtime"

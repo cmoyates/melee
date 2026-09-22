@@ -6,10 +6,12 @@ import json
 
 from .engine import Decision, ScriptedPolicy
 from .fox_reflex import FoxReflex
+from .ground_combat import COMBAT, can_start_combat
 from .skills import SkillArbiter, SkillSpec, inhibited
 from .stage import STAGE_ID, support_surface
 
-KINDS = ("grounded", "airborne", "offstage", "ledge", "shielded", "offstage_low")
+COMBAT_KINDS = {"combat_"+name: name for name in COMBAT}
+KINDS = ("grounded", "airborne", "offstage", "ledge", "shielded", "offstage_low", *COMBAT_KINDS)
 RESULTS = ("setup_failed", "skill_failed", "succeeded", "timeout")
 
 
@@ -26,14 +28,15 @@ class ScenarioV1:
     def __post_init__(self):
         if (self.schema_version != 1 or self.kind not in KINDS or type(self.direction) is not int or
                 self.direction not in (-1, 1) or self.setup_timeout_frames != 480 or
-                self.measurement_timeout_frames != 180 or self.measured_policy not in ("baseline", "fox-reflex-v1")):
+                self.measurement_timeout_frames != 180 or self.measured_policy not in ("baseline", "fox-reflex-v1", "ground-combat-v1")):
             raise ValueError("Invalid fixed ScenarioV1 contract")
 
     def manifest(self):
         return {**asdict(self), "stage_id": STAGE_ID, "bot": "FOX", "opponent": "MARIO", "cpu_level": 3,
             "stocks": 4, "timer_seconds": 480, "initial_state": "fresh_match", "game_rng_seed": None,
             "savestate": None, "setup_privilege": "ordinary_controller_packets_only",
-            "setup_inputs": ["wait", "left", "right", "jump", "jump_left", "jump_right", "recover_left", "recover_right"],
+            "setup_inputs": ["wait", "left", "right", "jump", "jump_left", "jump_right", "recover_left", "recover_right"] +
+                (["slow_left", "slow_right"] if self.kind in COMBAT_KINDS else []),
             "starting_common": "active life; no hitlag or hitstun; observed neutral input after a queued neutral setup packet",
             "starting_predicate": {
                 "grounded": "main ground; signed x in [25,50]; idle/walk/dash state; abs self x speed < 0.25",
@@ -42,6 +45,8 @@ class ScenarioV1:
                 "offstage_low": "signed x in [88,112]; y in [-40,-20]; falling; zero remaining jumps",
                 "ledge": "native CliffCatch/CliffWait motion 252/253 on declared side",
                 "shielded": "bot stable on main ground; opponent Guard/GuardSetOff within 25 units",
+                **{kind: "known shared support; declared facing toward opponent; observed vulnerable target; legal "+name+
+                    " range/input/motion predicate" for kind, name in COMBAT_KINDS.items()},
             }[self.kind], "outcome": {
                 "grounded": "observed bounded inward movement and neutral release",
                 "airborne": "observed landing on a known support surface",
@@ -49,6 +54,8 @@ class ScenarioV1:
                 "offstage_low": "regain a known stage support or ledge before life loss or timeout",
                 "ledge": "ordinary inward ledge return reaches main ground",
                 "shielded": "bot shield skill reaches observed success and releases",
+                **{kind: "observed "+name+" start then actionable neutral return; contact/capture recorded separately"
+                    for kind, name in COMBAT_KINDS.items()},
             }[self.kind]}
 
 
@@ -57,6 +64,9 @@ SUITE = tuple(ScenarioV1(kind+"-"+("left" if direction < 0 else "right"), kind, 
 RECOVERY_SUITE = tuple(ScenarioV1("recovery-"+height+"-"+("left" if direction < 0 else "right"),
     kind, direction, measured_policy="fox-reflex-v1")
     for height, kind in (("high", "offstage"), ("low", "offstage_low")) for direction in (-1, 1))
+COMBAT_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
+    kind, direction, measured_policy="ground-combat-v1")
+    for kind, name in COMBAT_KINDS.items() for direction in (-1, 1))
 
 
 def find_suite(name):
@@ -64,15 +74,17 @@ def find_suite(name):
         return SUITE
     if name == "recovery-v1":
         return RECOVERY_SUITE
+    if name == "ground-combat-v1":
+        return COMBAT_SUITE
     raise ValueError("Unknown fixed scenario suite")
 
 
 def scenario_suite(spec):
-    return "recovery-v1" if spec.measured_policy == "fox-reflex-v1" else "mechanics-v1"
+    return {"fox-reflex-v1": "recovery-v1", "ground-combat-v1": "ground-combat-v1"}.get(spec.measured_policy, "mechanics-v1")
 
 
 def find_scenario(name):
-    for spec in SUITE+RECOVERY_SUITE:
+    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE:
         if spec.name == name:
             return spec
     raise ValueError("Unknown fixed mechanical scenario")
@@ -93,6 +105,8 @@ def starting_predicate(spec, observation):
     if inhibited(observation) or not a.details.input_neutral_derived:
         return False
     x = spec.direction*a.x
+    if spec.kind in COMBAT_KINDS:
+        return can_start_combat(COMBAT_KINDS[spec.kind], spec.direction, observation) is None
     if spec.kind == "grounded":
         return stable_ground(observation) and 25 <= x <= 50
     if spec.kind == "airborne":
@@ -123,6 +137,9 @@ class ScenarioPolicy:
         self.reflex = FoxReflex() if spec.measured_policy == "fox-reflex-v1" else None
         self.result = None
         self.last_action = "wait"
+        self.combat_crossing = False
+        self.crossing_started = None
+        self.crossing_airborne = False
 
     @property
     def complete(self):
@@ -133,6 +150,8 @@ class ScenarioPolicy:
         return Decision(1, observation.episode, observation.frame, action)
 
     def _finish(self, observation, status, reason):
+        if self.arbiter.active is not None:
+            self.arbiter.abort(observation, reason)
         self.result = {"status": status, "reason": reason, "end_episode": observation.episode,
             "end_frame": observation.frame, "end_observation": asdict(observation),
             "measured_frames": 0 if self.measurement_start is None else observation.frame-self.measurement_start+1}
@@ -141,6 +160,8 @@ class ScenarioPolicy:
         return self._decision(observation)
 
     def _setup(self, observation):
+        if self.spec.kind in COMBAT_KINDS:
+            return self._combat_setup(observation)
         a = observation.bot
         direction = self.spec.direction
         outward, inward = ("left", "right") if direction < 0 else ("right", "left")
@@ -186,6 +207,45 @@ class ScenarioPolicy:
         action = self.probe.decide(observation).action
         return "wait" if action == "attack" else action
 
+    def _combat_setup(self, observation):
+        a, b = observation.bot, observation.opponent
+        self.setup_phase = "combat_opportunity"
+        direction = self.spec.direction
+        distance = (b.x-a.x)*direction
+        toward_air, away_air = ("right", "left") if direction > 0 else ("left", "right")
+        if self.combat_crossing:
+            self.setup_phase = "crossing_short_hop"
+            if not a.grounded:
+                self.crossing_airborne = True
+                return away_air if distance < 8 else toward_air
+            if self.crossing_airborne or observation.frame-self.crossing_started >= 8:
+                self.combat_crossing = False
+                return "wait"
+            return away_air  # Release X during observed jumpsquat for a short hop.
+        if abs(a.x) > 62 or a.y < -12:
+            action = self.probe.decide(observation).action
+            return "wait" if action == "attack" else action
+        surface = support_surface(a.x, a.y, a.grounded)
+        if a.grounded and surface != "ground":
+            return "left" if surface == "right" else "right"
+        if not a.grounded:
+            return "left" if a.x > 0 else "right"
+        toward, away = ("slow_right", "slow_left") if direction > 0 else ("slow_left", "slow_right")
+        if (distance <= 0 and abs(b.x-a.x) < 18 and 14 <= a.details.action_id <= 23 and
+                not a.details.input_jump_held and abs(a.x-20*direction) < 55):
+            self.combat_crossing = True
+            self.crossing_started = observation.frame
+            self.crossing_airborne = False
+            self.setup_phase = "crossing_short_hop"
+            return "jump_"+away_air
+        if distance < 3:
+            return away
+        if distance > COMBAT[COMBAT_KINDS[self.spec.kind]]["range"]-1:
+            return toward
+        if a.details.facing_right != (direction > 0):
+            return toward
+        return "wait"
+
     def decide(self, observation):
         if self.complete:
             return self._decision(observation)
@@ -206,8 +266,9 @@ class ScenarioPolicy:
                 self.owner = "measured"
                 self.initial = asdict(observation)
                 self.measurement_start = observation.frame
-                if self.spec.kind in ("grounded", "shielded"):
-                    skill = SkillSpec("move", -self.spec.direction) if self.spec.kind == "grounded" else SkillSpec("shield")
+                if self.spec.kind in ("grounded", "shielded", *COMBAT_KINDS):
+                    skill = SkillSpec(COMBAT_KINDS[self.spec.kind], self.spec.direction) if self.spec.kind in COMBAT_KINDS else (
+                        SkillSpec("move", -self.spec.direction) if self.spec.kind == "grounded" else SkillSpec("shield"))
                     reason = self.arbiter.request(skill, observation)
                     if reason:
                         return self._finish(observation, "skill_failed", "skill_refused:"+reason)
@@ -216,14 +277,14 @@ class ScenarioPolicy:
             else:
                 action = "wait" if inhibited(observation) else self._setup(observation)
                 return self._decision(observation, action)
-        if inhibited(observation) and self.reflex is None:
+        if inhibited(observation) and self.reflex is None and self.spec.kind not in COMBAT_KINDS:
             return self._finish(observation, "skill_failed", "measurement_inhibited:"+inhibited(observation))
         if observation.frame-self.measurement_start >= self.spec.measurement_timeout_frames:
             return self._finish(observation, "timeout", "measurement_deadline")
         a = observation.bot
         support = support_surface(a.x, a.y, a.grounded)
         known_support = support in ("ground", "left", "right", "top")
-        if self.spec.kind in ("grounded", "shielded"):
+        if self.spec.kind in ("grounded", "shielded", *COMBAT_KINDS):
             decision = self.arbiter.step(observation)
             if self.arbiter.active is None:
                 event = self.arbiter.last_event or {}
@@ -257,7 +318,8 @@ class ScenarioPolicy:
             "setup_stopped_frame": None if self.measurement_start is None else self.measurement_start-1,
             "measurement_start_frame": self.measurement_start, "initial_observation": self.initial,
             "setup_privilege": "ordinary_controller_packets_only", "result": self.result,
-            **({"reflex": self.reflex.trace()} if self.reflex else {})}
+            **({"reflex": self.reflex.trace()} if self.reflex else {}),
+            **({"skill": self.arbiter.trace()} if self.spec.kind in COMBAT_KINDS else {})}
 
 
 def verified_trial(report, name):

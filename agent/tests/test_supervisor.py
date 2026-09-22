@@ -16,8 +16,25 @@ from melee_agent import matches
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_local_selector_shutdown_report_crosses_the_supervisor_boundary(self):
+        from melee_agent.local_combat_policy import LocalCombatPolicy
+        from test_combat_integration import ground
+        for mode in ("heuristic", "random-legal"):
+            policy = LocalCombatPolicy(mode)
+            policy.decide(ground())
+            report = policy.close()
+            code, summary = self.exercise(worker_text=json.dumps({"episodes": [{"result_event_verified": True}],
+                "neutralized": True, "status": "matches_complete", "local_policy": report}), fake_replay=True)
+            self.assertEqual(code, 0)
+            self.assertEqual(summary["local_policy"], report)
+            report["provider_contacted"] = True
+            code, summary = self.exercise(worker_text=json.dumps({"episodes": [], "neutralized": True,
+                "status": "matches_complete", "local_policy": report}))
+            self.assertEqual(code, 2)
+            self.assertEqual(summary["reason"], "worker_result_invalid")
+
     def exercise(self, *, worker_text=None, start_error=False, scan_error=False,
-                summary_error=False, artifact_limit=False, fake_replay=False):
+                summary_error=False, artifact_limit=False, fake_replay=False, scenario=False, bad_replay=False):
         root = Path(tempfile.mkdtemp(prefix="jev-supervisor-test-")).resolve()
         config = Config(slippi_port=0, limits=Limits(max_artifact_bytes=1 if artifact_limit else 1_000_000))
         children = []
@@ -59,10 +76,14 @@ class SupervisorTests(unittest.TestCase):
                 if scan_error:
                     stack.enter_context(patch.object(matches, "artifact_bytes", side_effect=PermissionError("private path")))
                 if fake_replay:
-                    stack.enter_context(patch("melee_agent.replay.summarize_file", return_value={"outcome": "game", "settings": {}}))
+                    stack.enter_context(patch("melee_agent.replay.summarize_file", side_effect=ValueError("incomplete replay") if bad_replay else None,
+                        return_value={"outcome": "game", "settings": {}}))
                     stack.enter_context(patch("melee_agent.replay.expected_settings", return_value=True))
+                if scenario:
+                    stack.enter_context(patch("melee_agent.scenarios.verified_trial", return_value=True))
                 with redirect_stdout(output):
-                    code = matches.supervise(root, 2, 1, "smoke")
+                    code = matches.supervise(root, 2, 1, "scenario" if scenario else "smoke",
+                        scenario_name="jab-left" if scenario else None)
             summary = json.loads(output.getvalue().splitlines()[-1])
             self.assertTrue(all(child.poll() is not None for child in children))
             self.assertIsNone(unrelated.poll())
@@ -79,6 +100,15 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(summary["reason"], "supervisor_error")
         self.assertEqual(summary["supervisor_error_type"], "OSError")
+
+    def test_completed_scenario_requires_a_verified_replay_before_success(self):
+        worker = {"episodes": [], "neutralized": True, "status": "scenario_complete", "scenario": {},
+            "recorder": {"status": "closed", "writer_stopped": True, "accepted": 1, "written": 1,
+                "unwritten": 0, "rejected": 0}}
+        for replay, bad in ((True, False), (False, False), (True, True)):
+            code, summary = self.exercise(worker_text=json.dumps(worker), scenario=True, fake_replay=replay, bad_replay=bad)
+            self.assertEqual(code, 0 if replay and not bad else 2)
+            self.assertEqual(summary["status"], "scenario_recorded" if replay and not bad else "incomplete")
 
     def test_artifact_scan_failure_reaps_both_children(self):
         code, summary = self.exercise(scan_error=True)

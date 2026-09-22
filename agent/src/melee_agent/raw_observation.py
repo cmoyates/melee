@@ -44,6 +44,11 @@ def decode_post(event):
     return result
 
 
+def normalized_hurtbox(raw):
+    value = raw.get("hurtbox_state")
+    return value if raw.get("available", {}).get("hurtbox_state") and type(value) is int and value in (0, 1, 2) else None
+
+
 def combat_counters(raw):
     """0x2B is a reused motion field; only flag 4 bit 0x02 means hitstun.
 

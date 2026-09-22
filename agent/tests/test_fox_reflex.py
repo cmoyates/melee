@@ -17,6 +17,28 @@ def air(frame=0, x=-72., y=-1., jumps=1, **details):
 
 
 class FoxReflexTests(unittest.TestCase):
+    def test_small_negative_origin_over_main_stage_does_not_start_a_recovery(self):
+        # Recorded ordinary-play incident frame 275: origin y=-3.46 in JumpF,
+        # x=16.93. The old y<-3 predicate double-jumped and later up-B'd outward.
+        observation = air(x=16.93, y=-3.46, jumps=1, action_id=25, self_velocity_y=-2.8)
+        policy = FoxReflex()
+        self.assertIsNone(policy.reason(observation))
+        self.assertEqual(policy.decide_action(observation), "wait")
+        self.assertIsNone(policy.started_frame)
+
+    def test_recovery_waits_for_in_stage_landing_and_never_aims_charge_toward_an_edge(self):
+        policy = FoxReflex()
+        policy.decide_action(air())
+        policy.decide_action(air(1, jumps=0, y=3., action_id=28, self_velocity_y=4.))
+        self.assertEqual(policy.decide_action(air(2, x=-40., y=8., jumps=0, action_id=28,
+            self_velocity_y=-2.8)), "wait")
+        self.assertEqual(policy.phase, "await_stage_landing")
+        self.assertEqual(policy.counts["special_attempts"], 0)
+        policy.decide_action(position(3, x=-40.))
+        self.assertEqual(policy.counts["observed_stage_returns"], 1)
+        for x in (-3.6, 3.6):
+            self.assertEqual(aim_action(air(x=x, y=8., jumps=0, action_id=354)), "aim_up")
+
     def test_shared_executor_emits_one_start_press_then_button_free_aim_packets(self):
         sink = RecordingSink()
         executor = FrameExecutor(FoxReflex(), sink, SimpleNamespace(now_ns=lambda: 1_100_000_000))

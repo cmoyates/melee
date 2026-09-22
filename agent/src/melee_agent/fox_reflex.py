@@ -17,6 +17,10 @@ LEDGE = tuple(range(252, 264))
 AIR_ACTIONABLE = tuple(range(25, 35)) + (38,)
 KNOWN_SUPPORTS = ("ground", "left", "right", "top")
 MAX_RECOVERY_FRAMES = 180
+# Fighter origin can dip below zero during an ordinary landing while its ECB
+# still approaches the floor. This is a conservative landing corridor, not an
+# exact collision query; do not infer offstage status from origin y alone.
+LANDING_ORIGIN_FLOOR = -12
 
 
 def known_support(observation):
@@ -33,6 +37,8 @@ def occupied_ledge(observation):
 def aim_action(observation):
     """Choose a coarse charge-time aim from current observed geometry."""
     a = observation.bot
+    if abs(a.x) <= GROUND_EDGE-8:
+        return "aim_up"
     side = 1 if a.x > 0 else -1
     occupied = occupied_ledge(observation)
     target_x = side*(50 if occupied else 60)
@@ -128,7 +134,7 @@ class FoxReflex:
             if known_support(observation) is None:
                 return "unknown_geometry"
             return "edge" if known_support(observation) == "ground" and abs(a.x) > 62 else None
-        if (abs(a.x) > 62 or a.y < -3 or self.started_frame is not None or
+        if (abs(a.x) > 62 or a.y < LANDING_ORIGIN_FLOOR or self.started_frame is not None or
                 a.details.action_id in CHARGE+TRAVEL+SPECIAL_FALL):
             return "recovery"
         return None
@@ -264,6 +270,9 @@ class FoxReflex:
         if a.details.action_id not in AIR_ACTIONABLE:
             self._phase("await_actionable_air", observation)
             return self._output(inward)
+        if abs(a.x) <= GROUND_EDGE-8 and LANDING_ORIGIN_FLOOR <= a.y < 10:
+            self._phase("await_stage_landing", observation)
+            return self._output("wait")
         if a.jumps and not self.jump_attempted and (a.y < 5 or a.details.self_velocity_y <= 0):
             self.jump_attempted = True
             self.jump_requested_with = a.jumps

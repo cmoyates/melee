@@ -35,6 +35,9 @@ def main(argv=None):
     provider_probe.add_argument("--timeout", type=float, default=5)
     provider_report = provider_commands.add_parser("budget", help="Read recorded and uncertain provider costs")
     provider_report.add_argument("--directory", required=True)
+    benchmark = provider_commands.add_parser("benchmark", help="Paid 1/2/5 Hz Decisions latency experiment")
+    benchmark.add_argument("--budget", required=True)
+    benchmark.add_argument("--max-requests", type=int, default=150)
     for name in ("inspect", "stop"):
         command = commands.add_parser(name)
         command.add_argument("run_id")
@@ -51,6 +54,9 @@ def main(argv=None):
                 report = ledger.report()
             elif args.provider_command == "budget":
                 report = SpendLedger(owned_path(root, args.directory) / "spend.jsonl").report()
+            elif args.provider_command == "benchmark":
+                from .benchmark import run_benchmark
+                report = run_benchmark(root, args.budget, args.max_requests)
             else:
                 from .provider_commands import probe
                 report = probe(root, args.budget, args.timeout)

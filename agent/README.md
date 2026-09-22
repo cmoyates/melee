@@ -176,7 +176,7 @@ creating another budget does not authorize additional spending. The append-only
 ledger serializes reservations across processes and refuses changed limits,
 truncated journals, expired deadlines and exhausted request/token/cost caps.
 Costs are integer nano-USD (divide by 1,000,000,000 for dollars). A request
-reserves $0.002 and 32,000 input tokens until validated usage is received;
+reserves $0.002 and 32,000 input tokens per independent question until validated usage is received;
 unknown billing retains the full reservation. A provider exceeding a reservation
 blocks subsequent requests. No automatic retries occur. HTTP 429/5xx applies
 backoff to future fresh submissions.
@@ -195,6 +195,33 @@ until transport cleanup completes. Submitting/reserving is an off-frame-loop
 operation because durable journal writes may block. Offline tests inject a fake
 transport and never need a key. Synthetic probe reports establish access and
 contract behavior, not latency percentiles or gameplay competence.
+
+### Initial cadence benchmark
+
+```sh
+rtk proxy uv run --project agent --no-sync --env-file agent/.env melee-agent provider benchmark \
+  --budget build/jev/my-experiment --max-requests 150
+```
+
+This submits fresh canned states at 1/2/5 Hz with 5/10/16 choice labels and
+one/three independent questions. It records every attempt, refusal, failure,
+validated result and actual usage. It uses a new HTTP subprocess/connection per
+request; provider cache state is unknown. The choice labels measure request
+width and do not imply those controller skills are implemented.
+
+The first 2026-09-22 run produced 100 validated results in 128 attempts:
+successful-response p50/p95/p99 were 435/560/868 ms. There were 27 rejected
+distribution sums and one timeout, all retained. A diagnostic response totaled
+0.99 despite the documented sum-one contract; the adapter continues to reject
+it rather than silently normalize reported probabilities. The five-choice,
+single-question subset validated 22/22 observations, a small sample.
+
+Initial integration recommendation: one question, at most five choices, 1 Hz,
+one in-flight request, maximum accepted action age one second and strict local
+fallback on every invalid/late response. This does not certify useful gameplay.
+Reports include attempted/submitted/validated rates and age thresholds; latency
+percentiles describe successful validated calls only. Post-sweep topups are a
+separate phase so their timing cannot distort the original sweep throughput.
 
 ## Autonomous local matches
 

@@ -21,7 +21,7 @@ from .integrity import inspect_integrity
 from .matches import artifact_bytes, isolated_environment, locate_run, terminate_child
 from .match_worker import write_json
 from .replay import expected_settings
-from .scenarios import SUITE, find_scenario, starting_predicate, suite_hash, verified_trial
+from .scenarios import find_suite, find_scenario, starting_predicate, suite_hash, verified_trial
 from .stage import support_surface
 
 
@@ -92,9 +92,9 @@ def inspect_scenario(run):
         errors["measured_frame_count"] += 1
     if result.get("status") == "succeeded" and measured:
         a = result["end_observation"]["bot"]
-        if spec.kind in ("offstage", "ledge", "airborne"):
+        if spec.kind in ("offstage", "offstage_low", "ledge", "airborne"):
             on_stage = support_surface(a["x"], a["y"], a["grounded"]) in ("ground", "left", "right", "top")
-            ledge = spec.kind == "offstage" and a["details"]["action_id"] in (252, 253)
+            ledge = spec.kind in ("offstage", "offstage_low") and a["details"]["action_id"] in (252, 253)
             if not on_stage and not ledge:
                 errors["return_or_landing_not_observed"] += 1
         elif spec.kind == "grounded":
@@ -120,23 +120,36 @@ class SuiteInterrupted(BaseException):
     pass
 
 
-def run_suite(root, repeats=10, duration=2400, seed=0):
+def recovery_acceptance(results, repeats):
+    per_scenario = {}
+    for spec in find_suite("recovery-v1"):
+        trials = [row for row in results if row["scenario"] == spec.name]
+        successes = sum(row["status"] == "pass" and row["trial_status"] == "succeeded" for row in trials)
+        per_scenario[spec.name] = {"trials": len(trials), "successes": successes,
+            "passed": repeats == 20 and len(trials) == 20 and successes >= 18}
+    return {"passed": all(row["passed"] for row in per_scenario.values()),
+        "required": "At least 18/20 successful audited returns in every declared mirrored scenario",
+        "scenarios": per_scenario}
+
+
+def run_suite(root, repeats=10, duration=2400, seed=0, suite="mechanics-v1", require_acceptance=False):
     if (type(repeats) is not int or not 1 <= repeats <= 20 or type(duration) is not int or
             not 30 <= duration <= 3600 or type(seed) is not int or not 0 <= seed <= 2147483647):
         raise ValueError("Invalid bounded scenario schedule")
+    specs = find_suite(suite)
     config = load_config(root)
     if shutil.disk_usage(root / "build/jev").free < 2_147_483_648:
         raise ValueError("Scenario suite needs 2 GiB free")
     suite_id = "scenarios-"+uuid.uuid4().hex
     folder = owned_path(root, "build/jev/scenarios/"+suite_id)
     folder.mkdir(parents=True)
-    order = [(repetition+1, spec.name) for repetition in range(repeats) for spec in SUITE]
+    order = [(repetition+1, spec.name) for repetition in range(repeats) for spec in specs]
     random.Random(seed).shuffle(order)
-    manifest = {"schema_version": 1, "suite_id": suite_id, "suite": "mechanics-v1", "suite_sha256": suite_hash(),
+    manifest = {"schema_version": 1, "suite_id": suite_id, "suite": suite, "suite_sha256": suite_hash(suite),
         "repeats": repeats, "ordering_seed": seed, "game_rng_seed": None,
         "runtime_sha256": config.runtime_sha256, "initial_state": "fresh_match_per_trial",
         "savestates_supported": False, "duration_seconds": duration, "order": order,
-        "scenarios": [spec.manifest() for spec in SUITE], "artifact_limit_bytes": 2_147_483_648,
+        "scenarios": [spec.manifest() for spec in specs], "artifact_limit_bytes": 2_147_483_648,
         "provider_contacted": False, "repeatability": "Observed predicates are controlled; CPU and game RNG are not seeded."}
     write_json(folder / "manifest.json", manifest)
     started = time.monotonic()
@@ -200,11 +213,13 @@ def run_suite(root, repeats=10, duration=2400, seed=0):
         for sig, handler in previous.items():
             signal.signal(sig, handler)
         counts = Counter(row["trial_status"] for row in results)
-        report = {"schema_version": 1, "suite_id": suite_id, "suite": "mechanics-v1", "status": status,
+        report = {"schema_version": 1, "suite_id": suite_id, "suite": suite, "status": status,
             "reason": reason, "elapsed_seconds": time.monotonic()-started, "expected_trials": len(order),
             "completed_trials": len(results), "outcomes": dict(counts), "trials": results,
             "provider_contacted": False, "game_rng_seed": None,
             "acceptance_scope": "A completed suite records setup and skill outcomes; it does not imply all skills succeeded."}
+        if suite == "recovery-v1":
+            report["acceptance"] = recovery_acceptance(results, repeats)
         write_json(folder / "summary.json", report)
         print(json.dumps({k: v for k, v in report.items() if k != "trials"}), flush=True)
-    return 0 if status == "completed" else 2
+    return 0 if status == "completed" and (not require_acceptance or report.get("acceptance", {}).get("passed")) else 2

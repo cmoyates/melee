@@ -7,7 +7,7 @@ import json
 import threading
 import time
 
-from .engine import Decision, ScriptedPolicy
+from .fox_reflex import FoxReflex
 from .skills import SkillArbiter, can_start, inhibited, relative_skill
 from .stage import support_surface
 
@@ -225,7 +225,7 @@ class AsyncPolicy:
         self.bridge = bridge if bridge is not None else LatestBridge(run_id, OrderingBackend())
         self.clock = clock
         self.arbiter = SkillArbiter()
-        self.recovery = ScriptedPolicy()
+        self.recovery = FoxReflex()
         self.last_applied = 0
         self.next_fallback_ns = 0
         self.events = []
@@ -257,7 +257,10 @@ class AsyncPolicy:
         if self.arbiter.active is None:
             self.owner = "idle"
         a = observation.bot
-        emergency = inhibited(observation) or ("offstage" if abs(a.x) > 65 or a.y < -5 else None)
+        emergency = self.recovery.reason(observation)
+        # Observe every frame, including ordinary skill ownership, so a landing
+        # clears recovery commitments and the continuity cursor stays current.
+        reflex_decision = self.recovery.decide(observation)
         identity = (observation.episode, a.details.life_generation_derived,
                     observation.opponent.details.life_generation_derived, emergency)
         discontinuity = self.last_frame is not None and self.last_frame != (observation.episode, observation.frame - 1)
@@ -299,7 +302,7 @@ class AsyncPolicy:
         if emergency:
             self.counts["emergency_frames"] += 1
             self._record_owner("emergency", observation)
-            return self.recovery.decide(observation) if emergency == "offstage" else Decision(1, observation.episode, observation.frame, "wait")
+            return reflex_decision
         self._record_owner(self.owner, observation)
         if self.arbiter.active is None and now >= self.next_fallback_ns:
             label = "approach" if "approach" in candidates else "neutral"
@@ -313,8 +316,9 @@ class AsyncPolicy:
     def trace(self):
         return {**self.arbiter.trace(), "policy_events": self.events, "last_applied_sequence": self.last_applied,
                 "transitions": self.skill_events, "input_owner": self.last_owner,
-                "decision_ns": self.decision_ns, "exchange_busy": self.exchange_busy}
+                "decision_ns": self.decision_ns, "exchange_busy": self.exchange_busy,
+                "reflex": self.recovery.trace()}
 
     def close(self):
         return {"schema_version": 1, "max_age_ns": MAX_AGE_NS, "max_frame_age": MAX_FRAME_AGE,
-                "policy": dict(self.counts), "bridge": self.bridge.close()}
+                "policy": dict(self.counts), "bridge": self.bridge.close(), "reflex": self.recovery.trace()}

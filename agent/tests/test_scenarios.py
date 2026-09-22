@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from melee_agent.scenarios import ScenarioPolicy, SUITE, find_scenario, starting_predicate, verified_trial
+from melee_agent.scenario_runner import recovery_acceptance
 from test_async_policy import state
 
 
@@ -15,6 +16,37 @@ def position(frame=0, x=-35., y=0., grounded=True, jumps=2, **details):
 
 
 class ScenarioTests(unittest.TestCase):
+    def test_recovery_acceptance_counts_setup_and_audit_failures_against_each_side(self):
+        names = ("recovery-high-left", "recovery-high-right", "recovery-low-left", "recovery-low-right")
+        rows = [{"scenario": name, "status": "pass", "trial_status": "succeeded"}
+            for name in names for _ in range(20)]
+        self.assertTrue(recovery_acceptance(rows, 20)["passed"])
+        for index in (0, 1):
+            rows[index]["trial_status"] = "setup_failed"
+        self.assertTrue(recovery_acceptance(rows, 20)["passed"])
+        rows[2]["status"] = "fail"
+        self.assertFalse(recovery_acceptance(rows, 20)["passed"])
+        self.assertFalse(recovery_acceptance(rows[20:], 20)["passed"])
+        self.assertFalse(recovery_acceptance([rows[40]], 1)["passed"])
+
+    def test_low_recovery_predicate_requires_consumed_jump_and_neutral_setup_boundary(self):
+        for direction, side in ((-1, "left"), (1, "right")):
+            spec = find_scenario("recovery-low-"+side)
+            valid = position(x=95*direction, y=-25., grounded=False, jumps=0, action_id=29, self_velocity_y=-2.)
+            self.assertTrue(starting_predicate(spec, valid))
+            self.assertFalse(starting_predicate(spec, replace(valid, bot=replace(valid.bot, jumps=1))))
+            self.assertFalse(starting_predicate(spec, replace(valid, bot=replace(valid.bot, y=-10.))))
+            policy = ScenarioPolicy(spec)
+            self.assertEqual(policy.decide(valid).action, "special_up")
+            self.assertEqual(policy.phase, "measured")
+            policy.decide(position(1, x=95*direction, y=-25., grounded=False, jumps=0,
+                action_id=88, hitstun_frames_derived=3, attack_velocity_x=float(direction)))
+            self.assertFalse(policy.complete)
+            self.assertEqual(policy.reflex.phase, "defensive_drift")
+            policy.decide(position(2, x=40*direction, y=27.2001, action_id=42))
+            self.assertEqual(policy.result["status"], "succeeded")
+            self.assertTrue(verified_trial(policy.report(), spec.name))
+
     def test_mirrored_predicates_require_the_declared_side_and_resources(self):
         for direction, name in ((-1, "left"), (1, "right")):
             spec = find_scenario("offstage-"+name)

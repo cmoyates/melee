@@ -30,9 +30,11 @@ def main(argv=None):
     soak.add_argument("--duration", type=int, default=1800)
     skills = commands.add_parser("skill-check", help="Observed movement/jump/shield repetitions on Battlefield")
     skills.add_argument("--repeats", type=int, default=20)
-    skills.add_argument("--duration", type=int, default=600)
+    skills.add_argument("--duration", type=int, help="Hard wall-clock limit; defaults to 600s movement or 2400s recovery")
+    skills.add_argument("--suite", choices=("movement-v1", "recovery-v1"), default="movement-v1")
+    skills.add_argument("--policy", choices=("offline",), default="offline")
     scenarios = commands.add_parser("scenarios", help="Fresh-match mechanical scenario suite with explicit setup outcomes")
-    scenarios.add_argument("--suite", choices=("mechanics-v1",), default="mechanics-v1")
+    scenarios.add_argument("--suite", choices=("mechanics-v1", "recovery-v1"), default="mechanics-v1")
     scenarios.add_argument("--repeats", type=int, default=10)
     scenarios.add_argument("--duration", type=int, default=2400, help="Hard wall-clock suite limit")
     scenarios.add_argument("--seed", type=int, default=0, help="Trial ordering only; does not seed game RNG")
@@ -83,7 +85,7 @@ def main(argv=None):
     if args.command == "scenarios":
         from .scenario_runner import run_suite
         try:
-            return run_suite(root, args.repeats, args.duration, args.seed)
+            return run_suite(root, args.repeats, args.duration, args.seed, args.suite)
         except (ValueError, OSError):
             print(json.dumps({"status": "blocked", "reason": "scenario_preflight_failed"}))
             return 1
@@ -151,8 +153,16 @@ def main(argv=None):
         return launch(root, args.duration, 100, args.policy, capture=True,
                         budget_directory=args.budget, max_requests=args.max_requests, fault_mode=args.fault)
     if args.command == "skill-check":
+        if args.suite == "recovery-v1":
+            from .scenario_runner import run_suite
+            try:
+                return run_suite(root, args.repeats, 2400 if args.duration is None else args.duration,
+                    suite=args.suite, require_acceptance=True)
+            except (ValueError, OSError):
+                print(json.dumps({"status": "blocked", "reason": "scenario_preflight_failed"}))
+                return 1
         from .matches import launch
-        return launch(root, args.duration, 10, "skill-check", skill_repeats=args.repeats)
+        return launch(root, 600 if args.duration is None else args.duration, 10, "skill-check", skill_repeats=args.repeats)
     if args.command in ("inspect", "stop"):
         from .matches import locate_run
         try:

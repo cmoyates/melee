@@ -3,7 +3,7 @@
   "cases": [
     {
       "observation": {
-        "schema_version": 3,
+        "schema_version": 4,
         "episode": 1,
         "frame": -123,
         "observed_ns": 0,
@@ -30,7 +30,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "opponent": {
@@ -55,7 +56,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "match": {
@@ -97,7 +99,7 @@
     },
     {
       "observation": {
-        "schema_version": 3,
+        "schema_version": 4,
         "episode": 1,
         "frame": 0,
         "observed_ns": 16666667,
@@ -124,7 +126,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "opponent": {
@@ -149,7 +152,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "match": {
@@ -191,7 +195,7 @@
     },
     {
       "observation": {
-        "schema_version": 3,
+        "schema_version": 4,
         "episode": 1,
         "frame": 12,
         "observed_ns": 33333334,
@@ -218,7 +222,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "opponent": {
@@ -243,7 +248,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "match": {
@@ -285,7 +291,7 @@
     },
     {
       "observation": {
-        "schema_version": 3,
+        "schema_version": 4,
         "episode": 1,
         "frame": 24,
         "observed_ns": 50000001,
@@ -312,7 +318,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "opponent": {
@@ -337,7 +344,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "match": {
@@ -379,7 +387,7 @@
     },
     {
       "observation": {
-        "schema_version": 3,
+        "schema_version": 4,
         "episode": 1,
         "frame": 36,
         "observed_ns": 66666668,
@@ -406,7 +414,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "opponent": {
@@ -431,7 +440,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "match": {
@@ -473,7 +483,7 @@
     },
     {
       "observation": {
-        "schema_version": 3,
+        "schema_version": 4,
         "episode": 1,
         "frame": 48,
         "observed_ns": 83333335,
@@ -500,7 +510,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "opponent": {
@@ -525,7 +536,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "match": {
@@ -567,7 +579,7 @@
     },
     {
       "observation": {
-        "schema_version": 3,
+        "schema_version": 4,
         "episode": 1,
         "frame": 60,
         "observed_ns": 100000002,
@@ -594,7 +606,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "opponent": {
@@ -619,7 +632,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "match": {
@@ -661,7 +675,7 @@
     },
     {
       "observation": {
-        "schema_version": 3,
+        "schema_version": 4,
         "episode": 1,
         "frame": 61,
         "observed_ns": 116666669,
@@ -688,7 +702,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "opponent": {
@@ -713,7 +728,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "match": {
@@ -755,7 +771,7 @@
     },
     {
       "observation": {
-        "schema_version": 3,
+        "schema_version": 4,
         "episode": 2,
         "frame": -123,
         "observed_ns": 133333336,
@@ -782,7 +798,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "opponent": {
@@ -807,7 +824,8 @@
             "shield_strength": 60.0,
             "input_neutral_derived": true,
             "input_jump_held": false,
-            "input_shield_held": false
+            "input_shield_held": false,
+            "hurtbox_state": 0
           }
         },
         "match": {

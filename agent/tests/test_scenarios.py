@@ -16,6 +16,23 @@ def position(frame=0, x=-35., y=0., grounded=True, jumps=2, **details):
 
 
 class ScenarioTests(unittest.TestCase):
+    def test_combat_crossing_releases_jump_then_neutralizes_before_measurement(self):
+        policy = ScenarioPolicy(find_scenario("grab-left"))
+        def opponent(observation):
+            return replace(observation, opponent=replace(observation.opponent, x=8., y=0., grounded=True,
+                details=replace(observation.opponent.details, action_id=14, hurtbox_state=0)))
+        self.assertEqual(policy.decide(opponent(position(x=0., facing_right=True))).action, "jump_right")
+        self.assertEqual(policy.decide(opponent(position(1, x=1., action_id=24,
+            input_jump_held=True, input_neutral_derived=False))).action, "right")
+        self.assertEqual(policy.decide(opponent(position(2, x=12., y=5., grounded=False,
+            jumps=1, action_id=25))).action, "right")
+        self.assertEqual(policy.decide(opponent(position(3, x=20., y=4., grounded=False,
+            jumps=1, action_id=25))).action, "left")
+        self.assertEqual(policy.decide(opponent(position(4, x=19., facing_right=False))).action, "wait")
+        self.assertEqual(policy.phase, "setup")
+        self.assertEqual(policy.decide(opponent(position(5, x=17., facing_right=False))).action, "grab")
+        self.assertEqual(policy.measurement_start, 5)
+
     def test_recovery_acceptance_counts_setup_and_audit_failures_against_each_side(self):
         names = ("recovery-high-left", "recovery-high-right", "recovery-low-left", "recovery-low-right")
         rows = [{"scenario": name, "status": "pass", "trial_status": "succeeded"}

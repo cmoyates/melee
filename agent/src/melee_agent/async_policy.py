@@ -258,6 +258,8 @@ class AsyncPolicy:
             self.owner = "idle"
         a = observation.bot
         emergency = self.recovery.reason(observation)
+        if emergency == "hitlag" and self.arbiter.retains_attack_hitlag(observation):
+            emergency = None  # The active attack's observed hitlag retains its commitment.
         # Observe every frame, including ordinary skill ownership, so a landing
         # clears recovery commitments and the continuity cursor stays current.
         reflex_decision = self.recovery.decide(observation)

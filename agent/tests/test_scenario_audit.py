@@ -22,6 +22,8 @@ class ScenarioAuditTests(unittest.TestCase):
             for port, fighter in (("1", observation.bot), ("2", observation.opponent)):
                 raw[port] = {"raw_post": {"x": fighter.x, "y": fighter.y, "airborne": int(not fighter.grounded),
                     "jumps": fighter.jumps, "action_id": fighter.details.action_id, "stocks": fighter.stocks_remaining,
+                    "percent": fighter.details.percent, "facing": 1 if fighter.details.facing_right else -1,
+                    "hurtbox_state": fighter.details.hurtbox_state, "available": {"hurtbox_state": True},
                     "speed_y_self": fighter.details.self_velocity_y, "speed_ground_x_self": fighter.details.self_velocity_x,
                     "speed_air_x_self": fighter.details.self_velocity_x}}
             self.rows.append({"menu": "IN_GAME", "frame": frame, "control": {"observation": asdict(observation),

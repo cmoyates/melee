@@ -4,7 +4,7 @@ import time
 
 from .engine import Fighter, FighterDetails, MatchProgress, Observation
 from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
-from .raw_observation import combat_counters
+from .raw_observation import combat_counters, normalized_hurtbox
 
 
 class SystemClock:
@@ -26,10 +26,11 @@ def observe(state, episode, clock, raw_players):
             float(player.speed_ground_x_self if player.on_ground else player.speed_air_x_self),
             float(player.speed_y_self), float(player.speed_x_attack), float(player.speed_y_attack),
             float(player.shield_strength), neutral, buttons.get("X", False) or buttons.get("Y", False),
-            buttons.get("L", False) or buttons.get("R", False) or max(float(inputs.l_shoulder), float(inputs.r_shoulder)) > .1)
+            buttons.get("L", False) or buttons.get("R", False) or max(float(inputs.l_shoulder), float(inputs.r_shoulder)) > .1,
+            normalized_hurtbox(raw_players[str(port)]["raw_post"]))
         return Fighter(float(player.position.x), float(player.position.y), bool(player.on_ground),
                         int(player.jumps_left), getattr(player.action, "name", "UNKNOWN"), int(player.stock), details)
-    return Observation(3, episode, int(state.frame), clock.now_ns(), state.stage.name,
+    return Observation(4, episode, int(state.frame), clock.now_ns(), state.stage.name,
                         fighter(state.players[1], 1), fighter(state.players[2], 2),
                         MatchProgress.from_frame(int(state.frame), TIME_LIMIT_SECONDS, STARTING_STOCKS))
 

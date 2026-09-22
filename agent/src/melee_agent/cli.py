@@ -16,12 +16,12 @@ def main(argv=None):
     doctor.add_argument("--config", type=Path, help="Workspace-relative local TOML (default agent/local.toml)")
     doctor.add_argument("--require", choices=("all", "offline", "host_tests", "decomp", "live", "provider"), default="all")
     match = commands.add_parser("match", help="Run supervised Fox versus Mario CPU 3 on Battlefield")
-    match.add_argument("--policy", choices=("scripted", "smoke", "input-probe"), default="scripted")
+    match.add_argument("--policy", choices=("scripted", "smoke", "input-probe", "heuristic", "random-legal"), default="scripted")
     match.add_argument("--duration", type=int, default=120, help="Hard wall-clock limit including setup")
     match.add_argument("--episodes", type=int, default=1)
     capture = commands.add_parser("capture", help="Capture until a wall-clock deadline, retaining partial final match")
     capture.add_argument("--duration", type=int, default=600)
-    capture.add_argument("--policy", choices=("scripted", "smoke", "delayed-fake", "jev", "faults"), default="scripted")
+    capture.add_argument("--policy", choices=("scripted", "smoke", "delayed-fake", "jev", "faults", "heuristic", "random-legal"), default="scripted")
     capture.add_argument("--fault", help="Explicit runtime-v1 fault mode; only with policy faults")
     capture.add_argument("--budget", help="Existing shared budget directory; required for jev")
     capture.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
@@ -31,10 +31,10 @@ def main(argv=None):
     skills = commands.add_parser("skill-check", help="Observed movement/jump/shield repetitions on Battlefield")
     skills.add_argument("--repeats", type=int, default=20)
     skills.add_argument("--duration", type=int, help="Hard wall-clock limit; defaults to 600s movement or 2400s recovery")
-    skills.add_argument("--suite", choices=("movement-v1", "recovery-v1"), default="movement-v1")
+    skills.add_argument("--suite", choices=("movement-v1", "recovery-v1", "ground-combat-v1"), default="movement-v1")
     skills.add_argument("--policy", choices=("offline",), default="offline")
     scenarios = commands.add_parser("scenarios", help="Fresh-match mechanical scenario suite with explicit setup outcomes")
-    scenarios.add_argument("--suite", choices=("mechanics-v1", "recovery-v1"), default="mechanics-v1")
+    scenarios.add_argument("--suite", choices=("mechanics-v1", "recovery-v1", "ground-combat-v1"), default="mechanics-v1")
     scenarios.add_argument("--repeats", type=int, default=10)
     scenarios.add_argument("--duration", type=int, default=2400, help="Hard wall-clock suite limit")
     scenarios.add_argument("--seed", type=int, default=0, help="Trial ordering only; does not seed game RNG")
@@ -153,10 +153,10 @@ def main(argv=None):
         return launch(root, args.duration, 100, args.policy, capture=True,
                         budget_directory=args.budget, max_requests=args.max_requests, fault_mode=args.fault)
     if args.command == "skill-check":
-        if args.suite == "recovery-v1":
+        if args.suite in ("recovery-v1", "ground-combat-v1"):
             from .scenario_runner import run_suite
             try:
-                return run_suite(root, args.repeats, 2400 if args.duration is None else args.duration,
+                return run_suite(root, args.repeats, (3000 if args.suite == "ground-combat-v1" else 2400) if args.duration is None else args.duration,
                     suite=args.suite, require_acceptance=True)
             except (ValueError, OSError):
                 print(json.dumps({"status": "blocked", "reason": "scenario_preflight_failed"}))

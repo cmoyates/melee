@@ -46,6 +46,7 @@ class FighterDetails:
     input_neutral_derived: bool
     input_jump_held: bool
     input_shield_held: bool
+    hurtbox_state: int | None = None
 
     def __post_init__(self):
         for name in ("action_id", "hitlag_frames_derived", "hitstun_frames_derived"):
@@ -59,6 +60,10 @@ class FighterDetails:
         for name in ("facing_right", "input_neutral_derived", "input_jump_held", "input_shield_held"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError("Invalid fighter boolean")
+        if self.hurtbox_state is not None:
+            integer(self.hurtbox_state, "hurtbox state", 0)
+            if self.hurtbox_state > 2:
+                raise ValueError("Unsupported hurtbox state")
 
     @classmethod
     def parse(cls, data):
@@ -139,7 +144,7 @@ class Observation:
 
     def __post_init__(self):
         integer(self.schema_version, "schema version")
-        if self.schema_version != 3 or self.stage != STAGE_NAME:
+        if self.schema_version != 4 or self.stage != STAGE_NAME:
             raise ValueError("Unsupported observation version/stage")
         integer(self.episode, "episode", 1)
         integer(self.frame, "frame")
@@ -223,6 +228,9 @@ ACTION_PACKETS = {
     "aim_diagonal_right": Packet(main_x=1., main_y=1.),
     "aim_shallow_left": Packet(main_x=0., main_y=.75),
     "aim_shallow_right": Packet(main_x=1., main_y=.75),
+    "down_tilt": Packet(main_y=.25, held=("A",)),
+    "grab": Packet(l=1., held=("L", "A")),
+    "slow_left": Packet(main_x=.35), "slow_right": Packet(main_x=.65),
 }
 
 

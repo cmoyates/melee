@@ -74,6 +74,9 @@ def run(run_dir):
         elif options["policy"] == "skill-check":
             from .skill_check import SkillCheckPolicy
             policy = SkillCheckPolicy(options["skill_repeats"])
+        elif options["policy"] in ("heuristic", "random-legal"):
+            from .local_combat_policy import LocalCombatPolicy
+            policy = LocalCombatPolicy(options["policy"])
         elif options["policy"] in ("delayed-fake", "jev", "faults"):
             from .async_policy import AsyncPolicy, LatestBridge
             bridge = None

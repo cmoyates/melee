@@ -16,12 +16,14 @@ import time
 import uuid
 
 from .config import load_config, owned_path
-from .engine import Observation
+from .engine import ACTION_PACKETS, Observation
+from .ground_combat import COMBAT, START_ACTIONS, CAPTOR, CAPTURED, GUARD
 from .integrity import inspect_integrity
 from .matches import artifact_bytes, isolated_environment, locate_run, terminate_child
 from .match_worker import write_json
 from .replay import expected_settings
-from .scenarios import find_suite, find_scenario, starting_predicate, suite_hash, verified_trial
+from .scenarios import COMBAT_KINDS, find_suite, find_scenario, starting_predicate, suite_hash, verified_trial
+from .raw_observation import combat_counters, normalized_hurtbox
 from .stage import support_surface
 
 
@@ -62,10 +64,13 @@ def inspect_scenario(run):
                 fields = ((fighter.x, raw["x"]), (fighter.y, raw["y"]),
                     (fighter.grounded, raw["airborne"] == 0), (fighter.jumps, raw["jumps"]),
                     (fighter.details.action_id, raw["action_id"]), (fighter.stocks_remaining, raw["stocks"]),
+                    (fighter.details.percent, raw["percent"]), (fighter.details.facing_right, raw["facing"] == 1),
                     (fighter.details.self_velocity_y, raw["speed_y_self"]),
                     (fighter.details.self_velocity_x, raw["speed_ground_x_self"] if fighter.grounded else raw["speed_air_x_self"]))
                 if any(not math.isclose(actual, expected, abs_tol=1e-6) for actual, expected in fields):
                     errors["observation_raw_mismatch"] += 1
+                if fighter.details.hurtbox_state != normalized_hurtbox(raw):
+                    errors["hurtbox_raw_mismatch"] += 1
             if start is None or row["frame"] < start:
                 if trace["input_owner"] not in ("setup", "neutral"):
                     errors["measured_input_before_setup"] += 1
@@ -90,7 +95,10 @@ def inspect_scenario(run):
         errors["measurement_boundary_missing"] += 1
     if len(measured) != result.get("measured_frames"):
         errors["measured_frame_count"] += 1
-    if result.get("status") == "succeeded" and measured:
+    combat_evidence = None
+    if spec.kind in COMBAT_KINDS and measured:
+        combat_evidence = audit_combat(spec, report, measured, errors)
+    if result.get("status") == "succeeded" and measured and spec.kind not in COMBAT_KINDS:
         a = result["end_observation"]["bot"]
         if spec.kind in ("offstage", "offstage_low", "ledge", "airborne"):
             on_stage = support_surface(a["x"], a["y"], a["grounded"]) in ("ground", "left", "right", "top")
@@ -112,12 +120,91 @@ def inspect_scenario(run):
         "measured_frames": len(measured), "frames_sha256": digest.hexdigest(),
         "summary_sha256": hashlib.sha256((run / "summary.json").read_bytes()).hexdigest(),
         "game_frames": integrity["game_records"], "artifact_bytes": artifact_bytes(run),
+        **({"combat": combat_evidence} if combat_evidence is not None else {}),
         "artifacts": {"frames": "build/jev/runs/"+launch["run_id"]+"/frames.jsonl",
             "summary": "build/jev/runs/"+launch["run_id"]+"/summary.json"}}
 
 
+def audit_combat(spec, report, rows, errors):
+    name = COMBAT_KINDS[spec.kind]
+    expected_motion = COMBAT[name]["motion"]
+    evidence = {"motion_acknowledged": False, "completed": False, "contact_events": 0, "capture_observed": False}
+    try:
+        skill = report["skill"]
+        if skill != rows[-1]["scenario"]["skill"]:
+            errors["combat_report_trace_mismatch"] += 1
+        combat = (skill.get("event") or {}).get("combat") or (skill.get("active") or {}).get("combat")
+        if combat is None:
+            errors["combat_report_missing"] += 1
+            return evidence
+        indexed = {row["frame"]: row for row in rows}
+        press = indexed.get(combat["press_frame"])
+        ack = indexed.get(combat["ack_frame"])
+        if ack is not None:
+            evidence["motion_acknowledged"] = (press is not None and combat["press_frame"] < combat["ack_frame"] and
+                press["control"]["decision"]["action"] == COMBAT[name]["action"] and
+                press["control"]["packet"] == ACTION_PACKETS[COMBAT[name]["action"]].wire() and
+                ack["raw_observation"]["players"]["1"]["raw_post"]["action_id"] == expected_motion)
+            if not evidence["motion_acknowledged"]:
+                errors["combat_motion_not_observed"] += 1
+        for frame in combat["contact_frames"]:
+            row, prior = indexed[frame], indexed[frame-1]
+            a, b = (row["raw_observation"]["players"][port]["raw_post"] for port in ("1", "2"))
+            previous = prior["raw_observation"]["players"]["2"]["raw_post"]
+            valid = (name != "grab" and evidence["motion_acknowledged"] and a["action_id"] == expected_motion and
+                combat_counters(a)[0] > 0 and combat_counters(b)[0] > 0 and b["percent"] > previous["percent"] and
+                normalized_hurtbox(b) == 0 and b["action_id"] not in GUARD)
+            if not valid:
+                errors["combat_contact_not_observed"] += 1
+            evidence["contact_events"] += int(valid)
+        for frame in combat["shield_contact_frames"]:
+            row = indexed[frame]
+            a, b = (row["raw_observation"]["players"][port]["raw_post"] for port in ("1", "2"))
+            if not combat_counters(a)[0] or b["action_id"] not in (179, 181):
+                errors["combat_shield_contact_not_observed"] += 1
+        if combat["capture_frame"] is not None:
+            row = indexed[combat["capture_frame"]]
+            a, b = (row["raw_observation"]["players"][port]["raw_post"] for port in ("1", "2"))
+            evidence["capture_observed"] = (name == "grab" and evidence["motion_acknowledged"] and
+                a["action_id"] in CAPTOR and b["action_id"] in CAPTURED)
+            if not evidence["capture_observed"]:
+                errors["combat_capture_not_observed"] += 1
+        if report["result"]["status"] == "succeeded":
+            end = rows[-1]
+            a = end["raw_observation"]["players"]["1"]["raw_post"]
+            evidence["completed"] = (evidence["motion_acknowledged"] and combat["status"] == "succeeded" and
+                combat["end_frame"] == end["frame"] and a["action_id"] in START_ACTIONS and not a["airborne"] and
+                support_surface(a["x"], a["y"], True) in ("ground", "left", "right", "top") and
+                end["control"]["observation"]["bot"]["details"]["input_neutral_derived"] and
+                end["control"]["decision"]["action"] == "wait")
+            if not evidence["completed"]:
+                errors["combat_completion_not_observed"] += 1
+    except (KeyError, TypeError, ValueError):
+        errors["combat_evidence_unavailable"] += 1
+    return evidence
+
+
 class SuiteInterrupted(BaseException):
     pass
+
+
+def combat_acceptance(results, repeats):
+    per_scenario = {}
+    for spec in find_suite("ground-combat-v1"):
+        trials = [row for row in results if row["scenario"] == spec.name]
+        audited = [row for row in trials if row["status"] == "pass"]
+        acknowledged = sum(row.get("combat", {}).get("motion_acknowledged", False) for row in audited)
+        completed = sum(row.get("combat", {}).get("completed", False) for row in audited)
+        captures = sum(row.get("combat", {}).get("capture_observed", False) for row in audited)
+        per_scenario[spec.name] = {"trials": len(trials), "motion_acknowledged": acknowledged,
+            "completed": completed, "captures": captures,
+            "contacts": sum(row.get("combat", {}).get("contact_events", 0) for row in audited),
+            "outcomes": dict(Counter(row["trial_status"] for row in trials)),
+            "passed": repeats == 20 and len(trials) == 20 and acknowledged == 20 and completed == 20 and
+                (spec.kind != "combat_grab" or captures > 0)}
+    return {"passed": all(row["passed"] for row in per_scenario.values()),
+        "required": "20/20 audited native motion starts and neutral actionable completions per action/direction; at least one actual capture per grab direction. Setup failures remain in the denominator.",
+        "scenarios": per_scenario}
 
 
 def recovery_acceptance(results, repeats):
@@ -220,6 +307,8 @@ def run_suite(root, repeats=10, duration=2400, seed=0, suite="mechanics-v1", req
             "acceptance_scope": "A completed suite records setup and skill outcomes; it does not imply all skills succeeded."}
         if suite == "recovery-v1":
             report["acceptance"] = recovery_acceptance(results, repeats)
+        elif suite == "ground-combat-v1":
+            report["acceptance"] = combat_acceptance(results, repeats)
         write_json(folder / "summary.json", report)
         print(json.dumps({k: v for k, v in report.items() if k != "trials"}), flush=True)
     return 0 if status == "completed" and (not require_acceptance or report.get("acceptance", {}).get("passed")) else 2

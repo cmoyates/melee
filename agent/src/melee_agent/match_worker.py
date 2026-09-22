@@ -33,12 +33,17 @@ def run(run_dir):
     controllers = []
     recorder = None
     policy = None
+    faults = None
+    pending_record = None
     outcome = {"status": "error", "episodes": [], "neutralized": False}
     def interrupted(signum, frame):
         raise StopRequested()
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     try:
+        if options["policy"] == "faults":
+            from .runtime_faults import RuntimeFaults
+            faults = RuntimeFaults(run_dir, options["fault_mode"])
         console = melee.Console(
             path=options["runtime"], dolphin_home_path=str(run_dir / "profile"),
             tmp_home_directory=False, copy_home_directory=False,
@@ -50,18 +55,23 @@ def run(run_dir):
         raw_stream = RawStreamTap(console)
         lives = LifeTracker()
         controllers = [melee.Controller(console, port) for port in (1, 2)]
+        if faults:
+            faults.wrap_flush(controllers[0])
         input_trace = InputTrace(controllers[0])
         helpers = [melee.MenuHelper(), melee.MenuHelper()]
         write_json(run_dir / "ready.json", {"ready": True})
         if not console.connect():
             raise RuntimeError("state connection failed")
+        receiver = getattr(getattr(console, "_slippstream", None), "_worker", None)
+        if receiver is not None and receiver.pid is not None:
+            write_json(run_dir / "state-receiver.json", {"pid": receiver.pid, "owner": "libmelee_worker"})
         for controller in controllers:
             controller.connect()
         clock = SystemClock()
         if options["policy"] == "skill-check":
             from .skill_check import SkillCheckPolicy
             policy = SkillCheckPolicy(options["skill_repeats"])
-        elif options["policy"] in ("delayed-fake", "jev"):
+        elif options["policy"] in ("delayed-fake", "jev", "faults"):
             from .async_policy import AsyncPolicy, LatestBridge
             bridge = None
             if options["policy"] == "jev":
@@ -69,7 +79,17 @@ def run(run_dir):
                 backend = ProviderBackend(Path(__file__).resolve().parents[3], options["budget_directory"],
                     options["max_provider_requests"], options["run_deadline_ns"])
                 bridge = LatestBridge(options["run_id"], backend)
+            elif faults:
+                from .runtime_faults import FaultBackend
+                backend = FaultBackend(Path(__file__).resolve().parents[3], run_dir, faults, options["run_deadline_ns"])
+                bridge = LatestBridge(options["run_id"], backend)
             policy = AsyncPolicy(options["run_id"], bridge)
+            if faults:
+                original_decide = policy.decide
+                def fault_decide(observation):
+                    faults.before_control(observation)
+                    return original_decide(observation)
+                policy.decide = fault_decide
         else:
             policy = ScriptedPolicy(options["policy"])
         executor = FrameExecutor(policy, LibmeleeSink(controllers[0], melee.Button), clock)
@@ -79,12 +99,17 @@ def run(run_dir):
         probe_samples = []
         menu_identity = None
         menu_started = time.monotonic()
-        recorder = FrameRecorder(run_dir / "frames.jsonl", max_bytes=options["max_frame_bytes"])
+        recorder = FrameRecorder(run_dir / "frames.jsonl", max_bytes=options["max_frame_bytes"],
+            opener=faults.opener(run_dir / "frames.jsonl") if faults and faults.mode == "logger_stall" else None)
+        if faults:
+            faults.recorder = recorder
         with recorder as frames:
             while True:
                 frames.check()
                 state = console.step()  # Flushes preceding complete controller packet first.
                 if state is None:
+                    continue
+                if faults and faults.mode == "frame_stall" and faults.triggered:
                     continue
                 now = time.monotonic()
                 if state.menu_state != menu_identity:
@@ -111,6 +136,8 @@ def run(run_dir):
                         last_frame = None
                         in_game = True
                     current = int(state.frame)
+                    if faults and faults.drop_state(current):
+                        continue
                     if last_frame is not None:
                         delta = current - last_frame
                         episode["gaps"] += max(0, delta - 1)
@@ -150,14 +177,18 @@ def run(run_dir):
                     if hasattr(policy, "trace"):
                         record["skill"] = policy.trace()
                     if options["policy"] == "skill-check" and policy.complete:
+                        pending_record = record
                         frames.publish(record)
+                        pending_record = None
                         outcome["status"] = "skill_check_complete"
                         break
                     if options["policy"] == "input-probe" and current >= 120:
                         episode["elapsed_seconds"] = now - episode["started_monotonic"]
                         outcome["probe_samples"] = probe_samples
                         outcome["status"] = "probe_complete"
+                        pending_record = record
                         frames.publish(record)
+                        pending_record = None
                         break
                 else:
                     if in_game:
@@ -200,11 +231,15 @@ def run(run_dir):
                         melee.Stage.BATTLEFIELD, autostart=ready or state.menu_state==melee.Menu.STAGE_SELECT)
                     record = {"schema_version": 1, "run_id": options["run_id"], "menu": state.menu_state.name,
                                 "monotonic": now, "frame": int(state.frame)}
+                pending_record = record
                 frames.publish(record)
+                pending_record = None
     except StopRequested:
         outcome["status"] = "interrupted"
     except RecorderError as error:
         outcome.update(status="error", error_type="RecorderError", failure_reason=str(error))
+        if pending_record is not None:
+            outcome["last_unrecorded_record"] = pending_record
     except Exception as error:
         # Detailed traceback stays in private worker.log. Public summary gets a type only.
         import traceback
@@ -220,6 +255,8 @@ def run(run_dir):
             except (OSError, RuntimeError):
                 neutralized = False
         outcome["neutralized"] = neutralized
+        if faults:
+            faults.release.set()
         if policy is not None and hasattr(policy, "close"):
             try:
                 outcome["async_policy"] = policy.close()
@@ -233,10 +270,15 @@ def run(run_dir):
             except RecorderError as error:
                 outcome.update(status="error", error_type="RecorderError", failure_reason=str(error))
             outcome["recorder"] = recorder.report()
+        if faults:
+            outcome["fault_injection"] = faults.report()
         try:
             if console is not None:
                 # No console.run(): emulator belongs to the supervisor. No temporary-home deletion.
-                console.stop()
+                from .state_shutdown import stop_state_receiver
+                outcome["state_receiver"] = stop_state_receiver(console)
+                if not outcome["state_receiver"]["stopped"]:
+                    outcome.update(status="error", failure_reason="state_receiver_shutdown_failed")
         finally:
             write_json(run_dir / "worker-result.json", outcome)
 

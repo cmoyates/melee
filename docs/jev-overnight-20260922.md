@@ -272,6 +272,52 @@ $0.013222398 reported plus the original $0.006 uncertain reservation. It records
 312 requests and 410,819 accounted input tokens, leaving the original global
 limits unchanged. The two J11 runs added no uncertain reservations.
 
+## J12: runtime fault soak passed
+
+The first short network probe `match-181fbe552ea04d368e879cced61dcdb9`
+passed with eight audited simulated choices while exercising disconnect,
+429/529, invalid JSON/distributions, low confidence, cancellation, delayed
+responses, circuit opening and recovery. No external HTTP transport or key was
+available. Simulated ledgers are separate from the unchanged paid ledger.
+
+The first full schedule `soak-0662d97a964446388b3d53da59449c27` stopped after
+99.56 seconds at the controller-stall phase. Logger failure, executor failure
+and worker death had passed, but blocked controller input exposed an unbounded
+join in libmelee's receiver shutdown. The watchdog stopped the owned processes;
+neutralization and the worker shutdown report were unavailable. This remains a
+failed run and is not counted as certification.
+
+The adapter now closes the owned receiver pipe before bounded joins and, if
+necessary, termination/kill of the exact receiver process object. An actual
+backpressured-pipe regression and an unresponsive-child regression pass. The
+fixed Battlefield retest `match-2ac95779ff5a48e98ee3a2c154194df1` retained a
+clean neutralization report and stopped the receiver without force, 16.19
+seconds after the blocked write. Evidence: `j12-controller-fixed.json`.
+The logger probe `match-43a1f8e4889c470cadb7e9fc8eb7d2fc` retained all 856
+accepted records plus its rejected final record, neutralized input, and cleaned
+up in 5.29 seconds. Evidence: `j12-logger-probe.json`.
+
+155 offline tests pass for this slice. The restarted schedule
+`soak-e2e03533731e428c99a20633dc9a5d4e` passed all 11 phases over 1,801.13
+seconds, recording 97,119 game frames. Every required fault occurred. Independent
+audits found no invalid accepted decision among 167 simulated acceptances;
+151 skills reached observed success, 15 aborted and one timed out. This certifies
+runtime containment, not gameplay competence or a perfect skill success rate.
+
+All owned workers, emulators and state receivers stopped. Maximum terminal
+fault-to-cleanup time was 16.27 seconds; the worker-death case correctly reports
+neutralization unavailable. Other cases confirmed neutralization. Peak in-flight
+work was one, the mailbox reached two, and the largest per-phase p95 controller
+queue delay was 0.093 ms. The oldest accepted response was 34.99 ms. The unrelated
+sentinel survived and all 42 protected source/asset/profile files remain unchanged.
+
+The schedule retained 729,210,156 bytes of private artifacts and made zero
+external HTTP calls. The paid ledger remains $0.019222398 conservatively
+accounted, including its existing $0.006 uncertain reservation. The source tested
+was `5bec1e936`; the following correction only fixes continuation indentation in
+receiver shutdown. Evidence index: `j12-final-soak.json`; aggregate summary SHA-256:
+`9a8b062799ccd4591350cd06e640f465c05564a0e9637dde56dfa53b360ced16`.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.

@@ -486,3 +486,44 @@ acknowledgements, reports input ownership/fallback participation, and exposes
 three-skill-class tracer-bullet criteria. The general audit can pass with fewer
 opportunities, so consult that separate field when certifying J11. Confidence
 values are retained as model output, not interpreted as win probabilities.
+
+## Runtime failure soak
+
+```sh
+rtk proxy agent/.venv/bin/melee-agent soak --budget build/jev/overnight-20260922 --duration 1800
+```
+
+`runtime-v1` runs a fixed sequence of terminal fault cases followed by longer
+network, missing-frame and rate-cap cases until thirty minutes have elapsed.
+Each episode remains bounded by the ordinary supervisor and artifact limits.
+It uses the real Decisions adapter with an injected in-process transport and
+explicitly simulated ledgers inside each run. It has no OpenRouter key or
+external HTTP transport; the named paid ledger is only read before/after to
+prove it remained unchanged. Simulated reservations are not real spending.
+
+The schedule covers disconnect, 429/529, malformed/invalid distributions,
+low confidence, cancellation, two-second response stalls, circuit recovery,
+logger backpressure, frame loss, executor failure, worker death and a blocked
+controller write. Three consecutive provider failures open a two-second
+circuit; recovery uses the latest observation. Present confidence below 0.15
+is rejected conservatively, without treating confidence as win probability.
+
+Terminal cases are expected to produce incomplete matches. Certification checks
+the expected failure, bounded teardown and available evidence separately. A
+killed worker cannot confirm a final neutral packet; its report explicitly
+retains that unknown while requiring the emulator/receiver processes to exit.
+The logger-stall case drains accepted records and preserves the last rejected
+record in the summary for the policy audit. No failed capture is relabeled as a
+complete match.
+
+The pinned libmelee receiver joins its subprocess before closing the read side
+of its IPC pipe. A full pipe can therefore prevent shutdown indefinitely. The
+adapter closes that owned read end first, then uses bounded join/terminate/kill
+steps on the exact multiprocessing process object. It refuses unexpected
+emulator or temporary-home ownership. The normal supervisor remains independent
+of the controller loop and retains its terminal watchdog.
+
+Soak artifacts live beside the existing experiment ledger under `soaks/`.
+Per-phase JSON records audited decisions, input timing, fault counts, cleanup
+time, receiver liveness and an unrelated sentinel process. The first failed
+phase stops certification; retained failures are investigated before a rerun.

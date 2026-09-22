@@ -50,24 +50,33 @@ def quantiles(values):
             "max": values[-1]}
 
 
-def inspect_policy(run):
+def trace_lines(handle, supplement):
+    while line := handle.readline(65537):
+        yield line, False
+    if supplement is not None:
+        yield json.dumps(supplement, separators=(",", ":")).encode()+b"\n", True
+
+
+def inspect_policy(run, *, require_participation=True):
     summary = json.loads((run / "summary.json").read_text())
     launch = json.loads((run / "launch.json").read_text())
     errors, outcomes, faults = Counter(), Counter(), Counter()
     acknowledgements, input_owners = Counter(), Counter()
     pending_skills, consumed = {}, {}
     sources = OrderedDict()
-    queued_ms, flushed_ms, delays_ms = [], [], []
+    queued_ms, flushed_ms, delays_ms, applied_ms, gaps_ms = [], [], [], [], []
+    previous_observation = None
     last_applied = 0
     highest_received = 0
     reordered = 0
     game_frames = 0
     digest = hashlib.sha256()
     with (run / "frames.jsonl").open("rb") as handle:
-        while line := handle.readline(65537):
+        for line, supplemental in trace_lines(handle, summary.get("last_unrecorded_record")):
             if len(line) > 65536 or not line.endswith(b"\n"):
                 raise ValueError("Invalid trace record length")
-            digest.update(line)
+            if not supplemental:
+                digest.update(line)
             row = json.loads(line)
             if row["menu"] != "IN_GAME":
                 continue
@@ -76,6 +85,9 @@ def inspect_policy(run):
                 raise ValueError("Trace audit frame limit")
             control = row["control"]
             observation = Observation.parse(control["observation"])
+            if previous_observation is not None and previous_observation.episode == observation.episode:
+                gaps_ms.append((observation.observed_ns-previous_observation.observed_ns)/1e6)
+            previous_observation = observation
             skill = row.get("skill", {})
             sources[observation.episode, observation.frame] = (observation, skill, row)
             if len(sources) > 256:
@@ -108,6 +120,7 @@ def inspect_policy(run):
                     if not event["reason"]:
                         errors["missing_rejection_reason"] += 1
                     continue
+                applied_ms.append((event["apply_ns"]-c["observed_ns"])/1e6)
                 def check(condition, name):
                     if not condition:
                         errors[name] += 1
@@ -124,6 +137,8 @@ def inspect_policy(run):
                 check(c["skill_generation"] == event["generation_before"], "accepted_wrong_generation")
                 check(not event["committed_before"] and not event["emergency"], "accepted_during_commitment_or_emergency")
                 check(reply["action"] in candidates, "accepted_invalid_candidate")
+                confidence = (reply.get("metadata") or {}).get("confidence")
+                check(confidence is None or confidence >= .15, "accepted_low_confidence")
                 actual_hash = hashlib.sha256(json.dumps(candidates, separators=(",", ":")).encode()).hexdigest()
                 check(c["candidate_hash"] == actual_hash, "accepted_wrong_candidates")
                 source = sources.get((c["episode"], c["frame"]))
@@ -179,7 +194,7 @@ def inspect_policy(run):
             errors["worker_bound_or_shutdown"] += 1
         if bridge.get("mailbox_dropped", 0):
             errors["mailbox_overflow"] += 1
-        if not outcomes["accepted"]:
+        if require_participation and not outcomes["accepted"]:
             errors["no_decisions_applied"] += 1
         provider = bridge.get("provider")
         if provider is not None:
@@ -213,6 +228,7 @@ def inspect_policy(run):
                 observed_successes >= 20 and len(observed_classes) >= 3 and summary.get("provider_contacted") is True}
     return {"schema_version": 1, "run_id": summary["run_id"], "status": "pass" if not errors else "fail",
         "frames_sha256": digest.hexdigest(), "game_frames": game_frames, "errors": dict(errors),
+        "supplemental_records": int(summary.get("last_unrecorded_record") is not None),
         "outcomes": dict(outcomes), "injected_faults": dict(faults), "reordered_deliveries": reordered,
         "acknowledgements": dict(acknowledgements), "pending_provider_skills": len(pending_skills),
         "input_owner_frames": dict(input_owners),
@@ -221,4 +237,5 @@ def inspect_policy(run):
         "live_acceptance": live_acceptance,
         "observed_to_queued_ms": quantiles(queued_ms), "observed_to_flushed_ms": quantiles(flushed_ms),
         "source_to_reply_ms": quantiles(delays_ms), "simulation_fps": fps,
+        "accepted_age_ms": quantiles(applied_ms), "recorded_observation_gap_ms": quantiles(gaps_ms),
         "run_status": summary["status"], "async_report_present": report is not None}

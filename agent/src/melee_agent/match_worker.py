@@ -61,6 +61,9 @@ def run(run_dir):
         if options["policy"] == "skill-check":
             from .skill_check import SkillCheckPolicy
             policy = SkillCheckPolicy(options["skill_repeats"])
+        elif options["policy"] == "delayed-fake":
+            from .async_policy import AsyncPolicy
+            policy = AsyncPolicy(options["run_id"])
         else:
             policy = ScriptedPolicy(options["policy"])
         executor = FrameExecutor(policy, LibmeleeSink(controllers[0], melee.Button), clock)
@@ -211,6 +214,11 @@ def run(run_dir):
             except (OSError, RuntimeError):
                 neutralized = False
         outcome["neutralized"] = neutralized
+        if policy is not None and hasattr(policy, "close"):
+            try:
+                outcome["async_policy"] = policy.close()
+            except Exception:
+                outcome.update(status="error", failure_reason="policy_shutdown_failed")
         if options["policy"] == "skill-check" and policy is not None:
             outcome["skill_check"] = policy.report()
         if recorder is not None:

@@ -172,6 +172,50 @@ No provider spending occurred in this slice. Movement/defense tests do not
 establish recovery or competitive strength; the suite includes three CPU wins
 and a partial final replay.
 
+## J10: delayed decisions and apply-time freshness
+
+The five-minute `ordering-v1` Battlefield soak
+`match-1e0d0239aa324bb08a0bda297a6a0544` passed both frame integrity and the
+independent policy audit. It retained 17,121 game frames across two episodes,
+five Fox stock losses, 417 submitted requests and 452 delivered replies.
+All 131 accepted decisions were independently checked against source/current
+observations; zero invalid applications were found. There were 154 out-of-order
+deliveries and explicit forged-context, stale, invalid-choice and duplicate
+rejections. Accepted labels: approach 23, retreat 22, jump 20, shield 35,
+neutral 31. The local arbiter recorded 218 motion/release successes and ten
+hitlag aborts across policy and fallback skills.
+
+The four-worker limit held, peak mailbox depth was two, and all workers stopped
+with zero remaining in-flight calls or replies. All 17,522 records drained,
+with no gaps, duplicates, rollbacks or dropped records. Input was neutralized
+and both owned processes exited. One CPU win and one partial replay were
+retained; this is control-boundary evidence, not competitive strength.
+
+| Timing | Delayed fake, 300 s | Scripted baseline, 60 s |
+| --- | ---: | ---: |
+| Simulation FPS | 59.78 / 59.93 by episode | 59.54 |
+| Observed-to-queued p95 | 0.0909 ms | 0.0519 ms |
+| Observed-to-flushed p95 | 12.3666 ms | 12.3386 ms |
+| Observed-to-flushed p99 | 12.4950 ms | 12.5787 ms |
+
+The baseline is `match-63aa8bfc671d4ebb9c7a06fc1216c658`. These are separate
+game trajectories on the same runtime, not a controlled performance experiment.
+Flush timing does not prove the exact game frame in which input was applied.
+
+Evidence: `j10-fault-soak.json`, `j10-scripted-baseline.json`. Fault trace
+SHA-256: `8bfd23eb0e883a800b5fd25a9aa9e6f757fb0aaccfa82e97360f11e5a9a6215a`.
+Baseline trace SHA-256:
+`30269ca3d3279faae246e77ef2b0983f533a5d79bb9bcd6af6a8f327e09c84b3`.
+No provider calls occurred; the shared ledger remains at $0.011140422 accounted,
+including its existing $0.006 uncertain reservation.
+
+The final-source 60-second check `match-40dddd55d8194d5c91fa2e4dc4417577`
+also passed: 3,012 game frames, 21 accepted choices, 28 reordered deliveries,
+one observed commitment rejection and zero invalid applications. Its source
+hashes match the final modules, both audits pass, all workers stop, and 133
+offline tests pass. Evidence: `j10-final-fault-check.json`; trace SHA-256:
+`a671fbf958654413fcb0220cfa7af2e2acc7053e6d05c4da06ceea37065ad651`.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.

@@ -422,3 +422,32 @@ defines this as a reused motion field that represents hitstun only when its
 hitstun flag is set. A still-set flag with zero/fractional remainder conservatively
 blocks the skill for the current observation; original values remain in the raw
 trace. Earlier v1 captures retain their original field names and source hashes.
+
+## Delayed decision boundary
+
+```sh
+rtk proxy agent/.venv/bin/melee-agent capture --policy delayed-fake --duration 300
+rtk proxy agent/.venv/bin/melee-agent inspect RUN_ID --policy-evidence
+```
+
+The `ordering-v1` fake backend uses four fixed threads and 0–2000 ms delays,
+including duplicate, out-of-order, forged-context and invalid-choice replies.
+It never contacts OpenRouter. There is one replaceable state snapshot and a
+32-entry reply mailbox; the frame loop skips a busy mailbox without waiting.
+Backend calls and any future provider accounting stay off the input thread.
+
+Each reply is bound to its original run, episode, both derived life generations,
+frame, monotonic observation time, request sequence, candidate hash, skill
+generation and stage/support/opponent-side context. Application rechecks all
+bindings, current legality, a one-second age limit and a 60-frame age limit.
+Only a newer **applied** decision supersedes an older result. A newer request
+submission alone does not invalidate an otherwise useful reply.
+
+The local arbiter preserves active skills, releases them for emergencies and
+uses bounded local approach/neutral fallback while waiting. Offstage emergency
+input uses the existing temporary scripted recovery, pending the dedicated
+recovery slice. No native CPU takes over Fox. The trace records every consumed
+reply and its acceptance/rejection reason. The independent audit checks each
+accepted choice against both retained source and application observations,
+measures observed-to-queued/flushed latency, and checks bounded worker shutdown.
+These timing metrics describe input delivery, not proven game application time.

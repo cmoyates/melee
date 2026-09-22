@@ -21,7 +21,7 @@ def main(argv=None):
     match.add_argument("--episodes", type=int, default=1)
     capture = commands.add_parser("capture", help="Capture until a wall-clock deadline, retaining partial final match")
     capture.add_argument("--duration", type=int, default=600)
-    capture.add_argument("--policy", choices=("scripted", "smoke"), default="scripted")
+    capture.add_argument("--policy", choices=("scripted", "smoke", "delayed-fake"), default="scripted")
     skills = commands.add_parser("skill-check", help="Observed movement/jump/shield repetitions on Battlefield")
     skills.add_argument("--repeats", type=int, default=20)
     skills.add_argument("--duration", type=int, default=600)
@@ -50,6 +50,7 @@ def main(argv=None):
         if name == "inspect":
             command.add_argument("--integrity", action="store_true")
             command.add_argument("--skills", action="store_true")
+            command.add_argument("--policy-evidence", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
     if args.command == "provider":
@@ -102,7 +103,12 @@ def main(argv=None):
                     (run / "stop.request").touch(exist_ok=True)
                 print(json.dumps({"run_id": args.run_id, "stop_requested": True}))
             else:
-                if args.skills:
+                if args.policy_evidence:
+                    from .policy_evidence import inspect_policy
+                    report = inspect_policy(run)
+                    print(json.dumps(report, allow_nan=False))
+                    return 0 if report["status"] == "pass" else 1
+                elif args.skills:
                     from .skill_evidence import inspect_skills
                     report = inspect_skills(run)
                     print(json.dumps(report, allow_nan=False))

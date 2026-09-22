@@ -92,7 +92,9 @@ class SupervisorTests(unittest.TestCase):
 
     def test_partial_and_wrong_shape_worker_results_are_incomplete(self):
         for value in ('{"episodes":', '[]', '{"episodes": [], "neutralized": 1}', '{}',
-                        '{"episodes": [], "neutralized": true, "status": "matches_complete", "recorder": []}'):
+                        '{"episodes": [], "neutralized": true, "status": "matches_complete", "recorder": []}',
+                        '{"episodes": [], "neutralized": true, "status": "matches_complete", "async_policy": []}',
+                        '{"episodes": [], "neutralized": true, "status": "matches_complete", "async_policy": {"bridge": []}}'):
             with self.subTest(value=value):
                 code, summary = self.exercise(worker_text=value)
                 self.assertEqual(code, 2)

@@ -50,6 +50,7 @@ class ChoiceResult:
     resolved_model: str
     provider: str
     usage: dict
+    answers: dict
 
 
 def probability(value):
@@ -71,34 +72,40 @@ def decode_response(raw):
         raise ProviderError("invalid_response_json") from None
 
 
-def parse_choice(data, candidates, observation, request_id, received_ns):
+def validate_answer(answer, candidates):
+    if set(answer) not in ({"type", "choice", "probabilities"}, {"type", "choice", "probabilities", "confidence"}):
+        raise ProviderError("unexpected_answer_fields")
+    if answer["type"] != "choice" or answer["choice"] not in candidates:
+        raise ProviderError("invalid_choice")
+    probs = answer["probabilities"]
+    if not isinstance(probs, dict) or set(probs) != set(candidates) or not all(probability(p) for p in probs.values()):
+        raise ProviderError("invalid_distribution")
+    if not math.isclose(sum(probs.values()), 1, rel_tol=0, abs_tol=1e-5):
+        raise ProviderError("invalid_distribution_sum")
+    confidence = answer.get("confidence")
+    if confidence is not None and not probability(confidence):
+        raise ProviderError("invalid_confidence")
+    return {"type": "choice", "choice": answer["choice"], "probabilities": dict(probs), "confidence": confidence}
+
+
+def parse_choice(data, candidates, observation, request_id, received_ns, extra_candidates=None):
     try:
         if not isinstance(data, dict) or "error" in data:
             raise ProviderError("invalid_response")
         if data["model"] != VERIFIED_MODEL or data["provider"] != "TypeSafe":
             raise ProviderError("unverified_model_identity")
-        if set(data["answers"]) != {"action"}:
+        contracts = {"action": candidates, **(extra_candidates or {})}
+        if set(data["answers"]) != set(contracts):
             raise ProviderError("unexpected_answers")
-        answer = data["answers"]["action"]
-        if set(answer) not in ({"type", "choice", "probabilities"}, {"type", "choice", "probabilities", "confidence"}):
-            raise ProviderError("unexpected_answer_fields")
-        if answer["type"] != "choice" or answer["choice"] not in candidates:
-            raise ProviderError("invalid_choice")
-        probs = answer["probabilities"]
-        if not isinstance(probs, dict) or set(probs) != set(candidates) or not all(probability(p) for p in probs.values()):
-            raise ProviderError("invalid_distribution")
-        if not math.isclose(sum(probs.values()), 1, rel_tol=0, abs_tol=1e-5):
-            raise ProviderError("invalid_distribution_sum")
-        confidence = answer.get("confidence")
-        if confidence is not None and not probability(confidence):
-            raise ProviderError("invalid_confidence")
+        answers = {name: validate_answer(data["answers"][name], labels) for name, labels in contracts.items()}
+        answer = answers["action"]
         usage = data["usage"]
         cost_units(usage["cost"])
         if any(type(usage[k]) is not int or usage[k] < 0 for k in ("input_tokens", "output_tokens")):
             raise ProviderError("invalid_usage")
         return ChoiceResult(request_id, observation.episode, observation.frame, observation.observed_ns,
-                            received_ns, answer["choice"], dict(probs), confidence, MODEL_ALIAS,
-                            data["model"], data["provider"], {k: usage[k] for k in ("cost", "input_tokens", "output_tokens")})
+                            received_ns, answer["choice"], answer["probabilities"], answer["confidence"], MODEL_ALIAS,
+                            data["model"], data["provider"], {k: usage[k] for k in ("cost", "input_tokens", "output_tokens")}, answers)
     except (KeyError, TypeError, OverflowError, BudgetError):
         raise ProviderError("malformed_response") from None
 
@@ -154,7 +161,8 @@ class DecisionsClient:
         self._closed = False
         self._futures = set()
 
-    def submit(self, observation, candidates, *, deadline_ns, instructions="Choose the best available action for Fox."):
+    def submit(self, observation, candidates, *, deadline_ns, instructions="Choose the best available action for Fox.",
+                additional_questions=None):
         if not isinstance(observation, Observation):
             raise ProviderError("invalid_observation")
         if (not isinstance(candidates, dict) or not 2 <= len(candidates) <= 16 or
@@ -164,13 +172,30 @@ class DecisionsClient:
         if type(instructions) is not str or not 1 <= len(instructions) <= 1024:
             raise ProviderError("invalid_instructions")
         candidates = dict(candidates)
+        questions = {"action": {"type": "choice", "instructions": instructions, "criteria": candidates}}
+        extra = {}
+        if additional_questions is not None:
+            if not isinstance(additional_questions, dict) or len(additional_questions) > 2:
+                raise ProviderError("invalid_question_batch")
+            for name, question in additional_questions.items():
+                if (type(name) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{0,39}", name) or name == "action" or
+                        not isinstance(question, dict) or set(question) != {"instructions", "criteria"}):
+                    raise ProviderError("invalid_question_batch")
+                labels, text = question["criteria"], question["instructions"]
+                if (not isinstance(labels, dict) or not 2 <= len(labels) <= 16 or
+                        type(text) is not str or not 1 <= len(text) <= 1024 or
+                        any(type(k) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{0,39}", k) or
+                            type(v) is not str or not 1 <= len(v) <= 256 for k, v in labels.items())):
+                    raise ProviderError("invalid_question_batch")
+                extra[name] = dict(labels)
+                questions[name] = {"type": "choice", "instructions": text, "criteria": extra[name]}
         now = time.monotonic_ns()
         if type(deadline_ns) is not int or not now < deadline_ns <= now + 30_000_000_000:
             raise ProviderError("invalid_deadline")
         if observation.observed_ns > now:
             raise ProviderError("future_observation")
         payload = json.dumps({"model": MODEL_ALIAS, "state": asdict(observation),
-            "questions": {"action": {"type": "choice", "instructions": instructions, "criteria": candidates}},
+            "questions": questions,
             "provider": {"only": ["TypeSafe"], "allow_fallbacks": False,
                             "max_price": {"prompt": 0.042, "completion": 0}}},
             allow_nan=False, separators=(",", ":")).encode()
@@ -184,8 +209,8 @@ class DecisionsClient:
             if not self._slots.acquire(blocking=False):
                 raise ProviderError("in_flight_limit")
         try:
-            request_id = self.ledger.reserve(cost_nano_usd=RESERVE_NANO_USD,
-                input_tokens=RESERVE_INPUT_TOKENS, payload_sha256=hashlib.sha256(payload).hexdigest())
+            request_id = self.ledger.reserve(cost_nano_usd=RESERVE_NANO_USD * len(questions),
+                input_tokens=RESERVE_INPUT_TOKENS * len(questions), payload_sha256=hashlib.sha256(payload).hexdigest())
         except BaseException:
             self._slots.release()
             raise
@@ -230,7 +255,7 @@ class DecisionsClient:
                 received = time.monotonic_ns()
                 if received > deadline_ns:
                     raise ProviderError("deadline_exceeded")
-                result = parse_choice(data, candidates, observation, request_id, received)
+                result = parse_choice(data, candidates, observation, request_id, received, extra)
                 if self.ledger.report()["reservation_exceeded"]:
                     raise ProviderError("reservation_exceeded")
                 finish(value=result)

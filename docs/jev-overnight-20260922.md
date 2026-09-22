@@ -15,6 +15,11 @@ The next independent slice is J08 (depends on J02), followed by the J09
 latency experiment. In the runtime track, finish J04/J05 acceptance and J06
 recording before J07 skills and J10 live asynchronous decisions.
 
+J08 is now open as [PR #33](https://github.com/cmoyates/melee/pull/33), stacked
+on [PR #32](https://github.com/cmoyates/melee/pull/32). Its 66-test offline CI
+passed. The repository style job still reports the same 190 errors in unchanged
+Showboat files; this is separate from the dedicated agent CI.
+
 ## Evidence so far
 
 - Refreshed J05 Battlefield run: `match-7a696e5de9794ea0b2721bf989fbf686`.
@@ -31,12 +36,47 @@ recording before J07 skills and J10 live asynchronous decisions.
   Reported usage totals 1,058 input tokens, 62 output tokens and **$0.000044436**.
   No unknown charges remain for these probes.
 
+## J09 cadence experiment
+
+Run `3058b473279642809ca90f0a6d07cde1` tested 5/10/16 candidates, one/three
+questions and 1/2/5 Hz submission rates. It achieved 100 validated responses in
+128 attempts. Successful-response latency p50/p95/p99: **435/560/868 ms**.
+Failures: **27 invalid distribution sums, one deadline**. The narrow five-choice,
+single-question subset validated 22/22 calls. Requests used cold HTTP connections;
+provider cache state is unknown, and this is not a gameplay benchmark.
+
+| Target submission rate | Submitted | Validated | Validated responses/second |
+| --- | ---: | ---: | ---: |
+| 1 Hz | 40 | 32 | 0.803 |
+| 2 Hz | 40 | 32 | 1.604 |
+| 5 Hz | 40 | 30 | 3.636 |
+| 1 Hz follow-up | 8 | 6 | 0.788 |
+
+Three additional diagnostic calls captured a returned distribution totaling
+0.99. This conflicts with the documented sum-one response contract; keep strict
+rejection and local fallback rather than silently altering the probabilities.
+Initial recommendation: **1 Hz, one in-flight request, one question, at most five
+choices, maximum accepted age one second**. The local executor still owns reflexes.
+
+The first summary combined the original 1 Hz phase and follow-up interval;
+`analysis-v2.json` separates them and retains the original evidence unchanged.
+72 local tests now pass, including independent-batch validation and phase accounting.
+
+Cumulative overnight ledger after the benchmark/diagnostics: **133 requests,
+$0.005140422 reported, $0.006 reserved for one unknown timed-out batch, and
+$0.011140422 total accounted** against the $1 cap. Do not refund the unknown
+reservation without verified billing evidence.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.
 - `build/jev/overnight-20260922/spend.jsonl`: shared append-only cost ledger.
 - `build/jev/overnight-20260922/probes/`: immutable provider probe reports.
 - `build/jev/overnight-20260922/battlefield-10.json`: sanitized live-run index.
+- `build/jev/overnight-20260922/benchmarks/3058b473279642809ca90f0a6d07cde1/`:
+  immutable manifest/attempts/summary plus corrected phase analysis.
+- `build/jev/overnight-20260922/distribution-diagnostic.json`: sanitized answers
+  demonstrating the probability-sum mismatch.
 - Raw replay/frame/runtime assets remain ignored below `build/jev/`.
 
 Resume by reading this report, checking Git status and reading the existing

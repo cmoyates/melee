@@ -93,6 +93,7 @@ class ProviderTests(unittest.TestCase):
             lambda d: d["answers"]["action"].update(choice="invented"),
             lambda d: d["answers"]["action"].update(probabilities={"right": 1}),
             lambda d: d["answers"]["action"].update(probabilities={"left": .5, "right": .9}),
+            lambda d: d["answers"]["action"].update(probabilities={"left": .09, "right": .9}),
             lambda d: d["answers"]["action"].update(confidence=True),
             lambda d: d["answers"]["action"].update(probabilities={"left": -1, "right": 2}),
             lambda d: d["answers"]["action"].update(extra=1)]
@@ -136,6 +137,40 @@ class ProviderTests(unittest.TestCase):
         data["answers"]["action"].pop("confidence")
         client = DecisionsClient(self.ledger, lambda p, t: (200, {}, json.dumps(data).encode()))
         self.assertIsNone(self.submit(client).result(timeout=1).confidence)
+
+    def test_independent_batch_validates_every_answer_and_reserves_each_question(self):
+        extra = {"safe": {"instructions": "Choose the safer action", "criteria": self.candidates}}
+        entered, release = threading.Event(), threading.Event()
+        def transport(payload, timeout):
+            self.assertEqual(set(json.loads(payload)["questions"]), {"action", "safe"})
+            entered.set()
+            release.wait(1)
+            data = response()
+            data["answers"]["safe"] = deepcopy(data["answers"]["action"])
+            return 200, {}, json.dumps(data).encode()
+        client = DecisionsClient(self.ledger, transport)
+        future = client.submit(self.observation, self.candidates,
+            deadline_ns=time.monotonic_ns() + 2_000_000_000, additional_questions=extra)
+        self.assertTrue(entered.wait(1))
+        self.assertEqual(self.ledger.report()["accounted_nano_usd"], 4_000_000)
+        release.set()
+        self.assertEqual(set(future.result(timeout=2).answers), {"action", "safe"})
+        data = response()
+        data["answers"]["safe"] = {"type": "choice", "choice": "invented", "probabilities": {"invented": 1}}
+        client = DecisionsClient(self.ledger, lambda p, t: (200, {}, json.dumps(data).encode()))
+        with self.assertRaises(ProviderError):
+            client.submit(self.observation, self.candidates,
+                deadline_ns=time.monotonic_ns() + 2_000_000_000, additional_questions=extra).result(timeout=2)
+
+    def test_invalid_batch_cannot_spend_or_overwrite_primary_question(self):
+        client = DecisionsClient(self.ledger, lambda p, t: self.fail("No network expected"))
+        for extra in ({"action": {"instructions": "overwrite", "criteria": self.candidates}},
+                        {"safe": {"instructions": "bad", "criteria": {"one": "only"}}},
+                        {str(i): {} for i in range(3)}):
+            with self.assertRaises(ProviderError):
+                client.submit(self.observation, self.candidates,
+                    deadline_ns=time.monotonic_ns() + 2_000_000_000, additional_questions=extra)
+        self.assertEqual(self.ledger.report()["requests"], 0)
 
     def test_schema_and_deadline_fail_before_spending(self):
         client = DecisionsClient(self.ledger, lambda p, t: self.fail("No request expected"))

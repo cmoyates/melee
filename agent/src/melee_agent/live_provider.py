@@ -28,6 +28,13 @@ INSTRUCTIONS = ("Control Fox against a level 3 Mario CPU on Battlefield. Choose 
     "Choose exactly one provided label and return its complete probability distribution.")
 
 
+def policy_config_hash():
+    return hashlib.sha256(json.dumps({"model": MODEL_ALIAS, "descriptions": DESCRIPTIONS,
+        "instructions": INSTRUCTIONS, "max_inflight": 1, "interval_seconds": 1,
+        "response_timeout_seconds": 1, "minimum_confidence": MIN_CONFIDENCE,
+        "circuit_failure_threshold": 3, "circuit_open_seconds": 2}, sort_keys=True).encode()).hexdigest()
+
+
 def provider_environment(policy):
     from .matches import isolated_environment
     environment = isolated_environment()
@@ -98,10 +105,7 @@ class ProviderBackend:
         self.failures = 0
         self.open_until_ns = 0
         self.health_events = []
-        self.config_hash = hashlib.sha256(json.dumps({"model": MODEL_ALIAS, "descriptions": DESCRIPTIONS,
-            "instructions": INSTRUCTIONS, "max_inflight": 1, "interval_seconds": 1,
-            "response_timeout_seconds": 1, "minimum_confidence": MIN_CONFIDENCE,
-            "circuit_failure_threshold": 3, "circuit_open_seconds": 2}, sort_keys=True).encode()).hexdigest()
+        self.config_hash = policy_config_hash()
 
     def call(self, observation, context, candidates, stop):
         if stop.is_set() or time.monotonic_ns() + 3_000_000_000 >= self.run_deadline_ns:

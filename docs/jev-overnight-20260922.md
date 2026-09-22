@@ -11,9 +11,10 @@ runtime evidence. All issue statuses remain open pending acceptance/review.
 New review slices stack on verified dependency branches instead of merging them.
 The initial checkout was `ea74132b3425f3d18aefae39435e20c54af29982`.
 
-The next independent slice is J08 (depends on J02), followed by the J09
-latency experiment. In the runtime track, finish J04/J05 acceptance and J06
-recording before J07 skills and J10 live asynchronous decisions.
+The initial order was J08/J09 provider validation, then J04/J05 lifecycle,
+J06 recording, J07 skills and J10 live asynchronous decisions. J11 live provider
+control, J12 fault containment and J13 incident replay now have acceptance
+evidence below. J14 mechanical scenarios is the next dependent slice.
 
 J08 is now open as [PR #33](https://github.com/cmoyates/melee/pull/33), stacked
 on [PR #32](https://github.com/cmoyates/melee/pull/32). Its 66-test offline CI
@@ -317,6 +318,39 @@ accounted, including its existing $0.006 uncertain reservation. The source teste
 was `5bec1e936`; the following correction only fixes continuation indentation in
 receiver shutdown. Evidence index: `j12-final-soak.json`; aggregate summary SHA-256:
 `9a8b062799ccd4591350cd06e640f465c05564a0e9637dde56dfa53b360ced16`.
+
+## J13: exact offline incident replay
+
+`explain` extracts a private sealed prefix by episode/frame or request ID and
+prints a shareable distinction between queued input, completed flush and observed
+skill events. `replay-incident --verify` checks schema, ordering, checksums,
+runtime/disc/dependency/rules, policy source and provider configuration, then runs
+the same policy/arbiter/executor against recorded clock reads and reply delivery.
+It stops at the first divergence and does not claim a counterfactual game future.
+
+169 offline tests pass. Fourteen incident tests include a deliberately weakened
+freshness guard that changes the packet at synthetic frame 65; replay stops
+there, and the correct guard passes. Altered/truncated data, wrong episode/schema,
+changed policy/config, invalid clocks, inconsistent focus and symlinked bundle
+files are refused. Historical J11 records lacking exact timing remain explainable
+but cannot be certified as exact replays.
+
+Fresh Battlefield capture `match-bf96fdabe1fc4435a24e5818295ed6aa` retained
+3,018 game frames, a Fox stock loss, 19 audited simulated acceptances and seven
+stale-response rejections, with no gaps/duplicates/rollbacks or invalid accepted
+decisions. It ran at 59.49 observed simulation FPS, neutralized and stopped its
+owned processes. This was a no-cost delayed-fake run with a partial final match.
+
+Full-prefix incident `incident-a1ff4923af284fd29ff793e72ba666e6` replayed
+twice with network/process constructors forbidden. Both runs reproduced every
+frame and all 19 acceptances without opening an emulator/controller or reading
+game assets. Packet SHA-256:
+`166033882166b6ee56617e275595ee34e64c32449484529049080a25fa7b495c`;
+decision SHA-256:
+`e4601bdd7b040e60aa52e21bec469466b4f1e9c9e75af1dde81c8177449b7739`.
+The smaller CLI-selected stale-response incident at frame 178 also passes exact
+replay. Evidence: `j13-full-live-replay.json`, `j13-live-capture-audit.json` and
+`j13-historical-explanation.json`. The shared paid ledger remains unchanged.
 
 ## Durable local state
 

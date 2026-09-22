@@ -290,7 +290,7 @@ class FrameExecutor:
         self.sink.send(packet)
         self.last, self.last_time = identity, queued
         return {"observation": asdict(observation), "decision": asdict(decision), "packet": packet.wire(),
-                "queued_ns": queued}
+                "executor_started_ns": now, "queued_ns": queued}
 
     def run(self, source: StateSource):
         while (observation := source.next()) is not None:

@@ -31,6 +31,16 @@ def main(argv=None):
     skills = commands.add_parser("skill-check", help="Observed movement/jump/shield repetitions on Battlefield")
     skills.add_argument("--repeats", type=int, default=20)
     skills.add_argument("--duration", type=int, default=600)
+    explain = commands.add_parser("explain", help="Extract a private incident and print a shareable decision explanation")
+    explain.add_argument("run_id")
+    explain.add_argument("--episode", type=int, default=1)
+    selector = explain.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--frame", type=int)
+    selector.add_argument("--request-id")
+    explain.add_argument("--after-frames", type=int, default=60)
+    replay = commands.add_parser("replay-incident", help="Verify and replay a sealed prefix without network or emulator")
+    replay.add_argument("incident_path")
+    replay.add_argument("--verify", action="store_true", help="Integrity verification is always required")
     smoke = commands.add_parser("smoke", help="Asset-free deterministic frame-to-controller regression")
     smoke.add_argument("--backend", choices=("fake",), default="fake")
     smoke.add_argument("--fixture", type=Path)
@@ -59,6 +69,23 @@ def main(argv=None):
             command.add_argument("--policy-evidence", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
+    if args.command in ("explain", "replay-incident"):
+        from .config import owned_path
+        from .incidents import IncidentError, export_incident, replay_incident
+        from .matches import locate_run
+        try:
+            if args.command == "explain":
+                report = export_incident(root, locate_run(root, args.run_id), episode=args.episode,
+                    frame=args.frame, request_id=args.request_id, after_frames=args.after_frames)
+                report["incident_path"] = "build/jev/incidents/" + report["incident_id"]
+            else:
+                report = replay_incident(root, owned_path(root, args.incident_path))
+            print(json.dumps(report, allow_nan=False))
+            return 1 if report.get("status") == "fail" else 0
+        except (ValueError, OSError, KeyError, TypeError, OverflowError) as error:
+            print(json.dumps({"status": "fail", "reason": str(error) if isinstance(error, IncidentError)
+                else "invalid_or_unavailable_incident", "emulator_launched": False, "provider_contacted": False}))
+            return 1
     if args.command == "soak":
         from .soak import run_soak
         try:

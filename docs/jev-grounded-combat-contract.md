@@ -1,6 +1,6 @@
 # Fox grounded combat contract
 
-Status: integrated runtime slice with 225 passing offline tests. The second
+Status: integrated runtime slice. The second
 six-case Battlefield pilot completed every primitive in both directions; both
 grab cases included actual capture. Full 120-trial acceptance is pending.
 
@@ -96,3 +96,16 @@ was initially treated as an interruption, plus one opposite-facing grab setup
 failure. The corrected primitive waits through crouch end, and setup releases
 the crossing jump promptly. The second pilot passed all six cases. These are
 separate recorded experiments, not rewritten outcomes.
+
+The first full schedule (`scenarios-124992a6376745efa4c4993db7b911ba`)
+stopped at 41/120 trials: all 41 observed their intended motion, 35 completed
+and six were interrupted. One completed jab trial had an unfinished replay
+after the emulator exceeded its three-second graceful shutdown limit. Its
+independent audit failed, so the schedule stopped and acceptance remains false.
+The corrupt replay and original summary remain private and unchanged.
+
+The supervisor now allows eight seconds for its owned emulator to finalize
+replays before force-killing it; the worker retains its three-second limit.
+Scenario/capture success also requires a parseable replay with verified rules.
+A host process test covers a writer that needs more than three seconds to exit;
+fresh live validation is still needed to measure whether this prevents recurrence.

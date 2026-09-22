@@ -297,7 +297,7 @@ made by these commands. Frame log schema 4 records the validated observation,
 decision, complete requested packet and queue timestamp under `control`.
 Controller packets reset every button, both sticks and both analog shoulders.
 
-Observation schema 3 includes each fighter's observed `stocks_remaining` and
+Observation schema 4 includes each fighter's observed `stocks_remaining` and
 `match` context: `time_limit_seconds`, `starting_stocks`,
 `elapsed_seconds_derived` and `remaining_seconds_derived`. The configured rules
 are eight minutes and four stocks, checked against the completed replay.
@@ -416,7 +416,7 @@ not counted as successes. The final summary recomputes reported counts from the
 trial list; incomplete or failed suites exit nonzero. The replay can be partial
 because completing a skill suite is distinct from winning or completing a match.
 
-Observation schema 3 adds validated fighter details: motion ID/frame, derived
+Observation schema 3 introduced validated fighter details: motion ID/frame, derived
 life generation, percent, facing, velocity components, shield strength and
 observed input state. Hitlag/hitstun availability is derived from Slippi flags.
 RawObservationV2 renames the old `hitstun_raw` field to `misc_as_raw` and records
@@ -425,6 +425,21 @@ defines this as a reused motion field that represents hitstun only when its
 hitstun flag is set. A still-set flag with zero/fractional remainder conservatively
 blocks the skill for the current observation; original values remain in the raw
 trace. Earlier v1 captures retain their original field names and source hashes.
+Schema 4 additionally retains nullable raw hurtbox state. Unknown availability
+refuses grounded combat. Replay older observations on their matching checkout.
+
+Grounded combat commands:
+
+```sh
+rtk proxy agent/.venv/bin/melee-agent skill-check --suite ground-combat-v1 --repeats 20
+rtk proxy agent/.venv/bin/melee-agent capture --policy heuristic --duration 180
+rtk proxy agent/.venv/bin/melee-agent capture --policy random-legal --duration 180
+```
+
+These are offline provider modes. Jab, down-tilt and grab share observed skill
+commitment and local recovery; both selectors use the same legal candidates.
+See the [grounded combat contract](../docs/jev-grounded-combat-contract.md) for
+motion, contact, capture and completion distinctions and current live evidence.
 
 ## Delayed decision boundary
 

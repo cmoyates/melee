@@ -271,7 +271,7 @@ def run(run_dir):
             faults.release.set()
         if policy is not None and hasattr(policy, "close"):
             try:
-                outcome["async_policy"] = policy.close()
+                outcome["local_policy" if options["policy"] in ("heuristic", "random-legal") else "async_policy"] = policy.close()
             except Exception:
                 outcome.update(status="error", failure_reason="policy_shutdown_failed")
         if options["policy"] == "skill-check" and policy is not None:

@@ -464,6 +464,42 @@ capture summary SHA-256:
 `41fd31342ae385bc471a8afbcf42005b71bd60a32122b65e56fb3f8f444a91b5`.
 The failed predecessor is retained in `j15-initial-live-capture-audit.json`.
 
+## J16 grounded combat — partial acceptance
+
+[PR #44](https://github.com/cmoyates/melee/pull/44) is open on J15. The tracked
+slice has 229 passing offline tests and passing agent/native CI. Jab, down-tilt
+and grab use one fresh press, native motion acknowledgement and observed neutral
+actionability. Invulnerability, shield, facing/range and interruption rules are
+explicit; contact and actual paired capture are separate from motion completion.
+The heuristic and seeded random selectors share candidates, skills and reflexes.
+
+The corrected six-case pilot passed every action/direction, with actual capture
+in both grab cases. The first full schedule
+`scenarios-124992a6376745efa4c4993db7b911ba` stopped after 41/120 trials:
+41 expected motion starts, 35 completions and six CPU interruptions. One
+completed trial had an unfinished replay after the emulator reached its
+three-second shutdown limit. The audit failed and acceptance remains false;
+neither that replay nor the original outcome was rewritten. The supervisor now
+allows its owned emulator eight bounded seconds to finalize and requires valid
+replay/rules evidence before capture or scenario success. A fresh schedule is
+still required.
+
+Heuristic capture `match-b3ab3f684a1c4312a4177c380f0c23c9` completed its
+180-second wall-clock window with 10,197 game records at 59.75 observed FPS,
+zero gaps/duplicates/rollbacks, clean neutralization and a valid Battlefield
+replay. It completed 20 jabs and three down-tilts, recording 18 jab contacts and
+three down-tilt contacts. One down-tilt and six movement skills were interrupted.
+Fox had two stocks versus Mario's four at the bounded capture end; no win is
+claimed. Every recorded decision, packet and skill/reflex trace reproduced
+identically offline. All 42 protected files are unchanged, with no API calls.
+Evidence: `j16-heuristic-audit.json`; packet SHA-256
+`b9b7bc3b347e950d2af6a5f0049b84e289b2d8012fa19a1bb64c129d9e7ba390`.
+
+The J17 short-hop neutral-air draft has 15 dedicated host tests; its integration
+is isolated while J16 live validation runs. It measures jumpsquat release,
+native aerial and landing states, with a separate no-L control for landing-lag
+calibration. No live aerial acceptance is claimed yet.
+
 ## Durable local state
 
 - `build/jev/overnight-20260922/goal.json`: original deadline/authorization.

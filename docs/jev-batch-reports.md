@@ -53,7 +53,8 @@ recordings stay local.
   big-endian GameStart field at `0x13D`, as specified by the
   [Slippi specification](https://github.com/project-slippi/slippi-wiki/blob/master/SPEC.md#game-start).
   They were not configured or reinjected. Different observed seeds do not make
-  these games paired or reproducible. Unsupported old event lengths return null.
+  these games paired or reproducible. Unsupported old event lengths or an absent
+  optional runtime decoder return null; artifact hashes still verify.
 - The bot is port 1 in this J19 schedule. This is not the held-out, both-side
   J20 strength tournament. Loss recordings support diagnosis; the report does
   not label a death as a self-destruct or assign damage to an action.
@@ -64,7 +65,14 @@ Asset-free tests cover valid, failed, empty and pending schedules; unknown paid
 charges; later ledger activity; unavailable provider fields; historical source
 changes; manifest/audit/frame/ledger tampering; path escape; journal races and
 partial writes; JSON/Markdown parity; and execution with network/process creation
-blocked. All 408 host tests passed, including twelve focused report tests.
+blocked. An initial 408-test local run passed; CI then exposed a new test's
+unconditional dependency on the optional runtime codec. The corrected tests
+mock only the outer codec, exercise real event bytes, and explicitly cover
+reporting without that codec installed. Native verification below uses the
+installed real decoder.
+The corrected full suite passed all 409 tests with `python -S -B`, disabling
+site packages to reproduce the dependency-free CI environment. Real native RNG
+extraction was rechecked after the fix; all eight retained seeds were available.
 
 The first real inspection used the separate reporting checkout against frozen
 batch `batch-17fa1c8b61fb4a2988cc42fb73e62b06`, with network and process creation

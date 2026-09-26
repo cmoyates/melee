@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-
-import ubjson
 
 from melee_agent import batch_report as report, policy_batch as batch
 from melee_agent.budget import SpendLedger
@@ -18,6 +18,9 @@ from melee_agent.paid_cohort import checkpoint
 
 class BatchReportTests(unittest.TestCase):
     def setUp(self):
+        # Exercise event parsing without installing the optional runtime codec.
+        codec = patch.dict(sys.modules, {'ubjson':SimpleNamespace(loadb=lambda raw: {'raw':raw})})
+        codec.start();self.addCleanup(codec.stop)
         self.root = Path(tempfile.mkdtemp(prefix='jev-report-')).resolve()
         self.batch_id = 'batch-'+'a'*32
         self.folder = self.root/'build/jev/batches'/self.batch_id
@@ -47,11 +50,11 @@ class BatchReportTests(unittest.TestCase):
         run_id = 'match-'+f'{slot+1:032x}'
         run = self.root/'build/jev/runs'/run_id
         (run/'replays').mkdir(parents=True)
-        # Minimal real UBJSON event container, with a big-endian GameStart RNG seed.
+        # The outer codec is mocked; event bytes and RNG endianness are real.
         event = bytearray(0x141); event[0] = 0x36; event[1:5] = bytes([3,19,1,0])
         event[0x13D:0x141] = (12345+slot).to_bytes(4,'big')
         replay = run/'replays/game.slp'
-        replay.write_bytes(ubjson.dumpb({'raw':bytes([0x35,4,0x36,1,0x40])+event}))
+        replay.write_bytes(bytes([0x35,4,0x36,1,0x40])+event)
         summary = {'run_id':run_id,'policy':self.manifest['schedule'][slot]['policy'],
             'status':'complete' if passed else 'incomplete','completed_matches':int(passed),
             'elapsed_seconds':12.5,'episodes':[{'winner_port':2,'last_stocks':[0,3],'observations':100}],
@@ -205,6 +208,13 @@ class BatchReportTests(unittest.TestCase):
         self.assertEqual(result[0]['validated_responses'],1)
         self.assertEqual(result[0]['resolved_model'],'typesafe/jev-fixture')
         self.assertNotIn('NEVER_PUBLIC_SECRET',json.dumps(result))
+
+    def test_missing_optional_codec_preserves_results_with_unavailable_seeds(self):
+        self.add(0)
+        with patch.dict(sys.modules,{'ubjson':None}):
+            value=self.render()
+        self.assertEqual(value['policies']['jev']['losses'],1)
+        self.assertIsNone(value['matches'][0]['replays'][0]['observed_rng_seed'])
 
     def test_unscored_empty_cohort_and_cli_workspace_route(self):
         value=self.render()

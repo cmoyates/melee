@@ -161,7 +161,10 @@ def provider_identity(summary):
 
 
 def initialization_seed(path):
-    import ubjson
+    try:
+        import ubjson
+    except ImportError:
+        return None  # Runtime decoder is optional; hashes still verify independently.
     raw = ubjson.loadb(path.read_bytes())['raw']
     require(len(raw) >= 2 and raw[0] == 0x35 and (raw[1]-1) % 3 == 0)
     sizes = {raw[i]:int.from_bytes(raw[i+1:i+3], 'big')+1 for i in range(2, raw[1]+1, 3)}

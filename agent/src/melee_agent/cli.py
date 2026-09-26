@@ -30,6 +30,22 @@ def main(argv=None):
     capture.add_argument("--budget", help="Existing shared budget directory; required for jev")
     capture.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
     capture.add_argument("--profile", choices=tuple(PROFILES), default=PROFILE)
+    batch = commands.add_parser('batch', help='Frozen free-policy cohorts with between-match checkpoints')
+    batches = batch.add_subparsers(dest='batch_command', required=True)
+    batch_start = batches.add_parser('start')
+    batch_start.add_argument('--policies', nargs='+', choices=('random-tactical','heuristic-tactical'),
+        default=['random-tactical','heuristic-tactical'])
+    batch_start.add_argument('--matches-per-policy', type=int, default=10)
+    batch_start.add_argument('--match-seconds', type=int, default=600)
+    batch_start.add_argument('--duration', type=int, default=14400)
+    batch_start.add_argument('--profile', choices=tuple(PROFILES), default=PROFILE)
+    batch_start.add_argument('--max-new-matches', type=int, default=20)
+    batch_start.add_argument('--previous-batch', help='Link a prior cohort without reusing its results')
+    batch_resume = batches.add_parser('resume')
+    batch_resume.add_argument('batch_id')
+    batch_resume.add_argument('--max-new-matches', type=int, default=20)
+    batch_inspect = batches.add_parser('inspect')
+    batch_inspect.add_argument('batch_id')
     soak = commands.add_parser("soak", help="Thirty-minute runtime-v1 fault schedule; no external provider calls")
     soak.add_argument("--budget", required=True, help="Existing paid ledger to verify remains unchanged")
     soak.add_argument("--duration", type=int, default=1800)
@@ -105,6 +121,24 @@ def main(argv=None):
             command.add_argument("--scenario-evidence", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
+    if args.command == 'batch':
+        from .policy_batch import batch_lock, load_batch, locate_batch, report_batch, resume_batch, start_batch
+        try:
+            if args.batch_command == 'start':
+                report = start_batch(root,policies=args.policies,matches_per_policy=args.matches_per_policy,
+                    match_seconds=args.match_seconds,duration=args.duration,profile=args.profile,
+                    max_new_matches=args.max_new_matches,previous_batch=args.previous_batch)
+            elif args.batch_command == 'resume':
+                report = resume_batch(root,args.batch_id,max_new_matches=args.max_new_matches)
+            else:
+                folder = locate_batch(root,args.batch_id)
+                with batch_lock(folder):
+                    report = report_batch(*load_batch(root,folder))
+            print(json.dumps(report,indent=2))
+            return 0 if report['status'] in ('complete','checkpointed') else 2
+        except (ValueError,OSError,KeyError,TypeError,RuntimeError):
+            print(json.dumps({'status':'blocked','message':'Batch identity, source, bounds or retained child evidence could not be verified. No automatic retry.'}))
+            return 2
     if args.command == "corpus":
         from .corpus import build_corpus, validate_corpus
         try:

@@ -30,10 +30,10 @@ def main(argv=None):
     capture.add_argument("--budget", help="Existing shared budget directory; required for jev")
     capture.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
     capture.add_argument("--profile", choices=tuple(PROFILES), default=PROFILE)
-    batch = commands.add_parser('batch', help='Frozen free-policy cohorts with between-match checkpoints')
+    batch = commands.add_parser('batch', help='Frozen policy cohorts with between-match checkpoints')
     batches = batch.add_subparsers(dest='batch_command', required=True)
     batch_start = batches.add_parser('start')
-    batch_start.add_argument('--policies', nargs='+', choices=('random-tactical','heuristic-tactical'),
+    batch_start.add_argument('--policies', nargs='+', choices=('random-tactical','heuristic-tactical','jev'),
         default=['random-tactical','heuristic-tactical'])
     batch_start.add_argument('--matches-per-policy', type=int, default=10)
     batch_start.add_argument('--match-seconds', type=int, default=600)
@@ -41,6 +41,8 @@ def main(argv=None):
     batch_start.add_argument('--profile', choices=tuple(PROFILES), default=PROFILE)
     batch_start.add_argument('--max-new-matches', type=int, default=20)
     batch_start.add_argument('--previous-batch', help='Link a prior cohort without reusing its results')
+    batch_start.add_argument('--budget', help='Existing conserved ledger, required for explicit Jev slots')
+    batch_start.add_argument('--max-requests', type=int, help='Explicit 1-200 request cap per Jev match')
     batch_resume = batches.add_parser('resume')
     batch_resume.add_argument('batch_id')
     batch_resume.add_argument('--max-new-matches', type=int, default=20)
@@ -127,7 +129,8 @@ def main(argv=None):
             if args.batch_command == 'start':
                 report = start_batch(root,policies=args.policies,matches_per_policy=args.matches_per_policy,
                     match_seconds=args.match_seconds,duration=args.duration,profile=args.profile,
-                    max_new_matches=args.max_new_matches,previous_batch=args.previous_batch)
+                    max_new_matches=args.max_new_matches,previous_batch=args.previous_batch,
+                    budget=args.budget,max_requests=args.max_requests)
             elif args.batch_command == 'resume':
                 report = resume_batch(root,args.batch_id,max_new_matches=args.max_new_matches)
             else:

@@ -129,6 +129,9 @@ class LiveProviderTests(unittest.TestCase):
             report = backend.close()
         self.assertEqual(report["counts"], {"errors:invalid_distribution_sum": 1})
         self.assertEqual(report["budget_after"]["unsettled_requests"], 0)
+        reservation = next(json.loads(line) for line in self.ledger.path.read_text().splitlines()
+            if json.loads(line)['kind']=='reserve')
+        self.assertEqual(report['attempts'][0]['request_id'],reservation['id'])
 
     def test_budget_refusal_makes_no_http_call(self):
         backend = ProviderBackend(self.root, "build/jev/budget", 1, time.monotonic_ns()+10_000_000_000, transport=self.response)
@@ -138,6 +141,16 @@ class LiveProviderTests(unittest.TestCase):
         self.assertEqual(reply.error, "budget_refused")
         self.assertTrue(backend.exhausted)
         self.assertEqual(backend.close()["http_calls"], 0)
+
+    def test_unknown_transport_charge_retains_its_reservation_identity(self):
+        def unavailable(payload,timeout):raise OSError('fixture disconnect')
+        backend=ProviderBackend(self.root,'build/jev/budget',1,time.monotonic_ns()+10_000_000_000,transport=unavailable)
+        reply=self.call(backend)[0];report=backend.close()
+        self.assertEqual(reply.error,'transport_or_accounting_error')
+        self.assertEqual(report['budget_after']['unsettled_requests'],1)
+        reservation=next(json.loads(line) for line in self.ledger.path.read_text().splitlines()
+            if json.loads(line)['kind']=='reserve')
+        self.assertEqual(report['attempts'][0]['request_id'],reservation['id'])
 
     def test_credentials_only_cross_explicit_jev_boundary_and_never_emulator_environment(self):
         from melee_agent.matches import isolated_environment

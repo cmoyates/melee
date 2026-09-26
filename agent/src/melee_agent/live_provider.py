@@ -150,9 +150,12 @@ class ProviderBackend:
             if (not isinstance(semantic, CompactObservation) or
                     (context.semantic_sha256 is not None and context.semantic_sha256 != semantic.sha256)):
                 raise ProviderError("semantic_snapshot_binding")
-            result = self.client.submit(observation, {label: self.descriptions[label] for label in candidates},
+            pending = self.client.submit(observation, {label: self.descriptions[label] for label in candidates},
                 deadline_ns=min(time.monotonic_ns() + 1_000_000_000, self.run_deadline_ns - 2_000_000_000),
-                instructions=INSTRUCTIONS, compact_state=semantic).result(timeout=1.5)
+                instructions=INSTRUCTIONS, compact_state=semantic)
+            if isinstance(getattr(pending, 'request_id', None), str):
+                attempt['request_id'] = pending.request_id
+            result = pending.result(timeout=1.5)
             if (result.episode, result.frame, result.observed_ns) != (context.episode, context.frame, context.observed_ns):
                 raise ProviderError("response_observation_mismatch")
             metadata = asdict(result)

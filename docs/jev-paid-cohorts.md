@@ -54,4 +54,41 @@ prefixes, sealed/exhausted/missing-credential admission, changed provider config
 credential routing, fallback-only failure and reused/tampered sealed replay.
 Provider tests also verify reservation identity survives malformed answers and
 unknown transport charges. No real API request was made by these tests.
-Native paid checkpoint evidence is pending.
+Agent-offline and native-build CI also pass. Repository-wide editorconfig still
+reports 190 existing errors outside agent/docs; this is not fully green CI.
+
+Native cohort `batch-17fa1c8b61fb4a2988cc42fb73e62b06` fixes ten rounds ordered
+Jev/random/heuristic on `fox-aerial-v1`, with 600-second match caps and a six-hour
+batch deadline. It links the prior free pilot and first stops after one paid
+match. The existing exhausted request allocation was sealed and only its
+$0.871503802 conservatively unspent balance carried forward. This plus the
+$0.128496198 previously accounted remains the original $1, with all uncertain
+reservations preserved. The child ledger allows at most 2,000 requests and
+5,000,000 input tokens until 2026-09-27 10:30 UTC.
+
+First child `match-ec61d1621b9e441b8f4c5b0f1a410c10` completed a 0-3 loss in
+294.91 seconds. All 16,830 game frames passed raw integrity, raw policy evidence
+and exact sealed replay, alongside stock rules/result and owned shutdown.
+Its 199 requests produced 192 valid answers, three invalid distributions,
+three deadline failures and one transport timeout. Every reservation matched
+its recorded attempt, including the four uncertain charges. A separate
+`batch inspect` reverified the checkpoint, source, ledger and replay hashes.
+
+There were 119 accepted choices: 62 approaches, 48 short-hop Nairs, five
+approach-jabs, two down tilts, one grab and one neutral. Raw acknowledgements
+confirmed 61 completed movements, 43 completed Nairs, four completed options
+with contact, two down tilts with contact and one grab capture. Seven accepted
+skills were interrupted. Provider ownership was 2,274/16,830 frames (13.51%);
+median/p95 source-to-reply latency across all 199 deliveries was 438.26/558.34 ms.
+All valid answers resolved to `typesafe/jev-1.13-20260917` through TypeSafe.
+These are execution measurements, not evidence that Jev is stronger.
+
+The first match added $0.023237516 in conservative accounting: $0.015237516
+reported plus $0.008 reserved for unknown charges. Cumulative accounting became
+$0.151733714, including $0.020 uncertain across eight requests. Four ancestor
+journals stayed unchanged after the intentional continuation seal. Private
+replay: `incident-546722d9df8b455cb1ae7d9d0b954831`. Packet SHA-256:
+`0686f0fc00572ebb8e8a8512fec1839e4795a1022283658eafc11c294371c698`.
+Only the first of thirty scheduled matches is complete at this checkpoint;
+the two free slots of the first round are running next. The ten-per-policy
+J19 gate and the separate J20 tournament remain incomplete.

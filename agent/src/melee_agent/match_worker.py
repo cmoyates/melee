@@ -16,7 +16,7 @@ from .raw_observation import LifeTracker, RawStreamTap, player_record, stage_rec
 from .input_trace import InputTrace
 from .local_combat_policy import LOCAL_MODES
 from .match_lifecycle import (MatchBoundaryError, completed_replay, record_observation,
-    start_segment, verify_sudden_death)
+    record_sudden_death_menu, start_segment, verify_sudden_death)
 
 
 class StopRequested(BaseException):
@@ -215,6 +215,18 @@ def run(run_dir):
                         pending_record = None
                         break
                 else:
+                    if in_game and state.menu_state == melee.Menu.UNKNOWN_MENU:
+                        outcome['last_unknown_menu'] = raw_stream.last_menu
+                        record_sudden_death_menu(episode, raw_stream.last_menu, now)
+                        # Do not feed a menu-only event to the executor or menu
+                        # helpers. Keep the verified game segment and queued input.
+                        record = {"schema_version": 1, "run_id": options["run_id"],
+                            "menu": state.menu_state.name, "monotonic": now, "frame": int(state.frame),
+                            "raw_menu": raw_stream.last_menu, "classification": "sudden_death_countdown"}
+                        pending_record = record
+                        frames.publish(record)
+                        pending_record = None
+                        continue
                     if in_game:
                         if state.menu_state not in (melee.Menu.POSTGAME_SCORES, melee.Menu.CHARACTER_SELECT):
                             raise RuntimeError("unexpected game exit scene: " + state.menu_state.name)

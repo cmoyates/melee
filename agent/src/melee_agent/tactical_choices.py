@@ -5,7 +5,9 @@ from .skills import can_start, relative_skill
 LABELS = ("neutral", "approach", "retreat", "jump", "shield", "jab", "dtilt", "grab")
 PROFILE = "grounded-tactical-v1"
 OPTION_PROFILE = "approach-jab-v1"
-PROFILES = {PROFILE: LABELS, OPTION_PROFILE: (*LABELS, "approach_jab")}
+AERIAL_PROFILE = "fox-aerial-v1"
+PROFILES = {PROFILE: LABELS, OPTION_PROFILE: (*LABELS, "approach_jab"),
+    AERIAL_PROFILE: (*LABELS, "approach_jab", "sh_nair")}
 
 
 def profile_labels(profile=PROFILE):

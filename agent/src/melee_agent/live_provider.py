@@ -14,7 +14,7 @@ from .budget import BudgetError, SpendLedger
 from .config import owned_path
 from .provider import DecisionsClient, MODEL_ALIAS, OpenRouterTransport, ProviderError
 from .semantic import CompactObservation, SEMANTIC_VERSION, compact_observation
-from .tactical_choices import PROFILE, OPTION_PROFILE, profile_labels
+from .tactical_choices import PROFILE, profile_labels
 
 DESCRIPTIONS = {
     "neutral": "Release all inputs briefly; observe and wait for a better opportunity.",
@@ -33,11 +33,13 @@ INSTRUCTIONS = ("Control Fox against a level 3 Mario CPU on Battlefield. Choose 
     "Choose exactly one provided label and return its complete probability distribution.")
 OPTION_DESCRIPTIONS = {**DESCRIPTIONS, "approach_jab":
     "On shared ground or platform, close distance through up to four short movements, release and settle, then attempt one jab only if currently legal. Stop on changed support, crossing, damage or a 180-simulation-frame deadline. Contact is not guaranteed."}
+AERIAL_DESCRIPTIONS = {**OPTION_DESCRIPTIONS, "sh_nair":
+    "From settled main ground, short-hop into neutral aerial and drift toward the opponent. Attempt an L-cancel; release on observed landing. Abort on damage, unsupported geometry or a 180-frame deadline. Contact and reduced landing lag are not guaranteed."}
 
 
 def descriptions(profile=PROFILE):
     labels = profile_labels(profile)
-    source = OPTION_DESCRIPTIONS if profile == OPTION_PROFILE else DESCRIPTIONS
+    source = AERIAL_DESCRIPTIONS
     return {label:source[label] for label in labels}
 
 

@@ -16,6 +16,16 @@ from melee_agent import matches
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_completed_result_cannot_hide_a_different_candidate_profile(self):
+        from melee_agent.local_combat_policy import LocalCombatPolicy
+        from melee_agent.tactical_choices import OPTION_PROFILE
+        report = LocalCombatPolicy('heuristic-tactical',profile=OPTION_PROFILE).close()
+        code,summary = self.exercise(worker_text=json.dumps({'episodes':[{'episode':1,'winner_port':2,
+            'last_stocks':[0,4],'result_event_verified':True}],'neutralized':True,
+            'status':'matches_complete','local_policy':report}),fake_replay=True)
+        self.assertEqual(code,2)
+        self.assertEqual(summary['reason'],'candidate_profile_mismatch')
+
     def test_local_selector_shutdown_report_crosses_the_supervisor_boundary(self):
         from melee_agent.local_combat_policy import LocalCombatPolicy
         from test_combat_integration import ground

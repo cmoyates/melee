@@ -21,6 +21,7 @@ from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
 from .trace_limits import MAX_SOURCE_BYTES
 from .local_combat_policy import LOCAL_MODES
 from .match_lifecycle import replay_layout_valid
+from .tactical_choices import PROFILE, profile_labels
 
 
 def isolated_environment():
@@ -162,7 +163,10 @@ def read_worker_result(path):
         return empty, type(error).__name__
 
 
-def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None):
+def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None, candidate_profile=PROFILE):
+    profile_labels(candidate_profile)
+    if candidate_profile != PROFILE and policy not in ('jev','delayed-fake','heuristic-tactical','random-tactical'):
+        raise ValueError('Experimental candidates require an explicit tactical policy')
     from .replay import expected_settings, summarize_file
     from .live_provider import preflight as provider_preflight, provider_environment
     provider_budget = provider_preflight(root, policy, budget_directory, max_requests)
@@ -212,6 +216,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
                     "max_provider_requests": max_requests, "provider_budget_before": provider_budget,
                     "skill_repeats": skill_repeats,
                     "scenario_name": scenario_name,
+                    "candidate_profile": candidate_profile,
                     "source_sha256": {p.name: digest(p, "sha256") for p in sorted(Path(__file__).parent.glob("*.py"))},
                     "policy": policy, "episodes": episodes, "provider_contacted": False,
                     "stage": STAGE_NAME, "stage_id": STAGE_ID,
@@ -331,6 +336,17 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
                     client_shutdown.get("workers_alive") == 0 and client_shutdown.get("timers_alive") == 0)
             if not async_closed:
                 captured = complete = probe_ok = False
+        declared_profiles = [candidate_profile]
+        if 'local_policy' in result:
+            declared_profiles.append(result['local_policy'].get('profile',PROFILE))
+        if 'async_policy' in result:
+            declared_profiles.append(result['async_policy'].get('candidate_profile',PROFILE))
+            provider = result['async_policy'].get('bridge',{}).get('provider')
+            if policy == 'jev' and provider is not None:
+                declared_profiles.append(provider.get('candidate_profile',PROFILE))
+        if any(value != candidate_profile for value in declared_profiles):
+            captured = complete = probe_ok = False
+            reason = 'candidate_profile_mismatch'
         skill_report = result.get("skill_check", {})
         from .skill_check import verified_report
         skill_ok = (policy == "skill-check" and reason == "worker_finished" and result.get("status") == "skill_check_complete" and
@@ -343,7 +359,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
         status = "scenario_recorded" if scenario_ok else "skills_verified" if skill_ok else "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
-                    "policy": policy, "episodes": result["episodes"], "replays": replays,
+                    "policy": policy, "candidate_profile":candidate_profile, "episodes": result["episodes"], "replays": replays,
                     "completed_matches": result.get('completed_matches',sum(e.get('result_event_verified') is True for e in result['episodes'])),
                     "replay_errors": replay_errors, "neutralized": result["neutralized"],
                     "elapsed_seconds": time.monotonic() - started,
@@ -378,10 +394,10 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
         return 0 if complete or probe_ok or captured or skill_ok or scenario_ok else 2
 
 
-def launch(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None):
+def launch(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None, candidate_profile=PROFILE):
     from .live_provider import provider_environment
     command = [sys.executable, "-B", "-m", "melee_agent.matches", str(root), str(duration), str(episodes), policy,
-                str(int(capture)), str(skill_repeats), budget_directory or "", str(max_requests or 0), fault_mode or "", scenario_name or ""]
+                str(int(capture)), str(skill_repeats), budget_directory or "", str(max_requests or 0), fault_mode or "", scenario_name or "", candidate_profile]
     supervisor = subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True, env=provider_environment(policy))
     try:
         return supervisor.wait()
@@ -410,7 +426,8 @@ if __name__ == "__main__":
                                     sys.argv[7] or None if len(sys.argv) > 7 else None,
                                     (int(sys.argv[8]) or None) if len(sys.argv) > 8 else None,
                                     (sys.argv[9] or None) if len(sys.argv) > 9 else None,
-                                    (sys.argv[10] or None) if len(sys.argv) > 10 else None))
+                                    (sys.argv[10] or None) if len(sys.argv) > 10 else None,
+                                    sys.argv[11] if len(sys.argv) > 11 else PROFILE))
     except Exception as error:
         print(json.dumps({"status": "blocked", "error_type": type(error).__name__,
                             "message": "Match setup failed; check local runtime configuration and launch availability."}))

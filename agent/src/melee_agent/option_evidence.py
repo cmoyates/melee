@@ -6,13 +6,9 @@ from .engine import ACTION_PACKETS, Observation
 from .skills import GROUND_ACTIONS, SkillSpec, can_start
 
 
-def audit_option(report,rows,errors):
+def audit_option_trace(option,rows,errors,*,completed,require_move=False):
     evidence = {'moves_acknowledged':0,'jab_acknowledged':False,'completed':False,'contacts':0}
     try:
-        skill = report['skill']
-        if skill != rows[-1]['scenario']['skill']:
-            errors['option_report_trace_mismatch'] += 1
-        option = (skill.get('event') or {}).get('option')
         if not option:
             errors['option_report_missing'] += 1
             return evidence
@@ -65,8 +61,8 @@ def audit_option(report,rows,errors):
                     errors['option_movement_release_not_observed'] += 1
             elif child['status']=='succeeded':
                 errors['option_movement_ack_missing'] += 1
-        if report['result']['status']=='succeeded':
-            evidence['completed']=(option['status']=='succeeded' and bool(moves) and
+        if completed:
+            evidence['completed']=(option['status']=='succeeded' and (bool(moves) or not require_move) and
                 evidence['moves_acknowledged']==len(moves) and evidence['jab_acknowledged'] and
                 bool(jabs) and children[-1]['skill']=='jab' and children[-1]['status']=='succeeded')
             if not evidence['completed']:
@@ -74,6 +70,18 @@ def audit_option(report,rows,errors):
     except (KeyError,TypeError,ValueError,IndexError):
         errors['option_evidence_unavailable'] += 1
     return evidence
+
+
+def audit_option(report,rows,errors):
+    try:
+        skill = report['skill']
+        if skill != rows[-1]['scenario']['skill']:
+            errors['option_report_trace_mismatch'] += 1
+        return audit_option_trace((skill.get('event') or {}).get('option'),rows,errors,
+            completed=report['result']['status']=='succeeded',require_move=True)
+    except (KeyError,TypeError,ValueError,IndexError):
+        errors['option_evidence_unavailable'] += 1
+        return {'moves_acknowledged':0,'jab_acknowledged':False,'completed':False,'contacts':0}
 
 
 def option_acceptance(results,repeats):

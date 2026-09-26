@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .doctor import diagnose
+from .tactical_choices import PROFILE, PROFILES
 
 
 def main(argv=None):
@@ -21,12 +22,14 @@ def main(argv=None):
     match.add_argument("--episodes", type=int, default=1)
     match.add_argument("--budget", help="Existing shared budget directory; required for jev")
     match.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
+    match.add_argument("--profile", choices=tuple(PROFILES), default=PROFILE)
     capture = commands.add_parser("capture", help="Capture until a wall-clock deadline, retaining partial final match")
     capture.add_argument("--duration", type=int, default=600)
     capture.add_argument("--policy", choices=("scripted", "smoke", "neutral-probe", "delayed-fake", "jev", "faults", "heuristic", "random-legal", "heuristic-tactical", "random-tactical"), default="scripted")
     capture.add_argument("--fault", help="Explicit runtime-v1 fault mode; only with policy faults")
     capture.add_argument("--budget", help="Existing shared budget directory; required for jev")
     capture.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
+    capture.add_argument("--profile", choices=tuple(PROFILES), default=PROFILE)
     soak = commands.add_parser("soak", help="Thirty-minute runtime-v1 fault schedule; no external provider calls")
     soak.add_argument("--budget", required=True, help="Existing paid ledger to verify remains unchanged")
     soak.add_argument("--duration", type=int, default=1800)
@@ -189,11 +192,11 @@ def main(argv=None):
     if args.command == "match":
         from .matches import launch
         return launch(root, args.duration, args.episodes, args.policy,
-            budget_directory=args.budget, max_requests=args.max_requests)
+            budget_directory=args.budget, max_requests=args.max_requests,candidate_profile=args.profile)
     if args.command == "capture":
         from .matches import launch
         return launch(root, args.duration, 100, args.policy, capture=True,
-                        budget_directory=args.budget, max_requests=args.max_requests, fault_mode=args.fault)
+                        budget_directory=args.budget, max_requests=args.max_requests, fault_mode=args.fault,candidate_profile=args.profile)
     if args.command == "skill-check":
         if args.suite in ("recovery-v1", "ground-combat-v1", "aerial-v1", "approach-jab-v1"):
             from .scenario_runner import run_suite

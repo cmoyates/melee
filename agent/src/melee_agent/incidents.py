@@ -173,6 +173,7 @@ def export_incident(root, run, *, episode=1, frame=None, request_id=None, after_
         raise IncidentError("source_changed_during_extraction")
     provider = summary.get("async_policy", {}).get("bridge", {}).get("provider") or {}
     declared = {"runtime_sha256": launch.get("runtime_sha256"), "disc_sha1": launch.get("disc_sha1"),
+        "candidate_profile": launch.get("candidate_profile", "grounded-tactical-v1"),
         "libmelee_commit": launch.get("libmelee_commit"), "stage_id": launch["stage_id"],
         "starting_stocks": launch["starting_stocks"], "time_limit_seconds": launch["match_time_limit_seconds"],
         "source_sha256": {name: launch.get("source_sha256", {}).get(name) for name in CONTRACT_MODULES},
@@ -319,7 +320,8 @@ class PacketDigest:
 def replay_incident(root, folder):
     manifest = verify_bundle(root, folder)
     bridge, clock, sink = RecordedBridge(), RecordedClock(), PacketDigest()
-    policy = AsyncPolicy(manifest["run_id"], bridge, clock=lambda: bridge.row["times"]["policy_ns"])
+    policy = AsyncPolicy(manifest["run_id"], bridge, clock=lambda: bridge.row["times"]["policy_ns"],
+        profile=manifest['declared_provenance'].get('candidate_profile','grounded-tactical-v1'))
     executor = FrameExecutor(policy, sink, clock)
     decisions = hashlib.sha256()
     count = accepted = 0

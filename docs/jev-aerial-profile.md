@@ -36,7 +36,25 @@ frames replayed exactly, with raw policy/integrity, source, rules/result and
 owned cleanup checks passing. All four spend journals remained unchanged.
 Private exact replay: `incident-4335f3381b214534837dc5d127f744d6`.
 
-Paid aerial confirmation is pending. The earlier mechanical
+Paid native probe `match-7e63fd87ab284ac29c36f61134f8bc21` then used the existing
+ledger's last 40 requests. All 40 responses validated; Jev selected 16 Nairs,
+11 were accepted, and ten completed with raw short-hop/Nair acknowledgement,
+an L-cancel input attempt and seven measured landing frames. One accepted aerial
+was interrupted. Five stale aerial choices were rejected by the skill-generation
+guard. Thirteen movement choices and two down tilts were also accepted; ten
+moves and one down tilt completed, with contact on the completed tilt.
+
+This was a capped 181.22-second capture, ending at 2-4 stocks, not a completed
+match. Requests ended at game frame 3420; later gameplay used the local fallback.
+All 10,198 game frames passed raw integrity/policy inspection and exact sealed
+replay, with unchanged source and owned cleanup. Private exact replay:
+`incident-c031fab9dbaa4640a2531b6e3eac1b53`. Provider ownership was 479 frames
+(4.70% of the entire capture). Source-to-reply latency was 438.51 ms median and
+546.80 ms p95. The probe cost $0.003110184, bringing cumulative accounted spend
+to $0.128496198, including $0.012 retained for four uncertain earlier requests.
+No reservations were cleared and no new dollar allowance was created.
+
+The earlier mechanical
 suite acknowledged all 80 aerials with known terminal controller state, but only
 68 completed cleanly; its stronger clean-completion gate remains unmet. This
 profile does not change that result or establish playing strength.

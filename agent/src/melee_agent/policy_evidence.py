@@ -5,7 +5,7 @@ import hashlib
 import json
 import math
 
-from .engine import Observation
+from .engine import ACTION_PACKETS, Observation
 from .tactical_choices import PROFILE, profile_labels
 from .combat_evidence import audit_combat_trace
 from .option_evidence import audit_option_trace
@@ -205,6 +205,20 @@ def inspect_policy(run, *, require_participation=True):
                 trial = pending_skills.pop(event["generation"], None)
                 if trial is None:
                     continue
+                if trial['episode'] != observation.episode:
+                    # The new segment's -123 is not an end frame inside the
+                    # old motion. Verify cancellation/output, never completion.
+                    valid = (observation.episode == trial['episode']+1 and observation.frame == -123 and
+                        event['status'] == 'aborted' and event.get('reason') == 'death_or_respawn' and
+                        event.get('episode') == observation.episode and event.get('frame') == observation.frame and
+                        event.get('source_frame') == trial['frame'] and
+                        (event.get('skill'),event.get('direction')) == (trial['spec'].name,trial['spec'].direction) and
+                        control['packet'] == ACTION_PACKETS['wait'].wire())
+                    if valid:
+                        acknowledgements['cancelled:episode_boundary'] += 1
+                    else:
+                        errors['invalid_episode_boundary_cancellation'] += 1
+                    continue
                 combat = None
                 option = None
                 if trial["spec"].name in COMBAT:
@@ -234,6 +248,9 @@ def inspect_policy(run, *, require_participation=True):
                     history = [value[2] for (episode,frame),value in sources.items()
                         if episode == trial['episode'] and trial['frame'] <= frame <= observation.frame]
                     details = event.get('option') or {}
+                    if not isinstance(details,dict):
+                        errors['option_event_schema'] += 1
+                        details = {}
                     if (event.get('source_frame') != trial['frame'] or details.get('source_frame') != trial['frame'] or
                             event.get('episode') != trial['episode'] or details.get('direction') != trial['spec'].direction or
                             details.get('ack_frame') != event.get('ack_frame') or details.get('end_frame') != observation.frame):

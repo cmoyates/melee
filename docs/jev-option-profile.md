@@ -39,7 +39,7 @@ Paid testing additionally requires the existing `jev` policy, an explicit
 remaining-budget ledger and request cap. Selecting a profile does not create
 or reset a budget. No new paid call was made to implement or test this slice.
 
-All 331 host tests pass. The deterministic delayed-choice fixture waits 500 ms before accepting the
+All 334 host tests pass. The deterministic delayed-choice fixture waits 500 ms before accepting the
 option, then observes two movement/release commitments and one acknowledged
 jab with neutral completion. All 43 frames reproduce exactly from a sealed
 incident without network or emulator. Other tests cover shared candidate
@@ -47,3 +47,12 @@ sets, rejection under the atomic profile, local option replay, explicit CLI
 and provider payload propagation, changed profile identity and forged raw
 child evidence. These are host/integration results, not live tactical benefit.
 Fresh live option captures and paid validation remain pending.
+
+Cross-episode cancellation is a separate audit outcome. When the next segment
+starts at -123, an old commitment must abort with the expected episode/source
+identity and a complete neutral packet. The auditor records that cancellation
+without interpreting the new negative frame as a completion inside the old
+motion. It cannot turn a forged success or retained directional input into
+a valid cancellation. A synthetic Sudden Death boundary reproduces exactly
+across 43 sealed frames; this validates controller/audit accounting and does
+not replace the runner's independent native match-boundary verification.

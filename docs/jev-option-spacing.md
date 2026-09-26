@@ -40,4 +40,11 @@ The remaining timeouts exposed another setup issue: Fox was chasing Mario's
 horizontal position while Mario was above him on a platform or in the air.
 The follow-up waits on main ground until Mario shares that support before
 attempting spacing. It preserves the landing, recovery and already-started hop
-paths. All 340 host tests pass; a separate fresh six-trial probe is running.
+paths. All 340 host tests pass. Fresh six-trial probe
+`scenarios-bf75c3b27faa42d0ac2505762d9b5de7` reached every setup, completed two
+approach/jab sequences per direction, and retained two interrupted attempts.
+All 2,148 game frames replayed exactly, every raw audit passed, and launch
+sources remained unchanged. Summary SHA-256:
+`91baf557b36c8f99074a1ceb9c5339ab67362d9c7da60652933892e728794ed4`.
+The limited pilot gate passes again. Six fresh trials do not establish a setup
+reliability rate or isolate the effect from CPU/game variability.

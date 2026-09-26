@@ -58,6 +58,11 @@ fresh observations govern a later attempt.
 
 The recovery sequence has a 180-frame deadline. Jump and up-B requests get eight
 frames for acknowledgement. Unacknowledged actions are not continually pressed.
+Support estimation includes a bounded 0.1-unit horizontal tolerance for native
+grounded origins at approximate interval endpoints; the height and movement
+safety bounds remain unchanged. See the
+[platform boundary regression](jev-platform-boundary-support.md).
+
 An unsupported recovery envelope (`abs(x) > 130` or `y < -85`) and unknown grounded
 geometry use a bounded neutral failure. These are conservative experiment limits,
 not a proof that every excluded position is physically unrecoverable.

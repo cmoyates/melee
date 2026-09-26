@@ -20,4 +20,24 @@ abort paths, raw option evidence and pilot gate. No savestate, CPU patch,
 teleport, timer change or provider call is used. Mirrored host tests cover
 spacing, jump release, landing/measurement separation, edge and airborne-target
 exclusions, old atomic setup, damage and timeout. Fresh live validation is
-pending; all earlier failures stay in the evidence.
+pending for the follow-up below; all earlier failures stay in the evidence.
+
+The first twenty-trial spacing suite on `c492fb722`,
+`scenarios-8b357939cc5d474fbfbf595629d03e5e`, completed six left and two right
+approach/jab sequences, with four left damage interruptions and eight right
+setup timeouts. All twenty raw audits passed and all 9,386 game frames replayed
+exactly through the controller with unchanged launch sources. The declared
+pilot gate passed in both directions, but the 8/10 right setup failures prevent
+a reliability claim. Summary SHA-256:
+`03f2507f22c589ad3064dc82e7b0e3d1241c70f1a774280e86b9fb33dfcfc0b9`.
+
+One completed right trial, `match-335f8cce61a740c0a444d4bb1492bc04`, measured
+from frame 427, acknowledged two walking children and jab, observed one contact,
+and completed after 58 measured frames. Setup used 426 frames of its 480-frame
+limit. That is measured execution, not a discarded setup failure or scripted hit.
+
+The remaining timeouts exposed another setup issue: Fox was chasing Mario's
+horizontal position while Mario was above him on a platform or in the air.
+The follow-up waits on main ground until Mario shares that support before
+attempting spacing. It preserves the landing, recovery and already-started hop
+paths. All 340 host tests pass; a separate fresh six-trial probe is running.

@@ -12,6 +12,7 @@ from .option_evidence import audit_option_trace
 from .ground_combat import COMBAT
 from .skills import can_start, relative_skill
 from .stage import support_surface
+from .participation import Participation, opportunity_phase
 
 
 def check_acknowledgement(trial, event, row, sources, combat=None, option=None):
@@ -80,6 +81,7 @@ def inspect_policy(run, *, require_participation=True):
     acknowledgements, input_owners = Counter(), Counter()
     combat_outcomes = Counter()
     option_outcomes = Counter()
+    participation = Participation((summary.get('async_policy') or {}).get('bridge',{}).get('provider'))
     pending_skills, consumed = {}, {}
     sources = OrderedDict()
     queued_ms, flushed_ms, delays_ms, applied_ms, gaps_ms = [], [], [], [], []
@@ -107,6 +109,8 @@ def inspect_policy(run, *, require_participation=True):
                 gaps_ms.append((observation.observed_ns-previous_observation.observed_ns)/1e6)
             previous_observation = observation
             skill = row.get("skill", {})
+            phase = opportunity_phase(observation,profile)
+            participation.observe(observation,phase,skill.get('input_owner'))
             if skill.get('candidate_profile',PROFILE) != profile:
                 errors['trace_candidate_profile_mismatch'] += 1
             sources[observation.episode, observation.frame] = (observation, skill, row)
@@ -133,6 +137,9 @@ def inspect_policy(run, *, require_participation=True):
                 delays_ms.append((reply["received_ns"]-c["observed_ns"])/1e6)
                 faults[reply["fault"]] += 1
                 accepted = event["accepted"]
+                request_source = sources.get((c['episode'],c['frame']))
+                source_phase = opportunity_phase(request_source[0],profile) if request_source else 'unavailable_source'
+                participation.delivery(source_phase,phase,accepted)
                 outcomes["accepted" if accepted else "rejected:" + str(event["reason"])] += 1
                 if event["last_applied_before"] != last_applied:
                     errors["applied_sequence_accounting"] += 1
@@ -194,7 +201,8 @@ def inspect_policy(run, *, require_participation=True):
                         active["skill"] == spec.name and active["direction"] == spec.direction and
                         skill["generation"] == c["skill_generation"] + 1, "accepted_skill_not_started")
                     pending_skills[c["skill_generation"]+1] = {"episode": observation.episode,
-                        "frame": observation.frame, "spec": spec, "label": reply["action"]}
+                        "frame": observation.frame, "spec": spec, "label": reply["action"],
+                        'source_phase':source_phase,'application_phase':phase}
                 except (KeyError, TypeError, ValueError):
                     errors["accepted_invalid_skill"] += 1
                 last_applied = sequence
@@ -216,6 +224,7 @@ def inspect_policy(run, *, require_participation=True):
                         control['packet'] == ACTION_PACKETS['wait'].wire())
                     if valid:
                         acknowledgements['cancelled:episode_boundary'] += 1
+                        participation.terminal(trial,'cancelled:episode_boundary')
                     else:
                         errors['invalid_episode_boundary_cancellation'] += 1
                     continue
@@ -265,10 +274,12 @@ def inspect_policy(run, *, require_participation=True):
                         valid = False
                     if valid:
                         acknowledgements["observed:"+trial["spec"].name] += 1
+                        participation.terminal(trial,'completed:'+trial['spec'].name)
                     else:
                         errors["unverified_provider_skill_success"] += 1
                 else:
                     acknowledgements[event["status"]] += 1
+                    participation.terminal(trial,event['status'])
     report = summary.get("async_policy")
     if report:
         for key, count in outcomes.items():
@@ -319,6 +330,7 @@ def inspect_policy(run, *, require_participation=True):
         "acknowledgements": dict(acknowledgements), "pending_provider_skills": len(pending_skills),
         "combat_outcomes": dict(combat_outcomes),
         "option_outcomes":dict(option_outcomes),
+        'participation':participation.report(),
         "input_owner_frames": dict(input_owners),
         "provider_owned_frame_fraction": input_owners.get("provider", 0)/game_frames
             if game_frames and not input_owners.get("unrecorded") else None,

@@ -17,12 +17,13 @@ from test_matches import replay_fixture
 
 
 class WorkerLifecycleTests(unittest.TestCase):
-    def exercise(self, verified_start, scenario=False):
+    def exercise(self, verified_start, menu_scene=None, *, scenario=False):
         buttons = Enum('Button',{ 'BUTTON_'+name:i for i,name in enumerate((*BUTTONS,'MAIN','C'))})
         characters = Enum('Character',{'FOX':1,'MARIO':0})
         stages = Enum('Stage',{'BATTLEFIELD':31})
-        menus = Enum('Menu',{'IN_GAME':1,'SLIPPI_ONLINE_CSS':2,'POSTGAME_SCORES':3,'CHARACTER_SELECT':4})
-        sequence = iter([(-123,False),(28800,False),(-123,True),(-122,True),(0,True),(None,True)])
+        menus = Enum('Menu',{'IN_GAME':1,'SLIPPI_ONLINE_CSS':2,'POSTGAME_SCORES':3,'CHARACTER_SELECT':4,'UNKNOWN_MENU':5})
+        sequence = iter([(-123,False),(28800,False),(-123,True),
+            *([('menu',True)] if menu_scene is not None else []),(-122,True),(0,True),(None,True)])
         if scenario:
             sequence = iter([(-123,False),(0,False),(2,False),(3,False)])
         events = []
@@ -35,6 +36,7 @@ class WorkerLifecycleTests(unittest.TestCase):
                 self.slp_version_tuple = (3,18,0)
                 self._Console__post_frame = lambda state,event:None
                 self._Console__game_start = lambda state,event:None
+                self._Console__handle_slippstream_menu_event = lambda event,state:None
             def connect(self): return True
             def stop(self): events.append('stopped')
             def step(self):
@@ -43,6 +45,9 @@ class WorkerLifecycleTests(unittest.TestCase):
                     controller.flush()
                 if frame is None:
                     return NS(frame=0,menu_state=menus.CHARACTER_SELECT)
+                if frame == 'menu':
+                    self._Console__handle_slippstream_menu_event(b'\x3e'+struct.pack('>H',menu_scene),None)
+                    return NS(frame=-123,menu_state=menus.UNKNOWN_MENU)
                 if frame == -123 and (not sudden or verified_start):
                     header = bytearray(replay_fixture()[8:8+0xf0])
                     if sudden:
@@ -141,3 +146,20 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(report['terminal_release']['last_frame'],3)
         self.assertEqual(report['terminal_release']['status'],'observed')
         self.assertEqual(rows[-1]['control']['decision']['action'],'wait')
+
+    def test_native_sudden_death_menu_preserves_segment_without_invoking_menu_helpers(self):
+        outcome,rows = self.exercise(True,0x0302)
+        self.assertEqual(outcome['status'],'matches_complete')
+        self.assertEqual(outcome['completed_matches'],1)
+        menu_rows = [r for r in rows if r['menu'] == 'UNKNOWN_MENU']
+        self.assertEqual(len(menu_rows),1)
+        self.assertEqual(menu_rows[0]['raw_menu']['scene'],0x0302)
+        self.assertNotIn('control',menu_rows[0])
+        self.assertEqual(outcome['episodes'][1]['observations'],3)
+        self.assertEqual(outcome['episodes'][1]['last_frame'],0)
+
+    def test_other_unknown_scene_still_fails_without_claiming_a_result(self):
+        outcome,rows = self.exercise(True,0x0402)
+        self.assertEqual(outcome['status'],'error')
+        self.assertEqual(outcome['failure_reason'],'unverified_sudden_death_menu')
+        self.assertEqual(outcome['completed_matches'],0)

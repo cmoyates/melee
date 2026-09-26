@@ -31,6 +31,23 @@ def record_observation(episode, current, stocks, now):
     episode['observations'] += 1
 
 
+def record_sudden_death_menu(episode, menu, now):
+    """Allow only the native VS Sudden Death scene during its verified countdown.
+
+    gm/forward.h declares GM_VS=2; gm/gmvsmode.h declares SuddenDeath=3.
+    The pinned adapter maps 0x0202 to IN_GAME but leaves 0x0302 unknown.
+    This event is not a game observation or a completed contest.
+    """
+    previous = episode.get('sudden_death_menu_events', [])
+    if (episode.get('phase') != 'sudden_death' or not menu or menu.get('scene') != 0x0302 or
+            not expected_settings(episode.get('start_settings'), phase='sudden_death') or
+            not -123 <= episode['last_frame'] < 0 or len(previous) >= 8 or
+            not 0 <= now-episode['started_monotonic'] <= 5 or
+            (previous and menu['index'] <= previous[-1]['index'])):
+        raise MatchBoundaryError('unverified_sudden_death_menu')
+    episode.setdefault('sudden_death_menu_events', []).append({**menu, 'monotonic': now})
+
+
 def completed_replay(run_dir, episode_number, phase):
     deadline = time.monotonic()+3
     while time.monotonic() < deadline:

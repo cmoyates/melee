@@ -110,6 +110,17 @@ class ObservationTests(unittest.TestCase):
         self.assertFalse(raw["available"]["hitlag_raw"])
         self.assertEqual(raw["event_bytes"], 0x26)
 
+    def test_menu_hook_preserves_parser_and_records_native_scene_identity(self):
+        calls = []
+        console = NS(_Console__post_frame=lambda state,data: None, eventsize={0x38:0x4d},
+            _Console__handle_slippstream_menu_event=lambda data,state: calls.append((data,state)))
+        tap = RawStreamTap(console)
+        for index,scene in enumerate((0x0202,0x0302,0x0002),1):
+            data = b'\x3e'+struct.pack('>H',scene)
+            console._Console__handle_slippstream_menu_event(data,'state')
+            self.assertEqual(tap.last_menu,{'scene':scene,'index':index})
+        self.assertEqual(len(calls),3)
+
 
 class InputTraceTests(unittest.TestCase):
     def test_completed_flush_is_distinct_from_queue(self):

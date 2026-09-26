@@ -70,6 +70,14 @@ class RawStreamTap:
         self.events = OrderedDict()
         self.start_index = 0
         self.settings = None
+        self.last_menu = None
+        if hasattr(console, "_Console__handle_slippstream_menu_event"):
+            menu = console._Console__handle_slippstream_menu_event
+            def menu_event(event, state):
+                menu(event, state)
+                self.last_menu = {"scene": struct.unpack_from(">H", event, 1)[0],
+                    "index": 1 if self.last_menu is None else self.last_menu["index"]+1}
+            console._Console__handle_slippstream_menu_event = menu_event
         if hasattr(console, "_Console__game_start"):
             start = console._Console__game_start
             def game_start(state, event):

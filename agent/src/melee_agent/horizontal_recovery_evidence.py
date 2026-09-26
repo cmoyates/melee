@@ -58,14 +58,17 @@ def audit_rows(rows):
                     trials.append(active)
             if active is not None and frame > active['frame']:
                 packet = row['control']['packet']
-                if packet['buttons']['X'] or packet['buttons']['Y']:
+                surface = support_surface(a['x'],a['y'],not a['airborne'])
+                returned = a['action_id'] in (252,253) or (not a['airborne'] and surface in ('ground','left','right','top'))
+                # The observation ends this recovery before its outgoing packet.
+                # A newly admitted skill may jump on that same landing frame.
+                if not returned and (packet['buttons']['X'] or packet['buttons']['Y']):
                     errors['horizontal_repeated_jump_input'] += 1
                 if active['jump_ack_frame'] is None and a['jumps'] == 0 and a['action_id'] in (27,28) and a['speed_y_self'] > 0:
                     if frame-active['frame'] > 8:
                         errors['horizontal_late_jump_ack'] += 1
                     active['jump_ack_frame'] = frame
-                surface = support_surface(a['x'],a['y'],not a['airborne'])
-                if a['action_id'] in (252,253) or (not a['airborne'] and surface in ('ground','left','right','top')):
+                if returned:
                     active.update(outcome='observed_ledge_return' if a['action_id'] in (252,253) else 'observed_stage_return',end_frame=frame)
                     active = None
                 elif a['stocks'] == 0 or a['action_id'] <= 13:

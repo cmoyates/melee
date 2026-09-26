@@ -43,6 +43,13 @@ class HorizontalRecoveryEvidenceTests(unittest.TestCase):
             self.assertIsNone(report['trials'][0]['jump_ack_frame'])
             self.assertEqual(report['sides']['right']['jump_acknowledgements'],0)
 
+    def test_landing_observation_ends_recovery_before_the_next_skill_input(self):
+        records=rows()
+        records[2]['control']['packet']=ACTION_PACKETS['jump_left'].wire()
+        report=audit_rows(records)
+        self.assertEqual(report['status'],'pass',report)
+        self.assertEqual(report['trials'][0]['outcome'],'observed_stage_return')
+
     def test_forged_admission_or_missing_fresh_input_is_rejected(self):
         for change in ('motion','bound','jump','held','packet','source'):
             records=rows()

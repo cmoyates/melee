@@ -33,3 +33,19 @@ Frames SHA-256:
 `aa0dc5a48fa2bb9dc60a16f58b8bfc93ab5042968ccbe43f19bf825c71785346`.
 All four spending journal hashes remained unchanged. This change does not
 establish complete platform navigation or playing strength.
+
+Second free match `match-e22d1b6ab4d94680970d12c14b68c256`, using the heuristic,
+completed a 0-3 loss in 409.86 seconds. All 23,720 frames replayed exactly with
+raw integrity, source, rules/result and cleanup checks passing. Twelve movement
+starts came from OttottoWait: eleven completed with independently checked
+six-unit native displacement, directional velocity and observed neutral release;
+one lost ground support and stayed aborted. Clean completions covered the left
+platform's inner/outer edges (2/3), right platform's outer/inner edges (3/1), and
+top platform's left edge (2). The top right endpoint and starts from Ottotto
+itself remain host-only. The sample contained 156 Ottotto and 263 OttottoWait
+frames. It is not a reliability or strength estimate.
+
+Second frames SHA-256:
+`2b3ae93ec93ade61a40e8fe0529ec69d52a8bdffceebe8287382dcedcadf712c`.
+Again, all four spend journals stayed unchanged. These two runs preceded the
+parent integration of the separate Sudden Death menu fix.

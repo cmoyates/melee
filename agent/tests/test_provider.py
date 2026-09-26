@@ -54,15 +54,33 @@ class ProviderTests(unittest.TestCase):
 
     def test_deadline_fires_while_transport_stalls_and_slot_stays_occupied(self):
         entered, release, ended = threading.Event(), threading.Event(), threading.Event()
+        deadlines = []
+        class ManualTimer:
+            def __init__(self, interval, callback):
+                deadlines.append(callback)
+            def start(self):
+                pass
+            def cancel(self):
+                pass
+            def join(self, timeout=None):
+                pass
+            def is_alive(self):
+                return False
         def transport(payload, timeout):
             entered.set()
-            release.wait(2)
+            release.wait(5)
             ended.set()
             return 200, {}, json.dumps(response()).encode()
         client = DecisionsClient(self.ledger, transport)
         try:
-            future = self.submit(client, .05)
-            self.assertTrue(entered.wait(1))
+            # A 50 ms real deadline can expire during ledger fsync or thread
+            # startup on CI, before this test's stalled-transport precondition.
+            # Trigger the same deadline callback after observing entry instead.
+            with patch("melee_agent.provider.threading.Timer", ManualTimer):
+                future = self.submit(client, 10)
+            self.assertTrue(entered.wait(3))
+            self.assertFalse(future.done())
+            deadlines[0]()
             with self.assertRaisesRegex(ProviderError, "deadline_exceeded"):
                 future.result(timeout=.5)
             with self.assertRaisesRegex(ProviderError, "in_flight_limit"):

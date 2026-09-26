@@ -154,6 +154,7 @@ class ScenarioPolicy:
         self.combat_crossing = False
         self.crossing_started = None
         self.crossing_airborne = False
+        self.combat_recentering = False
 
     @property
     def complete(self):
@@ -257,6 +258,17 @@ class ScenarioPolicy:
         if not a.grounded:
             return "left" if a.x > 0 else "right"
         toward, away = ("slow_right", "slow_left") if direction > 0 else ("slow_left", "slow_right")
+        if distance <= 0 and direction*a.x <= -35:
+            self.combat_recentering = True
+        if self.combat_recentering:
+            self.setup_phase = "recenter_for_crossing"
+            if distance > 0 or (direction*a.x > -35 and abs(b.x-a.x) < 18):
+                self.combat_recentering = False
+                return "wait"
+            # Leave room to cross on the next opportunity. Hold the interior
+            # position until the opponent approaches instead of chasing back
+            # into the same edge geometry. The ordinary setup deadline remains.
+            return toward_air if direction*a.x < -15 else "wait"
         if (distance <= 0 and abs(b.x-a.x) < 18 and 14 <= a.details.action_id <= 23 and
                 not a.details.input_jump_held and abs(a.x-20*direction) < 55):
             self.combat_crossing = True

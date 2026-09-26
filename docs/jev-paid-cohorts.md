@@ -89,6 +89,10 @@ $0.151733714, including $0.020 uncertain across eight requests. Four ancestor
 journals stayed unchanged after the intentional continuation seal. Private
 replay: `incident-546722d9df8b455cb1ae7d9d0b954831`. Packet SHA-256:
 `0686f0fc00572ebb8e8a8512fec1839e4795a1022283658eafc11c294371c698`.
-Only the first of thirty scheduled matches is complete at this checkpoint;
-the two free slots of the first round are running next. The ten-per-policy
-J19 gate and the separate J20 tournament remain incomplete.
+The subsequent random and heuristic slots both completed 0-3 losses. Their
+21,308 and 17,778 game frames replayed exactly, all native audits passed, and
+each retained an unchanged before/after ledger checkpoint with zero reservations.
+A separate inspection reverified the full first round: 55,916 game frames
+across three matches, with all five spend journals unchanged during the free
+slots. The cohort then continued under its original bounds. The ten-per-policy
+J19 gate and the separate J20 tournament remain incomplete at this checkpoint.

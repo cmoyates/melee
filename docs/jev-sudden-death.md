@@ -52,4 +52,17 @@ releases the controller. It can exercise natural timeouts without changing
 CPU level, match rules, game memory, assets or saves. It is not a playing
 strength baseline and does not guarantee that the CPU will leave Fox alive
 until time expires. The usual owned-process, deadline and recording limits
-apply. Live full-transition validation is pending.
+apply.
+
+The first live neutral probe, `match-5b8b45a66daa457b9aec9c051a8ab3c0`,
+completed an ordinary regulation match: Fox lost 0-4 before time expired.
+All 9,386 gameplay observations passed raw integrity and exact packet replay;
+the new native GameStart settings, final result, completion count and cleanup
+were verified. It did not exercise Sudden Death. Frame SHA-256:
+`23ee4e936de0094520d465731b400c7bd33391f4657d816a56a4bdc971799ff3`;
+packet SHA-256: `12f1d5bef97a96388677c4483c90b2e9c9ff24aaf94ada8e6aff2a58eafc82fe`.
+No provider was contacted. Live full-transition validation remains pending.
+
+Agent-offline and native-build CI pass. Repository editorconfig checking still
+reports 190 existing errors outside agent/docs; clang-format was cancelled by
+that job failure, rather than reporting a new formatting error in this slice.

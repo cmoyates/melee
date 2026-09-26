@@ -63,6 +63,7 @@ def main(argv=None):
     corpus_build.add_argument("--split-by", choices=("episode",), default="episode")
     corpus_build.add_argument("--maximum-states", type=int, default=5000)
     corpus_build.add_argument("--source-limit", type=int, default=12)
+    corpus_build.add_argument('--profile',choices=('grounded-tactical-v1','approach-jab-v1'),default='grounded-tactical-v1')
     corpus_verify = corpus_commands.add_parser("validate", aliases=["verify"])
     corpus_verify.add_argument("corpus_id")
     corpus_evaluate = corpus_commands.add_parser("evaluate", help="Explicit paid frozen-state Decisions evaluation; no emulator")
@@ -111,7 +112,7 @@ def main(argv=None):
                 from .corpus_evaluation import evaluate_corpus
                 report = evaluate_corpus(root, args.corpus_id, args.budget, args.max_requests)
             else:
-                report = (build_corpus(root, args.maximum_states, args.source_limit) if args.corpus_command == "build"
+                report = (build_corpus(root, args.maximum_states, args.source_limit,profile=args.profile) if args.corpus_command == "build"
                     else validate_corpus(root, args.corpus_id))
             print(json.dumps(report, allow_nan=False))
             return 1 if args.corpus_command == "evaluate" and report["status"] != "completed" else 0

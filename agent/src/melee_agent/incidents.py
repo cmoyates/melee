@@ -16,9 +16,9 @@ from .async_policy import AsyncPolicy, Delivery, Reply, RequestContext
 from .config import load_config, owned_path
 from .doctor import STOCK_DISC_SHA1
 from .engine import BUTTONS, Decision, FrameExecutor, Observation, Packet
+from .trace_limits import MAX_PREFIX_BYTES, MAX_SOURCE_BYTES
 
 CONTRACT_MODULES = ("engine.py", "skills.py", "ground_combat.py", "aerial.py", "stage.py", "rules.py", "async_policy.py", "fox_reflex.py", "provider.py", "live_provider.py", "semantic.py", "native_motions.py")
-MAX_PREFIX_BYTES = 134_217_728
 MAX_RECORDS = 40_000
 LIBMELEE_COMMIT = "bce21f09984b286e6d36bfd2939e4cd4691f94c2"
 
@@ -80,9 +80,12 @@ def validate_packet(value):
 
 def stream_records(path, limit=MAX_PREFIX_BYTES):
     with open_regular(path, limit) as handle:
-        count = 0
+        count = size = 0
         while line := handle.readline(65537):
             count += 1
+            size += len(line)
+            if size > limit:
+                raise IncidentError("incident_source_byte_limit")
             if len(line) > 65536 or not line.endswith(b"\n") or count > MAX_RECORDS + 10000:
                 raise IncidentError("truncated_or_oversized_incident_record")
             yield line, decode(line)
@@ -123,7 +126,7 @@ def export_incident(root, run, *, episode=1, frame=None, request_id=None, after_
     source_digest = hashlib.sha256()
     # The completed run remains private. Hash all history before extracting a
     # prefix, including menu records, so a concurrent edit cannot pass unnoticed.
-    for line, row in stream_records(trace, 268_435_456):
+    for line, row in stream_records(trace, MAX_SOURCE_BYTES):
         source_digest.update(line)
         if row["menu"] != "IN_GAME":
             continue
@@ -145,7 +148,7 @@ def export_incident(root, run, *, episode=1, frame=None, request_id=None, after_
     digest = hashlib.sha256()
     end = (focus["episode"], focus["frame"]+after_frames)
     with (folder / "prefix.jsonl").open("xb") as output:
-        for _, row in stream_records(trace, 268_435_456):
+        for _, row in stream_records(trace, MAX_SOURCE_BYTES):
             if row["menu"] != "IN_GAME":
                 continue
             identity = (row["episode"], row["frame"])

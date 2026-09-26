@@ -110,7 +110,9 @@ rtk proxy uv run --project agent --no-sync --env-file agent/.env melee-agent cor
 
 The paid command evaluates frozen states without launching a game. It reports
 model answers and usage, not gameplay success or correct labels. Corpus rows
-and raw captures remain ignored. See the [semantic-state contract](../docs/jev-semantic-state.md)
+and raw captures remain ignored. For long semantic captures, see the
+[bounded full-match recording profile](../docs/jev-full-match-recordings.md).
+See the [semantic-state contract](../docs/jev-semantic-state.md)
 for provenance, source hashes, split boundaries and measured acceptance limits.
 
 ## Doctor contract

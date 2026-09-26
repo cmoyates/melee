@@ -18,6 +18,7 @@ from .matches import locate_run
 from .provider import DecisionsClient, MODEL_ALIAS, OpenRouterTransport, ProviderError
 from .semantic import CompactObservation, canonical
 from .source_states import captured_observation
+from .trace_limits import MAX_SOURCE_BYTES
 
 CRITERIA = {**DESCRIPTIONS,
     "jab": "Perform one quick grounded jab at the nearby opponent, then release inputs.",
@@ -62,7 +63,7 @@ def evaluate_corpus(root, corpus_id, budget_directory, max_requests, *, transpor
     wanted = {(r["source"]["run_id"], r["source"]["episode"], r["source"]["frame"]): r for r in selected}
     observations = {}
     for run_id in dict.fromkeys(key[0] for key in wanted):
-        for _, row in stream_records(locate_run(root, run_id)/"frames.jsonl", 268435456):
+        for _, row in stream_records(locate_run(root, run_id)/"frames.jsonl", MAX_SOURCE_BYTES):
             key = (run_id, row.get("episode"), row.get("frame"))
             if key in wanted and row.get("menu") == "IN_GAME":
                 observations[key] = captured_observation(row)

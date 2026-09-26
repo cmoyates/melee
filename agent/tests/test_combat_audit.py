@@ -84,3 +84,20 @@ class CombatAuditTests(unittest.TestCase):
         for row in trials:
             row["combat"]["capture_observed"] = False
         self.assertFalse(combat_acceptance(trials, 20)["passed"])
+
+    def test_missing_claimed_acknowledgement_fails_even_when_interrupted(self):
+        report, rows = evidence()
+        report['result']['status'] = 'skill_failed'
+        report['skill']['event']['combat']['ack_frame'] = 99
+        rows[-1]['scenario']['skill'] = deepcopy(report['skill'])
+        result, errors = self.audit('jab', report, rows)
+        self.assertFalse(result['motion_acknowledged'])
+        self.assertIn('combat_acknowledgement_frame_missing', errors)
+
+    def test_duplicate_contacts_cannot_inflate_evidence_counts(self):
+        report, rows = evidence()
+        report['skill']['event']['combat']['contact_frames'] = [2, 2]
+        rows[-1]['scenario']['skill'] = deepcopy(report['skill'])
+        result, errors = self.audit('jab', report, rows)
+        self.assertEqual(result['contact_events'], 0)
+        self.assertIn('combat_contact_frame_order', errors)

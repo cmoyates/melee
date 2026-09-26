@@ -5,8 +5,9 @@ and a future Showboat Captain Falcon. Existing Showboat remains a separate
 historical implementation and baseline.
 
 The workspace includes supervised Battlefield matches, frame/replay recording,
-local recovery and combat skills, and bounded asynchronous Jev movement/defense
-control through OpenRouter. The complete tactical player and personality control
+local recovery and combat skills, and bounded asynchronous Jev choices through
+OpenRouter. Grounded tactical integration is experimental; see its
+[acceptance contract](../docs/jev-grounded-tactics.md). The complete player and personality control
 remain later slices. The scripted policy is a temporary controller test.
 
 ## Setup
@@ -510,7 +511,7 @@ paid work after that experiment ends. A run cap never resets the shared ledger.
 The explicit Jev policy uses the same mailbox, arbiter, fallback, emergency
 behavior and one-second/60-frame freshness gates as the delayed fake. Only the
 backend changes: one in-flight Decisions request at most, no retries, one
-question, at most five described skills and a one-second response deadline.
+question, at most eight described skills and a one-second response deadline.
 The budget reservation and HTTP call run entirely outside the input thread.
 
 The 150-second capture leaves room for setup plus at least two continuous
@@ -527,6 +528,14 @@ acknowledgements, reports input ownership/fallback participation, and exposes
 three-skill-class tracer-bullet criteria. The general audit can pass with fewer
 opportunities, so consult that separate field when certifying J11. Confidence
 values are retained as model output, not interpreted as win probabilities.
+
+The grounded tactical slice adds locally legal jab, down-tilt and grab choices.
+Its `combat_outcomes` audit separates raw native starts, clean completions,
+damage-contact indicators and actual captures, including interrupted skills.
+For an actual match result rather than a time-bounded capture, `match` also
+accepts `--policy jev --budget EXISTING_DIRECTORY --max-requests N`; the same
+explicit provider limits apply. Live combat acceptance remains separate from
+the historical movement-only pilots and is recorded in the linked contract.
 
 ## Runtime failure soak
 

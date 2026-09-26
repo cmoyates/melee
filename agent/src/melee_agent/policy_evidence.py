@@ -6,11 +6,14 @@ import json
 import math
 
 from .engine import Observation
+from .async_policy import LABELS
+from .combat_evidence import audit_combat_trace
+from .ground_combat import COMBAT
 from .skills import can_start, relative_skill
 from .stage import support_surface
 
 
-def check_acknowledgement(trial, event, row, sources):
+def check_acknowledgement(trial, event, row, sources, combat=None):
     """Require raw motion evidence and observed release for an accepted skill."""
     source = sources.get((trial["episode"], trial["frame"]))
     ack = sources.get((trial["episode"], event.get("ack_frame")))
@@ -27,6 +30,8 @@ def check_acknowledgement(trial, event, row, sources):
     packet = old_row["control"]["packet"]
     if (event["skill"], event["direction"]) != (spec.name, spec.direction):
         return False
+    if spec.name in COMBAT:
+        return combat is not None and combat["completed"]
     if spec.name == "move":
         return (not raw["airborne"] and (raw["x"]-old["x"])*spec.direction >= 6 and
             raw["speed_ground_x_self"]*spec.direction > 0 and packet["main"][0] == (1 if spec.direction > 0 else 0))
@@ -62,6 +67,7 @@ def inspect_policy(run, *, require_participation=True):
     launch = json.loads((run / "launch.json").read_text())
     errors, outcomes, faults = Counter(), Counter(), Counter()
     acknowledgements, input_owners = Counter(), Counter()
+    combat_outcomes = Counter()
     pending_skills, consumed = {}, {}
     sources = OrderedDict()
     queued_ms, flushed_ms, delays_ms, applied_ms, gaps_ms = [], [], [], [], []
@@ -136,7 +142,7 @@ def inspect_policy(run, *, require_participation=True):
                     0 <= event["apply_ns"]-c["observed_ns"] <= 1_000_000_000, "accepted_stale_time")
                 check(c["skill_generation"] == event["generation_before"], "accepted_wrong_generation")
                 check(not event["committed_before"] and not event["emergency"], "accepted_during_commitment_or_emergency")
-                check(reply["action"] in candidates, "accepted_invalid_candidate")
+                check(reply["action"] in candidates and reply["action"] in LABELS, "accepted_invalid_candidate")
                 confidence = (reply.get("metadata") or {}).get("confidence")
                 check(confidence is None or confidence >= .15, "accepted_low_confidence")
                 actual_hash = hashlib.sha256(json.dumps(candidates, separators=(",", ":")).encode()).hexdigest()
@@ -185,9 +191,33 @@ def inspect_policy(run, *, require_participation=True):
                 trial = pending_skills.pop(event["generation"], None)
                 if trial is None:
                     continue
+                combat = None
+                if trial["spec"].name in COMBAT:
+                    history = [value[2] for (episode, frame), value in sources.items()
+                        if episode == trial["episode"] and trial["frame"] <= frame <= observation.frame]
+                    combat = audit_combat_trace(trial["spec"].name, event.get("combat"), history, errors,
+                        completed=event["status"] == "succeeded")
+                    details = event.get("combat") or {}
+                    if not isinstance(details, dict):
+                        details = {}
+                        errors["combat_event_schema"] += 1
+                    if (event.get("source_frame") != trial["frame"] or
+                            details.get("source_frame") != trial["frame"] or
+                            details.get("ack_frame") != event.get("ack_frame") or
+                            event.get("episode") != trial["episode"] or
+                            (event.get("skill"), event.get("direction")) != (trial["spec"].name, trial["spec"].direction) or
+                            (details.get("skill"), details.get("direction")) != (trial["spec"].name, trial["spec"].direction) or
+                            details.get("end_frame") != observation.frame or
+                            details.get("press_frame") not in (None, trial["frame"])):
+                        errors["combat_event_identity_mismatch"] += 1
+                    name = trial["spec"].name
+                    combat_outcomes["motion_started:"+name] += int(combat["motion_acknowledged"])
+                    combat_outcomes["completed:"+name] += int(combat["completed"])
+                    combat_outcomes["contacts:"+name] += combat["contact_events"]
+                    combat_outcomes["captures:"+name] += int(combat["capture_observed"])
                 if event["status"] == "succeeded":
                     try:
-                        valid = check_acknowledgement(trial, event, row, sources)
+                        valid = check_acknowledgement(trial, event, row, sources, combat)
                     except (KeyError, TypeError, ValueError):
                         valid = False
                     if valid:
@@ -243,6 +273,7 @@ def inspect_policy(run, *, require_participation=True):
         "supplemental_records": int(summary.get("last_unrecorded_record") is not None),
         "outcomes": dict(outcomes), "injected_faults": dict(faults), "reordered_deliveries": reordered,
         "acknowledgements": dict(acknowledgements), "pending_provider_skills": len(pending_skills),
+        "combat_outcomes": dict(combat_outcomes),
         "input_owner_frames": dict(input_owners),
         "provider_owned_frame_fraction": input_owners.get("provider", 0)/game_frames
             if game_frames and not input_owners.get("unrecorded") else None,

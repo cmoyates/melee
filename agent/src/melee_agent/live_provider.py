@@ -21,11 +21,14 @@ DESCRIPTIONS = {
     "retreat": "Move a short safe distance away from the opponent on the current support surface.",
     "jump": "Perform a vertical ground jump, releasing jump after observed takeoff.",
     "shield": "Raise shield, hold briefly after it is observed, then release all inputs.",
+    "jab": "Perform one quick grounded jab at the nearby opponent, then release inputs.",
+    "dtilt": "Perform one grounded down tilt at the nearby opponent, then release inputs.",
+    "grab": "Attempt one grounded grab of the nearby opponent; no automatic throw is included.",
 }
 INSTRUCTIONS = ("Control Fox against a level 3 Mario CPU on Battlefield. Choose the most useful available skill "
-    "for the observed situation. Shield against a nearby grounded threat, reposition when spacing is poor, "
-    "and consider jumping to change vertical spacing. Neutral is available when waiting is useful. "
-    "These are bounded local skills, not attacks. The local executor handles emergencies and legality. "
+    "to take stocks while preserving Fox's stocks. Use the locally computed spacing, stock comparison and legal "
+    "candidates. Attack or grab when useful; reposition, shield, jump or wait when appropriate. "
+    "Each choice commits to one bounded skill. Local code owns timing, interruption, recovery and legality. "
     "Choose exactly one provided label and return its complete probability distribution.")
 
 

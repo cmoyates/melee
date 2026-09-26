@@ -12,7 +12,7 @@ from .semantic import SemanticHistory, compact_observation
 from .skills import SkillArbiter, can_start, inhibited, relative_skill
 from .stage import support_surface
 
-LABELS = ("neutral", "approach", "retreat", "jump", "shield")
+LABELS = ("neutral", "approach", "retreat", "jump", "shield", "jab", "dtilt", "grab")
 MAX_AGE_NS = 1_000_000_000
 MAX_FRAME_AGE = 60
 MIN_CONFIDENCE = .15

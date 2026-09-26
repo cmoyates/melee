@@ -16,9 +16,11 @@ def main(argv=None):
     doctor.add_argument("--config", type=Path, help="Workspace-relative local TOML (default agent/local.toml)")
     doctor.add_argument("--require", choices=("all", "offline", "host_tests", "decomp", "live", "provider"), default="all")
     match = commands.add_parser("match", help="Run supervised Fox versus Mario CPU 3 on Battlefield")
-    match.add_argument("--policy", choices=("scripted", "smoke", "input-probe", "heuristic", "random-legal"), default="scripted")
+    match.add_argument("--policy", choices=("scripted", "smoke", "input-probe", "heuristic", "random-legal", "delayed-fake", "jev"), default="scripted")
     match.add_argument("--duration", type=int, default=120, help="Hard wall-clock limit including setup")
     match.add_argument("--episodes", type=int, default=1)
+    match.add_argument("--budget", help="Existing shared budget directory; required for jev")
+    match.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
     capture = commands.add_parser("capture", help="Capture until a wall-clock deadline, retaining partial final match")
     capture.add_argument("--duration", type=int, default=600)
     capture.add_argument("--policy", choices=("scripted", "smoke", "delayed-fake", "jev", "faults", "heuristic", "random-legal"), default="scripted")
@@ -185,7 +187,8 @@ def main(argv=None):
             return 1
     if args.command == "match":
         from .matches import launch
-        return launch(root, args.duration, args.episodes, args.policy)
+        return launch(root, args.duration, args.episodes, args.policy,
+            budget_directory=args.budget, max_requests=args.max_requests)
     if args.command == "capture":
         from .matches import launch
         return launch(root, args.duration, 100, args.policy, capture=True,

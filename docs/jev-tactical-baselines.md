@@ -41,6 +41,31 @@ historical observations is not a counterfactual simulation.
 Host tests cover candidate parity for both directions, spacing, shielding and
 invulnerability; the random selector can choose every legal tactic and retains
 its seed; commitment/hitlag and damage preemption still use the shared executor.
-Historical baseline selections and trace shape are preserved. Live matches for
-the two new modes remain pending. This preparation does not satisfy the
-ten-full-matches-per-policy acceptance of #21 or claim any playing advantage.
+Historical baseline selections and trace shape are preserved. All 305 host
+tests pass, including local replay and corruption/source-identity checks.
+
+## First complete live matches
+
+Both profiles completed one unattended Fox versus Mario CPU 3 match on
+Battlefield with four stocks and the eight-minute timer. Actual result events
+and replay winners agreed; input/frame integrity, rules and owned-process
+cleanup passed. Both runs used seed zero and made no provider calls.
+
+| Profile | Run | Final stocks (Fox/Mario) | Replayed frames | Selections |
+| --- | --- | ---: | ---: | ---: |
+| Random tactical | `match-7f4fbf4e2a29477eaa574c96ff359daa` | 0 / 3 | 18,097 | 259 |
+| Heuristic tactical | `match-d699d1c9360e467ea66a97687217b724` | 0 / 4 | 16,712 | 242 |
+
+The reusable policy audit reproduced every recorded decision, packet,
+selection/reflex trace and final summary with the launch sources unchanged.
+Random frame SHA-256:
+`b645b5d1b45f9600e9afba2dbc41b753c4299b6accafcedde24bce2bc81569d4`.
+Heuristic frame SHA-256:
+`4980ecba750c03e989332bb3143f9563775f1741ef62adaf4d92e14fed995a89`.
+Private reports are retained as `RUN_ID-full-local-audit.json` in
+`build/jev/continuation-20260926/`; the CLI can reproduce the policy and raw
+integrity checks from each run directory on its matching checkout.
+
+One match per profile is a tracer bullet, not a win-rate comparison or the
+ten-full-matches-per-policy acceptance of #21. These runs did not exercise
+Sudden Death; the separately reproduced lifecycle gap remains tracked in #60.

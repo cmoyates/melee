@@ -47,6 +47,10 @@ def inspect_scenario(run):
             not summary.get("replays") or any(not expected_settings(replay.get("settings")) for replay in summary["replays"])):
         errors["run_or_cleanup_invalid"] += 1
     start = report.get("measurement_start_frame")
+    result = report.get("result") or {}
+    release = report.get("terminal_release")
+    end = None
+    release_rows = []
     first = last = prior = None
     measured = []
     boundary = None
@@ -61,6 +65,12 @@ def inspect_scenario(run):
             trace = row["scenario"]
             first = first or row
             last = row
+            at_end = (observation.episode, observation.frame) == (result.get("end_episode"), result.get("end_frame"))
+            if at_end:
+                end = row
+            after_end = end is not None and not at_end
+            if after_end:
+                release_rows.append(row)
             for port, fighter in (("1", observation.bot), ("2", observation.opponent)):
                 raw = row["raw_observation"]["players"][port]["raw_post"]
                 fields = ((fighter.x, raw["x"]), (fighter.y, raw["y"]),
@@ -76,7 +86,7 @@ def inspect_scenario(run):
             if start is None or row["frame"] < start:
                 if trace["input_owner"] not in ("setup", "neutral"):
                     errors["measured_input_before_setup"] += 1
-            else:
+            elif not after_end:
                 if trace["input_owner"] == "setup":
                     errors["setup_input_after_measurement"] += 1
                 measured.append(row)
@@ -90,9 +100,14 @@ def inspect_scenario(run):
                     if not neutral or prior is None or prior["control"]["decision"]["action"] != "wait":
                         errors["setup_release_not_observed"] += 1
             prior = row
-    result = report.get("result") or {}
-    if last is None or last["frame"] != result.get("end_frame") or last["control"]["observation"] != result.get("end_observation"):
+    if end is None or end["control"]["observation"] != result.get("end_observation"):
         errors["end_state_mismatch"] += 1
+    if release is not None:
+        audit_terminal_release(end, release_rows, release, errors)
+    elif "terminal_release" in report:
+        errors["terminal_release_evidence_invalid"] += 1
+    elif release_rows:
+        errors["unreported_terminal_frames"] += 1
     if start is not None and boundary is None:
         errors["measurement_boundary_missing"] += 1
     if len(measured) != result.get("measured_frames"):
@@ -126,6 +141,7 @@ def inspect_scenario(run):
         "initial_observation_sha256": None if boundary is None else hashlib.sha256(json.dumps(report["initial_observation"], sort_keys=True).encode()).hexdigest(),
         "setup_stopped_frame": report.get("setup_stopped_frame"), "measurement_start_frame": start,
         "measured_frames": len(measured), "frames_sha256": digest.hexdigest(),
+        "terminal_release": release,
         "summary_sha256": hashlib.sha256((run / "summary.json").read_bytes()).hexdigest(),
         "game_frames": integrity["game_records"], "artifact_bytes": artifact_bytes(run),
         **({"combat": combat_evidence} if combat_evidence is not None else {}),
@@ -133,6 +149,56 @@ def inspect_scenario(run):
         **({"option": option_evidence} if option_evidence is not None else {}),
         "artifacts": {"frames": "build/jev/runs/"+launch["run_id"]+"/frames.jsonl",
             "summary": "build/jev/runs/"+launch["run_id"]+"/summary.json"}}
+
+
+def audit_terminal_release(end, rows, report, errors):
+    """Independently check release-only observations without extending the skill."""
+    def neutral(packet):
+        return (not any(packet["buttons"].values()) and max(packet["l"], packet["r"]) <= .025 and
+            all(abs(value-.5) <= .025 for key in ("main", "c") for value in packet[key]))
+    try:
+        if end is None or not rows or len(rows) > 8:
+            raise ValueError("missing or excessive release observations")
+        initial = end["control"]["observation"]
+        if end["scenario"].get("terminal_release") != {"status":"awaiting", "limit_frames":8,
+                "command_frame":initial["frame"], "last_frame":initial["frame"], "observations":0}:
+            errors["terminal_release_trace_mismatch"] += 1
+        previous = initial["frame"]
+        expected_status = "awaiting"
+        for index, row in enumerate([end, *rows]):
+            control = row["control"]
+            trace = row["scenario"]
+            if (control["decision"]["action"] != "wait" or not neutral(control["packet"]) or
+                    trace["input_owner"] != "neutral"):
+                errors["terminal_release_command_invalid"] += 1
+            if not index:
+                continue
+            if expected_status != "awaiting":
+                errors["terminal_release_extra_frames"] += 1
+            observation = control["observation"]
+            same_life = (observation["episode"] == initial["episode"] and
+                observation["bot"]["details"]["life_generation_derived"] == initial["bot"]["details"]["life_generation_derived"])
+            observed = neutral(row["input_provenance"]["observed"])
+            if observation["bot"]["details"]["input_neutral_derived"] != observed:
+                errors["terminal_release_observation_mismatch"] += 1
+            if not same_life or observation["frame"] != previous+1:
+                expected_status = "discontinuity"
+            elif observed:
+                expected_status = "observed"
+            elif index == 8:
+                expected_status = "timeout"
+            previous = observation["frame"]
+            expected = {"status": expected_status, "limit_frames": 8,
+                "command_frame": initial["frame"], "last_frame": previous, "observations": index}
+            if (trace.get("terminal_release") != expected or trace.get("result") != end["scenario"].get("result") or
+                    trace.get("skill") != end["scenario"].get("skill")):
+                errors["terminal_release_trace_mismatch"] += 1
+        if report != expected:
+            errors["terminal_release_report_mismatch"] += 1
+        if expected_status != "observed":
+            errors["terminal_release_not_observed"] += 1
+    except (KeyError, TypeError, ValueError, IndexError):
+        errors["terminal_release_evidence_invalid"] += 1
 
 
 def audit_combat(spec, report, rows, errors):

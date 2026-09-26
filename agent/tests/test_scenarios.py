@@ -16,6 +16,42 @@ def position(frame=0, x=-35., y=0., grounded=True, jumps=2, **details):
 
 
 class ScenarioTests(unittest.TestCase):
+    def test_interrupted_trial_freezes_result_until_release_is_observed(self):
+        policy = ScenarioPolicy(find_scenario('offstage-left'))
+        policy.decide(position(x=-72., y=-1., grounded=False, jumps=1, action_id=29))
+        policy.decide(position(1, x=-72., y=-1., grounded=False, jumps=1, action_id=29,
+            hitlag_frames_derived=3, input_neutral_derived=False))
+        result = dict(policy.result)
+        self.assertTrue(policy.complete)
+        self.assertFalse(policy.ready_to_stop)
+        self.assertEqual(policy.decide(position(2,input_neutral_derived=False)).action,'wait')
+        self.assertFalse(policy.ready_to_stop)
+        self.assertEqual(policy.decide(position(3)).action,'wait')
+        self.assertTrue(policy.ready_to_stop)
+        self.assertEqual(policy.terminal_release['status'],'observed')
+        self.assertEqual(policy.result,result)
+        self.assertEqual(policy.result['end_frame'],1)
+
+    def test_terminal_release_deadline_and_continuity_failures_do_not_claim_observation(self):
+        for kind in ('timeout','frame_gap','life','episode'):
+            policy = ScenarioPolicy(find_scenario('offstage-left'))
+            policy.decide(position(x=-72., y=-1., grounded=False, jumps=1, action_id=29))
+            policy.decide(position(1))
+            original = dict(policy.result)
+            if kind == 'timeout':
+                for frame in range(2,10):
+                    policy.decide(position(frame,input_neutral_derived=False))
+                self.assertEqual(policy.terminal_release['status'],'timeout')
+            else:
+                sample = position(3 if kind == 'frame_gap' else 2,
+                    life_generation_derived=2 if kind == 'life' else 1)
+                if kind == 'episode':
+                    sample = replace(sample,episode=2)
+                policy.decide(sample)
+                self.assertEqual(policy.terminal_release['status'],'discontinuity')
+            self.assertTrue(policy.ready_to_stop)
+            self.assertEqual(policy.result,original)
+
     def test_combat_crossing_releases_jump_then_neutralizes_before_measurement(self):
         policy = ScenarioPolicy(find_scenario("grab-left"))
         def opponent(observation):

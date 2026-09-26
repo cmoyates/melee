@@ -17,13 +17,15 @@ from test_matches import replay_fixture
 
 
 class WorkerLifecycleTests(unittest.TestCase):
-    def exercise(self, verified_start, menu_scene=None):
+    def exercise(self, verified_start, menu_scene=None, *, scenario=False):
         buttons = Enum('Button',{ 'BUTTON_'+name:i for i,name in enumerate((*BUTTONS,'MAIN','C'))})
         characters = Enum('Character',{'FOX':1,'MARIO':0})
         stages = Enum('Stage',{'BATTLEFIELD':31})
         menus = Enum('Menu',{'IN_GAME':1,'SLIPPI_ONLINE_CSS':2,'POSTGAME_SCORES':3,'CHARACTER_SELECT':4,'UNKNOWN_MENU':5})
         sequence = iter([(-123,False),(28800,False),(-123,True),
             *([('menu',True)] if menu_scene is not None else []),(-122,True),(0,True),(None,True)])
+        if scenario:
+            sequence = iter([(-123,False),(0,False),(2,False),(3,False)])
         events = []
 
         class Console:
@@ -86,7 +88,8 @@ class WorkerLifecycleTests(unittest.TestCase):
 
         run = Path(tempfile.mkdtemp(prefix='jev-worker-lifecycle-'))
         (run/'launch.json').write_text(json.dumps({'runtime':'fixture','port':51441,'run_id':'fixture',
-            'policy':'scripted','max_frame_bytes':1000000,'episodes':1}))
+            'policy':'scenario' if scenario else 'scripted','scenario_name':'offstage-left',
+            'max_frame_bytes':1000000,'episodes':1}))
         fake = NS(Console=Console,Controller=Controller,Button=buttons,MenuHelper=lambda:None,
             Menu=menus,Character=characters,Stage=stages)
         previous = {s:signal.getsignal(s) for s in (signal.SIGINT,signal.SIGTERM)}
@@ -131,6 +134,18 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(outcome['episodes'][0]['observations'],2)
         self.assertEqual(outcome['episodes'][0]['last_frame'],28800)
         self.assertEqual(outcome['episodes'][0]['rollbacks'],0)
+
+    def test_worker_records_release_observation_after_the_scenario_result(self):
+        outcome,rows = self.exercise(True,scenario=True)
+        self.assertEqual(outcome['status'],'scenario_complete')
+        self.assertEqual([r['frame'] for r in rows],[-123,0,2,3])
+        report = outcome['scenario']
+        self.assertEqual(report['result']['status'],'setup_failed')
+        self.assertEqual(report['result']['reason'],'observation_discontinuity')
+        self.assertEqual(report['result']['end_frame'],2)
+        self.assertEqual(report['terminal_release']['last_frame'],3)
+        self.assertEqual(report['terminal_release']['status'],'observed')
+        self.assertEqual(rows[-1]['control']['decision']['action'],'wait')
 
     def test_native_sudden_death_menu_preserves_segment_without_invoking_menu_helpers(self):
         outcome,rows = self.exercise(True,0x0302)

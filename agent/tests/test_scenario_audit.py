@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from copy import deepcopy
 import json
 from pathlib import Path
 import tempfile
@@ -54,6 +55,43 @@ class ScenarioAuditTests(unittest.TestCase):
         self.assertEqual(self.audit()["status"], "pass")
         self.rows[0]["control"]["decision"]["action"] = "left"
         self.assertIn("setup_release_not_observed", self.audit()["errors"])
+
+    def add_release(self):
+        self.rows[-1]['scenario']['terminal_release'] = {'status':'awaiting','limit_frames':8,
+            'command_frame':2,'last_frame':2,'observations':0}
+        row = deepcopy(self.rows[-1])
+        row['frame'] = row['control']['decision']['frame'] = 3
+        row['control']['observation'] = asdict(position(3,x=-28.))
+        release = {'status':'observed','limit_frames':8,'command_frame':2,'last_frame':3,'observations':1}
+        row['scenario']['terminal_release'] = release
+        self.summary['scenario']['terminal_release'] = deepcopy(release)
+        self.rows.append(row)
+
+    def test_release_tail_is_separate_from_frozen_motion_outcome_and_measured_frames(self):
+        self.add_release()
+        audit = self.audit()
+        self.assertEqual(audit['status'],'pass',audit)
+        self.assertEqual(audit['measured_frames'],3)
+        self.assertEqual(self.summary['scenario']['result']['end_frame'],2)
+        self.rows[-1]['scenario']['skill'] = {'event':{'status':'succeeded'}}
+        self.assertIn('terminal_release_trace_mismatch',self.audit()['errors'])
+
+    def test_a_release_command_or_forged_report_cannot_replace_observed_neutral(self):
+        self.add_release()
+        self.rows[-1]['input_provenance']['observed'] = ACTION_PACKETS['right'].wire()
+        errors = self.audit()['errors']
+        self.assertIn('terminal_release_observation_mismatch',errors)
+        self.assertIn('terminal_release_not_observed',errors)
+        self.rows[-1]['input_provenance']['observed'] = ACTION_PACKETS['wait'].wire()
+        self.summary['scenario']['terminal_release']['last_frame'] = 99
+        self.assertIn('terminal_release_report_mismatch',self.audit()['errors'])
+
+    def test_unreported_tail_and_extra_frames_after_release_are_rejected(self):
+        self.add_release()
+        self.rows.append(deepcopy(self.rows[-1]))
+        self.assertIn('terminal_release_extra_frames',self.audit()['errors'])
+        self.summary['scenario'].pop('terminal_release')
+        self.assertIn('unreported_terminal_frames',self.audit()['errors'])
 
     def test_matching_report_does_not_hide_changed_raw_position(self):
         self.rows[1]["raw_observation"]["players"]["1"]["raw_post"]["x"] = -42.

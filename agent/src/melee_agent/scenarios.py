@@ -161,6 +161,7 @@ class ScenarioPolicy:
         self.probe = ScriptedPolicy()
         self.reflex = FoxReflex() if spec.measured_policy == "fox-reflex-v1" else None
         self.result = None
+        self.terminal_release = None
         self.last_action = "wait"
         self.combat_crossing = False
         self.crossing_started = None
@@ -170,6 +171,27 @@ class ScenarioPolicy:
     @property
     def complete(self):
         return self.result is not None
+
+    @property
+    def ready_to_stop(self):
+        return self.complete and self.terminal_release["status"] != "awaiting"
+
+    def _observe_release(self, observation):
+        release = self.terminal_release
+        if release["status"] != "awaiting":
+            return
+        end = self.result["end_observation"]
+        continuous = (observation.episode == end["episode"] and
+            observation.bot.details.life_generation_derived == end["bot"]["details"]["life_generation_derived"] and
+            observation.frame == release["last_frame"]+1)
+        release["last_frame"] = observation.frame
+        release["observations"] += 1
+        if not continuous:
+            release["status"] = "discontinuity"
+        elif observation.bot.details.input_neutral_derived:
+            release["status"] = "observed"
+        elif release["observations"] >= release["limit_frames"]:
+            release["status"] = "timeout"
 
     def _decision(self, observation, action="wait"):
         self.last_action = action
@@ -183,6 +205,8 @@ class ScenarioPolicy:
             "measured_frames": 0 if self.measurement_start is None else observation.frame-self.measurement_start+1}
         self.phase = "finished"
         self.owner = "neutral"
+        self.terminal_release = {"status": "awaiting", "limit_frames": 8,
+            "command_frame": observation.frame, "last_frame": observation.frame, "observations": 0}
         return self._decision(observation)
 
     def _setup(self, observation):
@@ -304,6 +328,7 @@ class ScenarioPolicy:
 
     def decide(self, observation):
         if self.complete:
+            self._observe_release(observation)
             return self._decision(observation)
         if observation.frame < 0:
             return self._decision(observation)
@@ -366,6 +391,7 @@ class ScenarioPolicy:
             "setup_phase": self.setup_phase, "input_owner": self.owner,
             "measurement_start_frame": self.measurement_start, "skill": self.arbiter.trace(),
             "result": {k: v for k, v in (self.result or {}).items() if k != "end_observation"},
+            "terminal_release": None if self.terminal_release is None else dict(self.terminal_release),
             **({"reflex": self.reflex.trace()} if self.reflex else {})}
 
     def report(self):
@@ -374,6 +400,7 @@ class ScenarioPolicy:
             "setup_stopped_frame": None if self.measurement_start is None else self.measurement_start-1,
             "measurement_start_frame": self.measurement_start, "initial_observation": self.initial,
             "setup_privilege": "ordinary_controller_packets_only", "result": self.result,
+            "terminal_release": None if self.terminal_release is None else dict(self.terminal_release),
             **({"reflex": self.reflex.trace()} if self.reflex else {}),
             **({"skill": self.arbiter.trace()} if self.spec.kind in PRIMITIVE_KINDS else {})}
 

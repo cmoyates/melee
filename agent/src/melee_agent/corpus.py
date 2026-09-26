@@ -16,7 +16,7 @@ from .source_states import captured_observation
 from .trace_limits import MAX_SOURCE_BYTES
 
 MAX_CORPUS_BYTES = 134217728
-COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py", "trace_limits.py", "tactical_choices.py", "live_control.py", "raw_observation.py", "replay.py")
+COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py", "trace_limits.py", "tactical_choices.py", "live_control.py", "raw_observation.py", "replay.py", "approach_jab.py")
 
 
 def digest(path):

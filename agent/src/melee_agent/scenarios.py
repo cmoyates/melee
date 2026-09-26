@@ -8,12 +8,14 @@ from .engine import Decision, ScriptedPolicy
 from .aerial import AERIAL, can_start_aerial
 from .fox_reflex import FoxReflex
 from .ground_combat import COMBAT, can_start_combat
+from .approach_jab import can_start_approach_jab
 from .skills import SkillArbiter, SkillSpec, inhibited
 from .stage import STAGE_ID, support_surface
 
 COMBAT_KINDS = {"combat_"+name: name for name in COMBAT}
 AERIAL_KINDS = {"aerial_"+name: name for name in AERIAL}
-PRIMITIVE_KINDS = {**COMBAT_KINDS, **AERIAL_KINDS}
+OPTION_KINDS = {"option_approach_jab": "approach_jab"}
+PRIMITIVE_KINDS = {**COMBAT_KINDS, **AERIAL_KINDS, **OPTION_KINDS}
 KINDS = ("grounded", "airborne", "offstage", "ledge", "shielded", "offstage_low", *PRIMITIVE_KINDS)
 RESULTS = ("setup_failed", "skill_failed", "succeeded", "timeout")
 
@@ -31,7 +33,7 @@ class ScenarioV1:
     def __post_init__(self):
         if (self.schema_version != 1 or self.kind not in KINDS or type(self.direction) is not int or
                 self.direction not in (-1, 1) or self.setup_timeout_frames != 480 or
-                self.measurement_timeout_frames != 180 or self.measured_policy not in ("baseline", "fox-reflex-v1", "ground-combat-v1", "aerial-v1")):
+                self.measurement_timeout_frames != 180 or self.measured_policy not in ("baseline", "fox-reflex-v1", "ground-combat-v1", "aerial-v1", "approach-jab-v1")):
             raise ValueError("Invalid fixed ScenarioV1 contract")
 
     def manifest(self):
@@ -52,6 +54,7 @@ class ScenarioV1:
                     " range/input/motion predicate" for kind, name in COMBAT_KINDS.items()},
                 **{kind: "settled main ground; x opposite drift direction in [25,45]; legal fresh short-hop input"
                     for kind in AERIAL_KINDS},
+                "option_approach_jab": "settled shared main ground; opponent 18-30 units in declared facing direction; released input and vulnerable target",
             }[self.kind], "outcome": {
                 "grounded": "observed bounded inward movement and neutral release",
                 "airborne": "observed landing on a known support surface",
@@ -63,6 +66,7 @@ class ScenarioV1:
                     for kind, name in COMBAT_KINDS.items()},
                 **{kind: "released jump in jumpsquat; observed takeoff, neutral aerial and grounded neutral return; L-cancel attempt separate from measured landing duration"
                     for kind in AERIAL_KINDS},
+                "option_approach_jab": "bounded observed movement and release, fresh legal jab, native acknowledgement and actionable neutral completion; contact separate",
             }[self.kind]}
 
 
@@ -77,6 +81,8 @@ COMBAT_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
 AERIAL_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
     kind, direction, measured_policy="aerial-v1")
     for kind, name in AERIAL_KINDS.items() for direction in (-1, 1))
+OPTION_SUITE = tuple(ScenarioV1("approach-jab-"+("left" if direction < 0 else "right"),
+    "option_approach_jab", direction, measured_policy="approach-jab-v1") for direction in (-1,1))
 
 
 def find_suite(name):
@@ -88,15 +94,17 @@ def find_suite(name):
         return COMBAT_SUITE
     if name == "aerial-v1":
         return AERIAL_SUITE
+    if name == "approach-jab-v1":
+        return OPTION_SUITE
     raise ValueError("Unknown fixed scenario suite")
 
 
 def scenario_suite(spec):
-    return {"fox-reflex-v1": "recovery-v1", "ground-combat-v1": "ground-combat-v1", "aerial-v1": "aerial-v1"}.get(spec.measured_policy, "mechanics-v1")
+    return {"fox-reflex-v1": "recovery-v1", "ground-combat-v1": "ground-combat-v1", "aerial-v1": "aerial-v1", "approach-jab-v1":"approach-jab-v1"}.get(spec.measured_policy, "mechanics-v1")
 
 
 def find_scenario(name):
-    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE+AERIAL_SUITE:
+    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE+AERIAL_SUITE+OPTION_SUITE:
         if spec.name == name:
             return spec
     raise ValueError("Unknown fixed mechanical scenario")
@@ -119,6 +127,9 @@ def starting_predicate(spec, observation):
     x = spec.direction*a.x
     if spec.kind in COMBAT_KINDS:
         return can_start_combat(COMBAT_KINDS[spec.kind], spec.direction, observation) is None
+    if spec.kind in OPTION_KINDS:
+        return (stable_ground(observation) and 18 <= (b.x-a.x)*spec.direction <= 30 and
+            can_start_approach_jab(spec.direction,observation) is None)
     if spec.kind in AERIAL_KINDS:
         return -45 <= x <= -25 and can_start_aerial(AERIAL_KINDS[spec.kind], spec.direction, observation) is None
     if spec.kind == "grounded":
@@ -175,7 +186,7 @@ class ScenarioPolicy:
         return self._decision(observation)
 
     def _setup(self, observation):
-        if self.spec.kind in COMBAT_KINDS:
+        if self.spec.kind in (*COMBAT_KINDS,*OPTION_KINDS):
             return self._combat_setup(observation)
         if self.spec.kind in AERIAL_KINDS:
             a = observation.bot
@@ -276,9 +287,10 @@ class ScenarioPolicy:
             self.crossing_airborne = False
             self.setup_phase = "crossing_short_hop"
             return "jump_"+away_air
-        if distance < 3:
+        option = self.spec.kind in OPTION_KINDS
+        if distance < (20 if option else 3):
             return away
-        if distance > COMBAT[COMBAT_KINDS[self.spec.kind]]["range"]-1:
+        if distance > (28 if option else COMBAT[COMBAT_KINDS[self.spec.kind]]["range"]-1):
             return toward
         if a.details.facing_right != (direction > 0):
             return toward

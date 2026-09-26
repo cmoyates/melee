@@ -19,11 +19,12 @@ from .config import load_config, owned_path
 from .combat_evidence import audit_combat_trace
 from .engine import Observation
 from .aerial_audit import audit_aerial, aerial_acceptance
+from .option_evidence import audit_option, option_acceptance
 from .integrity import inspect_integrity
 from .matches import artifact_bytes, isolated_environment, locate_run, terminate_child
 from .match_worker import write_json
 from .replay import expected_settings
-from .scenarios import AERIAL_KINDS, COMBAT_KINDS, PRIMITIVE_KINDS, find_suite, find_scenario, starting_predicate, suite_hash, verified_trial
+from .scenarios import AERIAL_KINDS, COMBAT_KINDS, OPTION_KINDS, PRIMITIVE_KINDS, find_suite, find_scenario, starting_predicate, suite_hash, verified_trial
 from .raw_observation import normalized_hurtbox
 from .stage import support_surface
 
@@ -98,10 +99,13 @@ def inspect_scenario(run):
         errors["measured_frame_count"] += 1
     combat_evidence = None
     aerial_evidence = None
+    option_evidence = None
     if spec.kind in COMBAT_KINDS and measured:
         combat_evidence = audit_combat(spec, report, measured, errors)
     elif spec.kind in AERIAL_KINDS and measured:
         aerial_evidence = audit_aerial(AERIAL_KINDS[spec.kind], report, measured, errors)
+    elif spec.kind in OPTION_KINDS and measured:
+        option_evidence = audit_option(report,measured,errors)
     if result.get("status") == "succeeded" and measured and spec.kind not in PRIMITIVE_KINDS:
         a = result["end_observation"]["bot"]
         if spec.kind in ("offstage", "offstage_low", "ledge", "airborne"):
@@ -126,6 +130,7 @@ def inspect_scenario(run):
         "game_frames": integrity["game_records"], "artifact_bytes": artifact_bytes(run),
         **({"combat": combat_evidence} if combat_evidence is not None else {}),
         **({"aerial": aerial_evidence} if aerial_evidence is not None else {}),
+        **({"option": option_evidence} if option_evidence is not None else {}),
         "artifacts": {"frames": "build/jev/runs/"+launch["run_id"]+"/frames.jsonl",
             "summary": "build/jev/runs/"+launch["run_id"]+"/summary.json"}}
 
@@ -271,6 +276,8 @@ def run_suite(root, repeats=10, duration=2400, seed=0, suite="mechanics-v1", req
             report["acceptance"] = combat_acceptance(results, repeats)
         elif suite == "aerial-v1":
             report["acceptance"] = aerial_acceptance(results, repeats)
+        elif suite == "approach-jab-v1":
+            report["acceptance"] = option_acceptance(results,repeats)
         write_json(folder / "summary.json", report)
         print(json.dumps({k: v for k, v in report.items() if k != "trials"}), flush=True)
     return 0 if status == "completed" and (not require_acceptance or report.get("acceptance", {}).get("passed")) else 2

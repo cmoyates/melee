@@ -76,9 +76,12 @@ def summarize_file(path, maximum_bytes):
     return result
 
 
-def expected_settings(settings, *, phase="regulation", bot_port=1):
+def expected_settings(settings, *, phase="regulation", bot_port=1, opponent_control="cpu3"):
     from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
     if phase not in ("regulation", "sudden_death") or type(bot_port) is not int or bot_port not in (1,2):
+        return False
+    if opponent_control not in ("cpu3", "neutral-human-v1") or (
+            opponent_control == "neutral-human-v1" and (phase != "regulation" or bot_port != 1)):
         return False
     if not settings or settings["game_mode"] != 1 or settings["stage_id"] != STAGE_ID or settings["teams"]:
         return False
@@ -95,5 +98,6 @@ def expected_settings(settings, *, phase="regulation", bot_port=1):
         return False
     a, b, c, d = players[bot_port-1], players[2-bot_port], players[2], players[3]
     return (a["character_external"] == 2 and a["type"] == 0 and a["stocks"] == stocks and
-            b["character_external"] == 8 and b["type"] == 1 and b["stocks"] == stocks and
-            b["cpu_level"] == 3 and c["type"] == d["type"] == 3)
+            b["character_external"] == 8 and b["type"] == (0 if opponent_control == "neutral-human-v1" else 1) and
+            b["stocks"] == stocks and (opponent_control == "neutral-human-v1" or b["cpu_level"] == 3) and
+            c["type"] == d["type"] == 3)

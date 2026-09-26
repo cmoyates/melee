@@ -31,6 +31,26 @@ class CaptureAdapterTests(unittest.TestCase):
 
 
 class CorpusTests(unittest.TestCase):
+    def test_neutral_calibration_is_excluded_even_when_explicitly_selected(self):
+        from melee_agent.corpus import choose_sources
+        folder=self.root/'build/jev/runs'/self.runs[0]
+        path=folder/'summary.json'
+        summary=json.loads(path.read_text())
+        summary['opponent_control']='neutral-human-v1'
+        path.write_text(json.dumps(summary))
+        self.assertNotIn(self.runs[0],choose_sources(self.root,3))
+        with self.assertRaisesRegex(ValueError,'calibration'):
+            list(generate_cases(self.root,[self.runs[0]],1000))
+        summary.pop('opponent_control')
+        path.write_text(json.dumps(summary))
+        path=folder/'frames.jsonl'
+        rows=[json.loads(line) for line in path.read_text().splitlines()]
+        rows[0]['opponent_fixture']={'mode':'neutral-human-v1'}
+        path.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+        self.assertNotIn(self.runs[0],choose_sources(self.root,3))
+        with self.assertRaisesRegex(ValueError,'Calibration frame'):
+            list(generate_cases(self.root,[self.runs[0]],1000))
+
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="jev-corpus-test-")).resolve()
         self.runs = []

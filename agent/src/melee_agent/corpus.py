@@ -48,6 +48,8 @@ def choose_sources(root, limit, *, profile=PROFILE):
         if not folder.is_dir() or folder.is_symlink() or not (folder/"summary.json").is_file():
             continue
         summary = read_json(folder/"summary.json", 1048576)
+        if summary.get('opponent_control','cpu3') != 'cpu3':
+            continue
         if summary.get('candidate_profile',PROFILE) != profile:
             continue
         if (summary.get("status") not in ("captured", "complete", "scenario_recorded", "skills_verified") or
@@ -61,6 +63,8 @@ def choose_sources(root, limit, *, profile=PROFILE):
             continue
         try:
             first = next(row for _, row in stream_records(folder/"frames.jsonl", MAX_SOURCE_BYTES) if row.get("menu") == "IN_GAME")
+            if 'opponent_fixture' in first:
+                continue
             record_bot_port(first,validate_bot_port(summary.get('bot_port',1)))
             captured_observation(first)
         except (ValueError, KeyError, StopIteration):
@@ -95,6 +99,8 @@ def generate_cases(root, runs, maximum_states, *, profile=PROFILE):
         quota = base_quota+int(run_index < remainder)
         folder = locate_run(root, run_id)
         summary = read_json(folder/"summary.json", 1048576)
+        if summary.get('opponent_control','cpu3') != 'cpu3':
+            raise ValueError('Neutral-opponent calibration is not a CPU3 decision corpus source')
         bot_port = validate_bot_port(summary.get('bot_port',1))
         if summary.get('candidate_profile',PROFILE) != profile:
             raise ValueError('Corpus cannot relabel a different candidate profile')
@@ -107,6 +113,8 @@ def generate_cases(root, runs, maximum_states, *, profile=PROFILE):
         for line, row in stream_records(folder/"frames.jsonl", MAX_SOURCE_BYTES):
             if row.get("menu") != "IN_GAME":
                 continue
+            if 'opponent_fixture' in row:
+                raise ValueError('Calibration frame cannot become a CPU3 decision source')
             record_bot_port(row,bot_port)
             observation = captured_observation(row)
             prior = history.before(observation)

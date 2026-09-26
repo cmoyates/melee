@@ -13,6 +13,32 @@ from test_scenarios import position
 
 
 class ScenarioAuditTests(unittest.TestCase):
+    def test_neutral_fixture_audit_requires_mode_settings_and_actual_observed_input(self):
+        from test_aerial_calibration import fixture_row
+        spec=find_scenario('calibration-sh_nair-left')
+        launch={'scenario_name':spec.name,'run_id':'synthetic','opponent_control':'neutral-human-v1'}
+        (self.run/'launch.json').write_text(json.dumps(launch))
+        self.summary.update(opponent_control='neutral-human-v1',episodes=[{'opponent_control':'neutral-human-v1'}])
+        self.summary['replays'][0]['settings']['players'][1]['type']=0
+        report=self.summary['scenario']
+        report.update(scenario=spec.manifest(),suite_sha256=suite_hash('aerial-calibration-v1'),
+            measurement_start_frame=None,initial_observation=None)
+        report['result'].update(status='setup_failed',reason='own_damage',measured_frames=0)
+        for row in self.rows:
+            fixture=fixture_row(row['frame'])
+            row.update(players=fixture['players'],opponent_fixture=fixture['opponent_fixture'])
+            row['scenario']['input_owner']='setup'
+        self.assertEqual(self.audit()['status'],'pass')
+        self.assertEqual(self.audit()['trial_status'],'setup_failed')
+        self.rows[-1]['opponent_fixture']['observed']['buttons']['A']=True
+        self.assertIn('opponent_input_not_neutral',self.audit()['errors'])
+        self.rows[-1]['opponent_fixture']['observed']['buttons']['A']=False
+        self.summary.pop('opponent_control')
+        self.assertIn('opponent_fixture_identity',self.audit()['errors'])
+        self.summary['opponent_control']='neutral-human-v1'
+        self.summary['replays'][0]['settings']['players'][1]['type']=1
+        self.assertIn('run_or_cleanup_invalid',self.audit()['errors'])
+
     def setUp(self):
         self.run = Path(tempfile.mkdtemp(prefix="jev-scenario-audit-"))
         self.rows = []

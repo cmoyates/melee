@@ -85,13 +85,17 @@ def audit_aerial_trace(name, aerial, rows, errors, *, completed):
     return evidence
 
 
-def aerial_acceptance(results, repeats):
+def aerial_acceptance(results, repeats, *, scenario_prefix=""):
+    if scenario_prefix not in ("", "calibration-"):
+        raise ValueError("Unknown aerial acceptance fixture")
     groups = {}
     for name in AERIAL:
         for direction in ("left", "right"):
-            scenario = name+"-"+direction
+            scenario = scenario_prefix+name+"-"+direction
             trials = [row for row in results if row["scenario"] == scenario]
-            audited = [row for row in trials if row["status"] == "pass"]
+            expected_opponent = 'neutral-human-v1' if scenario_prefix else 'cpu3'
+            audited = [row for row in trials if row["status"] == "pass" and
+                row.get('opponent_control','cpu3') == expected_opponent]
             completed = sum(row.get("aerial", {}).get("completed", False) for row in audited)
             durations = [row["aerial"]["nair_landing_frames"] for row in audited
                 if row.get("aerial", {}).get("nair_landing_frames") is not None]
@@ -102,7 +106,7 @@ def aerial_acceptance(results, repeats):
                 "passed": repeats == 20 and len(trials) == 20 and completed == 20}
     calibration = {}
     for direction in ("left", "right"):
-        attempt, control = (groups[name+"-"+direction] for name in AERIAL)
+        attempt, control = (groups[scenario_prefix+name+"-"+direction] for name in AERIAL)
         shortened, ordinary = attempt["landing_duration_counts"], control["landing_duration_counts"]
         valid = (attempt["passed"] and control["passed"] and attempt["lcancel_attempts"] == 20 and
             control["lcancel_attempts"] == 0 and sum(shortened.values()) == 20 and sum(ordinary.values()) == 20 and

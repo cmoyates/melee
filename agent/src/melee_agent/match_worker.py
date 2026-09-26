@@ -13,7 +13,7 @@ from .live_control import LibmeleeSink, SystemClock, observe
 from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
 from .recorder import FrameRecorder, RecorderError
 from .raw_observation import LifeTracker, RawStreamTap, player_record, stage_record
-from .input_trace import InputTrace
+from .input_trace import InputTrace, observed_packet
 from .local_combat_policy import LOCAL_MODES
 from .tactical_choices import PROFILE
 from .player_roles import validate_bot_port
@@ -36,6 +36,11 @@ def run(run_dir):
     options = json.loads((run_dir / "launch.json").read_text())
     bot_port = validate_bot_port(options.get('bot_port',1))
     opponent_port = 3-bot_port
+    from .scenarios import find_scenario
+    opponent_control = find_scenario(options['scenario_name']).opponent_control if options['policy'] == 'scenario' else 'cpu3'
+    if options.get('opponent_control','cpu3') != opponent_control or (opponent_control != 'cpu3' and bot_port != 1):
+        raise ValueError('Unexpected opponent control fixture')
+    opponent_cpu_level = 0 if opponent_control == 'neutral-human-v1' else 3
     candidate_profile = options.get('candidate_profile',PROFILE)
     console = None
     controllers = []
@@ -138,7 +143,7 @@ def run(run_dir):
                         raise RuntimeError("unexpected controller roles")
                     a, b = state.players[bot_port], state.players[opponent_port]
                     if (a.character != melee.Character.FOX or b.character != melee.Character.MARIO or
-                            a.cpu_level != 0 or b.cpu_level != 3 or state.stage != melee.Stage.BATTLEFIELD):
+                            a.cpu_level != 0 or b.cpu_level != opponent_cpu_level or state.stage != melee.Stage.BATTLEFIELD):
                         raise RuntimeError("unexpected matchup")
                     current = int(state.frame)
                     new_segment = False
@@ -158,7 +163,8 @@ def run(run_dir):
                         if int(a.stock) != STARTING_STOCKS or int(b.stock) != STARTING_STOCKS:
                             raise RuntimeError("unexpected starting stocks")
                         episode = start_segment(len(outcome['episodes'])+1,outcome['completed_matches']+1,
-                            'regulation',current,now,raw_stream.start_index,raw_stream.settings,bot_port=bot_port)
+                            'regulation',current,now,raw_stream.start_index,raw_stream.settings,bot_port=bot_port,
+                            opponent_control=opponent_control)
                         last_frame = None
                         new_segment = True
                     if raw_stream.start_index != episode['start_event_index']:
@@ -200,6 +206,9 @@ def run(run_dir):
                                     for p, v in state.players.items()}}
                     if hasattr(policy, "trace"):
                         record["scenario" if options["policy"] == "scenario" else "skill"] = policy.trace()
+                    if opponent_control != 'cpu3':
+                        record['opponent_fixture'] = {'mode':opponent_control, 'port':opponent_port,
+                            'queued':'release_all', 'observed':observed_packet(b.controller_state)}
                     if options["policy"] == "scenario" and policy.ready_to_stop:
                         pending_record = record
                         frames.publish(record)
@@ -258,9 +267,9 @@ def run(run_dir):
                             outcome["status"] = "matches_complete"
                             break
                     ready = (opponent_port in state.players and state.players[opponent_port].character == melee.Character.MARIO and
-                                state.players[opponent_port].cpu_level == 3 and state.players[opponent_port].coin_down)
+                                state.players[opponent_port].cpu_level == opponent_cpu_level and state.players[opponent_port].coin_down)
                     helpers[1].menu_helper_simple(state, controllers[1], melee.Character.MARIO,
-                        melee.Stage.BATTLEFIELD, cpu_level=3, autostart=False)
+                        melee.Stage.BATTLEFIELD, cpu_level=opponent_cpu_level, autostart=False)
                     helpers[0].menu_helper_simple(state, controllers[0], melee.Character.FOX,
                         melee.Stage.BATTLEFIELD, autostart=ready or state.menu_state==melee.Menu.STAGE_SELECT)
                     record = {"schema_version": 1, "run_id": options["run_id"], "menu": state.menu_state.name,

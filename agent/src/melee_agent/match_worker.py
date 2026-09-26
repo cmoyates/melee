@@ -10,11 +10,13 @@ import time
 from .stage import STAGE_NAME, STAGE_ID, PLATFORMS, support_surface
 from .engine import FrameExecutor, ScriptedPolicy
 from .live_control import LibmeleeSink, SystemClock, observe
-from .rules import STARTING_STOCKS
+from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
 from .recorder import FrameRecorder, RecorderError
 from .raw_observation import LifeTracker, RawStreamTap, player_record, stage_record
 from .input_trace import InputTrace
 from .local_combat_policy import LOCAL_MODES
+from .match_lifecycle import (MatchBoundaryError, completed_replay, record_observation,
+    start_segment, verify_sudden_death)
 
 
 class StopRequested(BaseException):
@@ -36,7 +38,7 @@ def run(run_dir):
     policy = None
     faults = None
     pending_record = None
-    outcome = {"status": "error", "episodes": [], "neutralized": False}
+    outcome = {"status": "error", "episodes": [], "neutralized": False, "completed_matches": 0}
     def interrupted(signum, frame):
         raise StopRequested()
     signal.signal(signal.SIGTERM, interrupted)
@@ -133,37 +135,46 @@ def run(run_dir):
                     if (a.character != melee.Character.FOX or b.character != melee.Character.MARIO or
                             a.cpu_level != 0 or b.cpu_level != 3 or state.stage != melee.Stage.BATTLEFIELD):
                         raise RuntimeError("unexpected matchup")
-                    if not in_game:
+                    current = int(state.frame)
+                    new_segment = False
+                    if in_game and last_frame is not None and current < last_frame:
+                        verified = completed_replay(run_dir,episode['episode'],episode['phase'])
+                        verify_sudden_death(episode,verified,raw_stream.settings,current,
+                            [int(a.stock),int(b.stock)],[float(a.percent),float(b.percent)],raw_stream.start_index)
+                        episode.update(result_event_verified=True,continued_as_sudden_death=True,
+                            match_completed=False,winner_port=None,replay_sha256=verified['sha256'],
+                            elapsed_seconds=now-episode['started_monotonic'],return_scene='SUDDEN_DEATH')
+                        episode = start_segment(len(outcome['episodes'])+1,episode['match_number'],
+                            'sudden_death',current,now,raw_stream.start_index,raw_stream.settings)
+                        input_trace.leave_game()
+                        last_frame = None
+                        new_segment = True
+                    elif not in_game:
                         if int(a.stock) != STARTING_STOCKS or int(b.stock) != STARTING_STOCKS:
                             raise RuntimeError("unexpected starting stocks")
-                        episode = {"episode": len(outcome["episodes"]) + 1, "first_frame": int(state.frame),
-                                    "last_frame": int(state.frame), "observations": 0, "gaps": 0,
-                                    "duplicates": 0, "rollbacks": 0, "started_monotonic": now}
-                        outcome["episodes"].append(episode)
+                        episode = start_segment(len(outcome['episodes'])+1,outcome['completed_matches']+1,
+                            'regulation',current,now,raw_stream.start_index,raw_stream.settings)
                         last_frame = None
-                        in_game = True
-                    current = int(state.frame)
+                        new_segment = True
+                    if raw_stream.start_index != episode['start_event_index']:
+                        raise MatchBoundaryError('unexpected_game_start_event')
                     if faults and faults.drop_state(current):
                         continue
-                    if last_frame is not None:
-                        delta = current - last_frame
-                        episode["gaps"] += max(0, delta - 1)
-                        episode["duplicates"] += int(delta == 0)
-                        episode["rollbacks"] += int(delta < 0)
-                    last_frame = current
-                    episode["last_frame"] = current
-                    episode["last_monotonic"] = now
-                    elapsed = now - episode["started_monotonic"]
-                    episode["simulation_fps"] = (current - episode["first_frame"]) / elapsed if elapsed else None
-                    episode["observations"] += 1
-                    episode["last_stocks"] = [int(a.stock), int(b.stock)]
                     if options["policy"] == "input-probe" and 0 <= current <= 100:
                         probe_samples.append({"frame": current, "x": float(a.position.x),
                                                 "main_x": float(a.controller_state.main_stick[0])})
                     provenance = input_trace.observation(episode["episode"], current, a.controller_state)
                     raw_players = {str(p): player_record(v, raw_stream.take(current, p),
                         episode["episode"], p, lives, console.zero_indices) for p, v in state.players.items()}
-                    control = executor.step(observe(state, episode["episode"], clock, raw_players))
+                    sudden_death = episode['phase'] == 'sudden_death'
+                    control = executor.step(observe(state, episode["episode"], clock, raw_players,
+                        starting_stocks=1 if sudden_death else STARTING_STOCKS,
+                        time_limit_seconds=None if sudden_death else TIME_LIMIT_SECONDS))
+                    if new_segment:
+                        outcome['episodes'].append(episode)
+                        in_game = True
+                    record_observation(episode,current,[int(a.stock),int(b.stock)],now)
+                    last_frame = current
                     packet_id = input_trace.queue(control)
                     controllers[1].release_all()
                     record = {"schema_version": 4, "run_id": options["run_id"],
@@ -209,29 +220,21 @@ def run(run_dir):
                             raise RuntimeError("unexpected game exit scene: " + state.menu_state.name)
                         # Slippi skips the vanilla results screen. Require its recorded
                         # GAME/TIME event rather than treating CSS or stock zero as a result.
-                        from .replay import expected_settings, summarize_file
-                        end_deadline = time.monotonic() + 3
-                        verified = None
-                        while time.monotonic() < end_deadline:
-                            paths = sorted((run_dir / "replays").glob("*.slp"))
-                            if len(paths) == len(outcome["episodes"]):
-                                try:
-                                    candidate = summarize_file(paths[-1], 268435456)
-                                    if candidate["outcome"] in ("game", "time") and expected_settings(candidate["settings"]):
-                                        verified = candidate
-                                        break
-                                except (OSError, ValueError, KeyError):
-                                    pass
-                            time.sleep(0.1)
-                        if verified is None:
-                            raise RuntimeError("match end or settings could not be verified from replay")
+                        verified = completed_replay(run_dir,episode['episode'],episode['phase'])
+                        if (verified['winner_port'] not in (1,2) or
+                                (verified['outcome'] == 'time' and len(set(episode['last_stocks'])) == 1) or
+                                (episode['phase'] == 'sudden_death' and verified['outcome'] != 'game')):
+                            raise MatchBoundaryError('final_contest_result_unverified')
                         episode["result_event_verified"] = True
+                        episode['match_completed'] = True
+                        episode['replay_sha256'] = verified['sha256']
                         episode["return_scene"] = state.menu_state.name
                         episode["winner_port"] = verified["winner_port"]
                         episode["elapsed_seconds"] = now - episode["started_monotonic"]
+                        outcome['completed_matches'] += 1
                         in_game = False
                         input_trace.leave_game()
-                        if len(outcome["episodes"]) >= options["episodes"]:
+                        if outcome['completed_matches'] >= options["episodes"]:
                             # Allow the runtime's replay writer to finish the end event.
                             time.sleep(1)
                             outcome["status"] = "matches_complete"
@@ -253,6 +256,8 @@ def run(run_dir):
         outcome.update(status="error", error_type="RecorderError", failure_reason=str(error))
         if pending_record is not None:
             outcome["last_unrecorded_record"] = pending_record
+    except MatchBoundaryError as error:
+        outcome.update(status='error',error_type='MatchBoundaryError',failure_reason=str(error))
     except Exception as error:
         # Detailed traceback stays in private worker.log. Public summary gets a type only.
         import traceback

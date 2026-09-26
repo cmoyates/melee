@@ -12,7 +12,8 @@ class SystemClock:
         return time.monotonic_ns()
 
 
-def observe(state, episode, clock, raw_players):
+def observe(state, episode, clock, raw_players, *, starting_stocks=STARTING_STOCKS,
+        time_limit_seconds=TIME_LIMIT_SECONDS):
     def fighter(player, port):
         hitlag, hitstun = combat_counters(raw_players[str(port)]["raw_post"])
         buttons = {b.name.removeprefix("BUTTON_"): bool(v) for b, v in player.controller_state.button.items()}
@@ -21,7 +22,7 @@ def observe(state, episode, clock, raw_players):
             all(abs(float(v) - .5) <= .025 for stick in (inputs.main_stick, inputs.c_stick) for v in stick) and
             max(float(inputs.l_shoulder), float(inputs.r_shoulder)) <= .025)
         details = FighterDetails(int(player.action.value), int(player.action_frame),
-            STARTING_STOCKS - int(player.stock) + 1, float(player.percent), bool(player.facing),
+            starting_stocks - int(player.stock) + 1, float(player.percent), bool(player.facing),
             hitlag, hitstun,
             float(player.speed_ground_x_self if player.on_ground else player.speed_air_x_self),
             float(player.speed_y_self), float(player.speed_x_attack), float(player.speed_y_attack),
@@ -30,9 +31,9 @@ def observe(state, episode, clock, raw_players):
             normalized_hurtbox(raw_players[str(port)]["raw_post"]))
         return Fighter(float(player.position.x), float(player.position.y), bool(player.on_ground),
                         int(player.jumps_left), getattr(player.action, "name", "UNKNOWN"), int(player.stock), details)
-    return Observation(4, episode, int(state.frame), clock.now_ns(), state.stage.name,
+    return Observation(5, episode, int(state.frame), clock.now_ns(), state.stage.name,
                         fighter(state.players[1], 1), fighter(state.players[2], 2),
-                        MatchProgress.from_frame(int(state.frame), TIME_LIMIT_SECONDS, STARTING_STOCKS))
+                        MatchProgress.from_frame(int(state.frame), time_limit_seconds, starting_stocks))
 
 
 class LibmeleeSink:

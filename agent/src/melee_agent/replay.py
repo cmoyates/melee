@@ -9,6 +9,24 @@ import struct
 from .stage import STAGE_ID
 
 
+def game_settings(event):
+    if len(event) < 0xF0 or event[0] != 0x36:
+        raise ValueError("Incomplete game settings")
+    # StartMeleeRules byte 0: match kind in bits 7..5, timer enabled in bit 1.
+    # gm_SetupSuddenDeath clears timer_enabled while retaining time_limit.
+    return {
+        "game_mode": (int(event[0x5]) & 0xE0) >> 5,
+        "timer_enabled": bool(event[0x5] & 0x02),
+        "timer_counts_up": bool(event[0x5] & 0x01),
+        "stage_id": int.from_bytes(event[0x13:0x15], "big"),
+        "timer_seconds": int.from_bytes(event[0x15:0x19], "big"),
+        "teams": bool(event[0xD]), "items": int(event[0x10]),
+        "players": [{"port": i + 1, "character_external": int(event[0x65 + 0x24*i]),
+            "type": int(event[0x66 + 0x24*i]), "stocks": int(event[0x67 + 0x24*i]),
+            "cpu_level": int(event[0x74 + 0x24*i])} for i in range(4)],
+    }
+
+
 def summarize_raw(raw):
     sizes = {}
     index = 0
@@ -30,18 +48,7 @@ def summarize_raw(raw):
             raise ValueError("Unknown or truncated replay event")
         event = raw[index:index + size]
         if command == 0x36:
-            if size < 0xF0:
-                raise ValueError("Incomplete game settings")
-            result["settings"] = {
-                "game_mode": (int(event[0x5]) & 0xE0) >> 5,
-                "stage_id": int.from_bytes(event[0x13:0x15], "big"),
-                "timer_seconds": int.from_bytes(event[0x15:0x19], "big"),
-                "teams": bool(event[0xD]), "items": int(event[0x10]),
-                "players": [{"port": i + 1, "character_external": int(event[0x65 + 0x24*i]),
-                                "type": int(event[0x66 + 0x24*i]),
-                                "stocks": int(event[0x67 + 0x24*i]),
-                                "cpu_level": int(event[0x74 + 0x24*i])} for i in range(4)],
-            }
+            result["settings"] = game_settings(event)
         elif command == 0x39:
             if size < 2:
                 raise ValueError("Incomplete game end")
@@ -69,13 +76,19 @@ def summarize_file(path, maximum_bytes):
     return result
 
 
-def expected_settings(settings):
+def expected_settings(settings, *, phase="regulation"):
     from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
+    if phase not in ("regulation", "sudden_death"):
+        return False
     if not settings or settings["game_mode"] != 1 or settings["stage_id"] != STAGE_ID or settings["teams"]:
         return False
     if settings["timer_seconds"] != TIME_LIMIT_SECONDS or settings["items"] != 255:
         return False
+    timed = phase == "regulation"
+    if settings.get("timer_enabled", True) is not timed or settings.get("timer_counts_up", False):
+        return False
+    stocks = STARTING_STOCKS if timed else 1
     a, b, c, d = settings["players"]
-    return (a["character_external"] == 2 and a["type"] == 0 and a["stocks"] == STARTING_STOCKS and
-            b["character_external"] == 8 and b["type"] == 1 and b["stocks"] == STARTING_STOCKS and
+    return (a["character_external"] == 2 and a["type"] == 0 and a["stocks"] == stocks and
+            b["character_external"] == 8 and b["type"] == 1 and b["stocks"] == stocks and
             b["cpu_level"] == 3 and c["type"] == d["type"] == 3)

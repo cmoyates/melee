@@ -82,7 +82,7 @@ class LiveProviderTests(unittest.TestCase):
             self.assertIsNone(reply.error)
             self.assertEqual(self.payload["state"], compact.wire())
             self.assertEqual(reply.metadata["semantic_sha256"], context.semantic_sha256)
-            self.assertEqual(self.payload["state"]["kind"], "CompactObservationV1")
+            self.assertEqual(self.payload["state"]["kind"], "CompactObservationV2")
             self.assertNotIn("details", self.payload["state"]["bot"])
         finally:
             self.assertEqual(backend.close()["http_calls"], 1)

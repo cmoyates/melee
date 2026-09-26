@@ -16,7 +16,7 @@ from .source_states import captured_observation
 from .trace_limits import MAX_SOURCE_BYTES
 
 MAX_CORPUS_BYTES = 134217728
-COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py", "trace_limits.py", "tactical_choices.py")
+COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py", "trace_limits.py", "tactical_choices.py", "live_control.py", "raw_observation.py", "replay.py")
 
 
 def digest(path):
@@ -77,7 +77,7 @@ def response_annotations(row):
             "kind": "provider" if metadata.get("resolved_model") else "simulated",
             "resolved_model": metadata.get("resolved_model"), "request_id": metadata.get("request_id"),
             "source_semantic_sha256": semantic_hash,
-            "representation": ("CompactObservationV1 at the source frame; not this delivery frame"
+            "representation": ("Compact observation at the source frame, version recorded by that run; not this delivery frame"
                 if semantic_hash else "historical_raw_observation; not generated from this compact payload")})
     return replies
 

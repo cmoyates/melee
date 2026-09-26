@@ -11,7 +11,7 @@ from .native_motions import COMMON_MOTIONS, FOX_MOTIONS, MARIO_MOTIONS
 from .skills import can_start, inhibited, relative_skill
 from .stage import GROUND_EDGE, PLATFORMS, support_surface
 
-SEMANTIC_VERSION = 1
+SEMANTIC_VERSION = 2
 MAX_SEMANTIC_BYTES = 16384
 ROOT_FIELDS = frozenset(("schema_version", "kind", "episode", "frame", "stage", "match", "bot", "opponent",
     "relative", "mechanical", "current_skill", "history", "provenance", "unavailable"))
@@ -64,7 +64,7 @@ class CompactObservation:
         if type(self.payload_json) is not str or len(self.payload_json.encode()) > MAX_SEMANTIC_BYTES:
             raise ValueError("Compact observation exceeds bound")
         value = json.loads(self.payload_json, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite compact state")))
-        if (not isinstance(value, dict) or set(value) != ROOT_FIELDS or value["kind"] != "CompactObservationV1" or
+        if (not isinstance(value, dict) or set(value) != ROOT_FIELDS or value["kind"] != "CompactObservationV2" or
                 value["schema_version"] != SEMANTIC_VERSION or (value["episode"], value["frame"]) != (self.episode, self.frame) or
                 type(self.episode) is not int or self.episode < 1 or type(self.frame) is not int or
                 type(self.observed_ns) is not int or self.observed_ns < 0 or canonical(value) != self.payload_json):
@@ -124,14 +124,18 @@ def compact_observation(observation, candidates, *, active_skill=None, skill_kno
             unavailable.append(key+".native_motion_name")
     if not skill_known:
         unavailable.append("current_skill")
-    value = {"schema_version": SEMANTIC_VERSION, "kind": "CompactObservationV1",
+    value = {"schema_version": SEMANTIC_VERSION, "kind": "CompactObservationV2",
         "episode": observation.episode, "frame": observation.frame,
         "stage": {"name": "Battlefield", "main_ground_edges_estimated": [-rounded(GROUND_EDGE), rounded(GROUND_EDGE)],
             "platforms_estimated": [{key: rounded(v) if isinstance(v, float) else v for key, v in p.items()} for p in PLATFORMS]},
         "match": {"time_limit_seconds": observation.match.time_limit_seconds,
+            "timer_enabled": observation.match.time_limit_seconds is not None,
+            "phase": "sudden_death" if observation.match.time_limit_seconds is None else "regulation",
+            "elapsed_scope": "current_segment",
             "starting_stocks": observation.match.starting_stocks,
             "elapsed_seconds_estimated": rounded(observation.match.elapsed_seconds_derived),
-            "remaining_seconds_estimated": rounded(observation.match.remaining_seconds_derived)},
+            "remaining_seconds_estimated": None if observation.match.remaining_seconds_derived is None else
+                rounded(observation.match.remaining_seconds_derived)},
         "bot": fighter_semantics(a, "Fox"), "opponent": fighter_semantics(b, "Mario"),
         "relative": {"opponent_delta_rounded": [rounded(dx), rounded(dy)],
             "distance_rounded": rounded(math.hypot(dx, dy)),

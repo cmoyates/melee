@@ -103,17 +103,23 @@ class Fighter:
 
 @dataclass(frozen=True)
 class MatchProgress:
-    time_limit_seconds: int
+    time_limit_seconds: int | None
     starting_stocks: int
     elapsed_seconds_derived: float
-    remaining_seconds_derived: float
+    remaining_seconds_derived: float | None
 
     def __post_init__(self):
-        integer(self.time_limit_seconds, "match time limit", 1)
         integer(self.starting_stocks, "starting stocks", 1)
-        if self.time_limit_seconds > 5940 or self.starting_stocks > 99:
+        if self.starting_stocks > 99:
             raise ValueError("Unsupported match rules")
         finite(self.elapsed_seconds_derived, "elapsed match time", 0)
+        if self.time_limit_seconds is None:
+            if self.remaining_seconds_derived is not None:
+                raise ValueError("Untimed segments cannot have remaining time")
+            return
+        integer(self.time_limit_seconds, "match time limit", 1)
+        if self.time_limit_seconds > 5940:
+            raise ValueError("Unsupported match rules")
         finite(self.remaining_seconds_derived, "remaining match time", 0, self.time_limit_seconds)
         expected = max(0, self.time_limit_seconds - self.elapsed_seconds_derived)
         if not math.isclose(self.remaining_seconds_derived, expected, rel_tol=0, abs_tol=1e-9):
@@ -123,7 +129,8 @@ class MatchProgress:
     def from_frame(cls, frame, time_limit_seconds, starting_stocks):
         integer(frame, "match frame")
         elapsed = max(0, frame) / SIMULATION_FPS
-        return cls(time_limit_seconds, starting_stocks, elapsed, max(0, time_limit_seconds - elapsed))
+        return cls(time_limit_seconds, starting_stocks, elapsed,
+            None if time_limit_seconds is None else max(0, time_limit_seconds - elapsed))
 
     @classmethod
     def parse(cls, data):
@@ -144,7 +151,7 @@ class Observation:
 
     def __post_init__(self):
         integer(self.schema_version, "schema version")
-        if self.schema_version != 4 or self.stage != STAGE_NAME:
+        if self.schema_version not in (4, 5) or self.stage != STAGE_NAME:
             raise ValueError("Unsupported observation version/stage")
         integer(self.episode, "episode", 1)
         integer(self.frame, "frame")
@@ -153,6 +160,8 @@ class Observation:
             raise ValueError("Observation requires validated fighters")
         if not isinstance(self.match, MatchProgress):
             raise ValueError("Observation requires validated match progress")
+        if self.schema_version == 4 and self.match.time_limit_seconds is None:
+            raise ValueError("Untimed segments require observation version 5")
         if max(self.bot.stocks_remaining, self.opponent.stocks_remaining) > self.match.starting_stocks:
             raise ValueError("Remaining stocks exceed starting stocks")
         for fighter in (self.bot, self.opponent):
@@ -252,12 +261,14 @@ class MonotonicClock(Protocol):
 
 class ScriptedPolicy:
     def __init__(self, mode="scripted"):
-        if mode not in ("scripted", "smoke", "input-probe"):
+        if mode not in ("scripted", "smoke", "input-probe", "neutral-probe"):
             raise ValueError("Unknown scripted policy")
         self.mode = mode
 
     def decide(self, observation):
         a, b, frame = observation.bot, observation.opponent, observation.frame
+        if self.mode == "neutral-probe":
+            return Decision(1, observation.episode, frame, "wait")
         action = "wait"
         if frame >= 0:
             if self.mode == "input-probe":

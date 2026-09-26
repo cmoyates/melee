@@ -20,7 +20,7 @@ from melee_agent.doctor import runtime_evidence, STOCK_DISC_SHA1
 def replay_fixture(method=2, placements=(1, 0, 255, 255), end=True):
     start = bytearray(0xF0)
     start[0] = 0x36
-    start[0x5] = 0x20
+    start[0x5] = 0x32
     start[0x13:0x15] = (31).to_bytes(2, "big")
     start[0x15:0x19] = (480).to_bytes(4, "big")
     start[0x10] = 255

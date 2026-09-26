@@ -8,6 +8,7 @@ import math
 def inspect_integrity(run):
     launch = json.loads((run / "launch.json").read_text())
     summary = json.loads((run / "summary.json").read_text())
+    declared_segments = {segment.get('episode'):segment for segment in summary['episodes']}
     digest = hashlib.sha256()
     episodes, counts, errors, transitions = {}, {"records": 0, "game_records": 0}, {}, []
     previous_time = -1
@@ -56,6 +57,16 @@ def inspect_integrity(run):
             observation = record["control"]["observation"]
             if (observation["episode"], observation["frame"]) != (episode, frame):
                 error("control_identity")
+            if observation.get('schema_version') == 5:
+                segment = declared_segments.get(episode,{})
+                if not segment:
+                    error('missing_declared_segment')
+                sudden = segment.get('phase') == 'sudden_death'
+                progress = observation['match']
+                if (progress['starting_stocks'] != (1 if sudden else 4) or
+                        progress['time_limit_seconds'] != (None if sudden else 480) or
+                        (sudden and progress['remaining_seconds_derived'] is not None)):
+                    error('segment_progress_rules')
             for port, player in record["raw_observation"]["players"].items():
                 raw = player["raw_post"]
                 if (raw["frame"], raw["port"]) != (frame, int(port)):
@@ -69,6 +80,10 @@ def inspect_integrity(run):
                     error("stock_increase")
                 item["stock_losses"][port] = item["stock_losses"].get(port, 0) + max(0, loss)
                 life = player["life_generation_derived"]
+                if observation.get('schema_version') == 5:
+                    fighter = observation['bot' if port == '1' else 'opponent']
+                    if fighter['stocks_remaining'] != stock or fighter['details']['life_generation_derived'] != life:
+                        error('normalized_stock_or_life_mismatch')
                 if life != item["stock_losses"][port] + 1:
                     error("life_generation")
                 item["stocks"][port] = stock

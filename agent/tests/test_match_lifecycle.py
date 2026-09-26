@@ -4,7 +4,7 @@ import unittest
 from melee_agent.async_policy import Delivery, Reply, bind, rejection
 from melee_agent.engine import MatchProgress, ScriptedPolicy
 from melee_agent.match_lifecycle import (MatchBoundaryError, record_observation,
-    replay_layout_valid, start_segment, verify_sudden_death)
+    record_sudden_death_menu, replay_layout_valid, start_segment, verify_sudden_death)
 from melee_agent.replay import game_settings, summarize_raw
 from melee_agent.semantic import compact_observation
 from test_combat_integration import ground
@@ -26,6 +26,27 @@ def replay(sudden=False):
 
 
 class MatchLifecycleTests(unittest.TestCase):
+    def test_sudden_death_menu_is_bounded_metadata_not_a_game_frame_or_result(self):
+        segment = start_segment(2,1,'sudden_death',-123,481.,2,settings(True))
+        record_observation(segment,-123,[1,1],481.)
+        before = dict(segment)
+        for index in range(1,9):
+            record_sudden_death_menu(segment,{'scene':0x0302,'index':index},482.)
+        self.assertEqual({k:v for k,v in segment.items() if k != 'sudden_death_menu_events'},before)
+        with self.assertRaises(MatchBoundaryError):
+            record_sudden_death_menu(segment,{'scene':0x0302,'index':9},482.)
+        for changes,menu,now in (({'phase':'regulation'}, {'scene':0x0302,'index':1},482.),
+                ({}, {'scene':0x0402,'index':1},482.), ({},None,482.),
+                ({'last_frame':0},{'scene':0x0302,'index':1},482.),
+                ({},{'scene':0x0302,'index':1},487.)):
+            fresh = {**before,**changes}
+            with self.assertRaises(MatchBoundaryError):
+                record_sudden_death_menu(fresh,menu,now)
+        fresh = dict(before)
+        record_sudden_death_menu(fresh,{'scene':0x0302,'index':1},482.)
+        with self.assertRaises(MatchBoundaryError):
+            record_sudden_death_menu(fresh,{'scene':0x0302,'index':1},482.)
+
     def previous(self):
         segment = start_segment(1,1,'regulation',-123,0.,1,settings())
         record_observation(segment,28800,[4,4],480.)

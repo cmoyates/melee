@@ -11,13 +11,12 @@ from .config import owned_path
 from .incidents import open_regular, read_json, stream_records
 from .matches import locate_run
 from .semantic import SemanticHistory, canonical, compact_observation
-from .skills import can_start, relative_skill
+from .tactical_choices import LABELS as CANDIDATE_ORDER, legal_candidates
 from .source_states import captured_observation
 from .trace_limits import MAX_SOURCE_BYTES
 
-CANDIDATE_ORDER = ("neutral", "approach", "retreat", "jump", "shield", "jab", "dtilt", "grab")
 MAX_CORPUS_BYTES = 134217728
-COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py", "trace_limits.py")
+COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py", "trace_limits.py", "tactical_choices.py")
 
 
 def digest(path):
@@ -52,7 +51,8 @@ def choose_sources(root, limit):
                 not summary.get("emulator_stopped")):
             continue
         policy = summary.get("policy")
-        priority = {"jev": 0, "delayed-fake": 1, "heuristic": 2, "random-legal": 2, "scenario": 3}.get(policy)
+        priority = {"jev": 0, "delayed-fake": 1, "heuristic": 2, "random-legal": 2,
+            "heuristic-tactical": 2, "random-tactical": 2, "scenario": 3}.get(policy)
         if priority is None:
             continue
         try:
@@ -112,7 +112,7 @@ def generate_cases(root, runs, maximum_states):
             source_index += 1
             if not selected or emitted >= quota:
                 continue
-            labels = tuple(label for label in CANDIDATE_ORDER if can_start(relative_skill(label, observation), observation) is None)
+            labels = legal_candidates(observation)
             state = compact_observation(observation, labels, active_skill=active, skill_known=known, history=prior)
             yield {"schema_version": 1, "source": {"run_id": run_id, "episode": observation.episode,
                 "frame": observation.frame, "observation_schema_version": row["control"]["observation"]["schema_version"],

@@ -19,6 +19,7 @@ from .match_worker import write_json
 from .stage import STAGE_NAME, STAGE_ID
 from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
 from .trace_limits import MAX_SOURCE_BYTES
+from .local_combat_policy import LOCAL_MODES
 
 
 def isolated_environment():
@@ -67,7 +68,7 @@ def preflight(root, duration, episodes, policy, capture=False):
         raise ValueError("Invalid capture mode")
     if type(episodes) is not int or not 1 <= episodes <= (100 if capture else 10) or (policy == "input-probe" and episodes != 1):
         raise ValueError("Choose 1-10 matches, or exactly one input probe; captures allow 100 episodes")
-    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake", "jev", "faults", "scenario", "heuristic", "random-legal"):
+    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake", "jev", "faults", "scenario", *LOCAL_MODES):
         raise ValueError("Unknown local policy")
     if not config.disc_image or not config.runtime or not config.runtime_sha256:
         raise ValueError("Configure the verified local disc and runtime first")
@@ -124,7 +125,7 @@ def read_worker_result(path):
         if "local_policy" in result:
             report = result["local_policy"]
             if (not isinstance(report, dict) or report.get("schema_version") != 1 or
-                    report.get("mode") not in ("heuristic", "random-legal") or type(report.get("seed")) is not int or
+                    report.get("mode") not in LOCAL_MODES or type(report.get("seed")) is not int or
                     report.get("cadence_frames") != 60 or report.get("provider_contacted") is not False or
                     not isinstance(report.get("counts"), dict) or
                     any(type(value) is not int or value < 0 for value in report["counts"].values())):

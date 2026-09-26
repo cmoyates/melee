@@ -11,8 +11,8 @@ from .fox_reflex import FoxReflex
 from .semantic import SemanticHistory, compact_observation
 from .skills import SkillArbiter, can_start, inhibited, relative_skill
 from .stage import support_surface
+from .tactical_choices import LABELS, legal_candidates
 
-LABELS = ("neutral", "approach", "retreat", "jump", "shield", "jab", "dtilt", "grab")
 MAX_AGE_NS = 1_000_000_000
 MAX_FRAME_AGE = 60
 MIN_CONFIDENCE = .15
@@ -280,7 +280,7 @@ class AsyncPolicy:
                 self.arbiter.generation += 1
                 self.counts["generation_invalidations"] += 1
             self.last_invalidation = identity
-        candidates = tuple(label for label in LABELS if can_start(relative_skill(label, observation), observation) is None)
+        candidates = legal_candidates(observation)
         offered = candidates if not emergency else ()
         self.semantic_state = compact_observation(observation, offered, active_skill=self.arbiter.trace()["active"],
             skill_known=True, history=self.semantic_history.before(observation))

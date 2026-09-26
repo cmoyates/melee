@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from melee_agent.async_policy import AsyncPolicy, Delivery, Reply, bind, rejection
-from melee_agent.engine import ACTION_PACKETS, FrameExecutor, Observation
+from melee_agent.engine import ACTION_PACKETS, FrameExecutor, Observation, MatchProgress
 from melee_agent.budget import SpendLedger
 from melee_agent.cli import main
 from melee_agent.corpus import choose_sources, generate_cases
@@ -28,7 +28,7 @@ from test_async_policy import ManualBridge
 
 
 class OptionProfileTests(unittest.TestCase):
-    def fixture(self):
+    def fixture(self, *, episode_boundary=False):
         bridge,clock,now = ManualBridge(),RecordedClock(),[0]
         policy=AsyncPolicy('synthetic',bridge,clock=lambda:now[0]+1000,profile=OPTION_PROFILE)
         executor=FrameExecutor(policy,RecordingSink(),clock)
@@ -40,6 +40,14 @@ class OptionProfileTests(unittest.TestCase):
                 x,motion,velocity={34:(9.,14,0.),35:(16.,20,2.),36:(18.,20,0.),37:(19.,14,0.),
                     38:(26.,20,2.),39:(28.,20,0.),40:(28.,14,0.),41:(28.,44,0.),42:(28.,14,0.)}[frame]
             observation=replace(sample(frame,x,motion,opponent_x=33.,self_velocity_x=velocity),observed_ns=now[0])
+            if episode_boundary and frame>=36:
+                sudden_frame=frame-159
+                observation=replace(observation,schema_version=5,episode=2,frame=sudden_frame,
+                    match=MatchProgress.from_frame(sudden_frame,None,1),
+                    bot=replace(observation.bot,stocks_remaining=1,grounded=False,action='ENTRY',
+                        details=replace(observation.bot.details,action_id=322,percent=300.)),
+                    opponent=replace(observation.opponent,stocks_remaining=1,grounded=False,action='ENTRY',
+                        details=replace(observation.opponent.details,action_id=322,percent=300.)))
             if frame==34:
                 source=rows[4]
                 candidates=tuple(source['skill']['semantic_state']['mechanical']['legal_candidates'])
@@ -56,7 +64,7 @@ class OptionProfileTests(unittest.TestCase):
                     'percent':d.percent,'hurtbox_state':d.hurtbox_state,'state_flags_2':0,
                     'state_flags_4':0,'hitlag_raw':0.,'misc_as_raw':0.,'available':{
                         k:True for k in ('hurtbox_state','state_flags_2','state_flags_4','hitlag_raw','misc_as_raw')}}}
-            rows.append({'schema_version':4,'run_id':'synthetic','menu':'IN_GAME','episode':1,'frame':frame,
+            rows.append({'schema_version':4,'run_id':'synthetic','menu':'IN_GAME','episode':observation.episode,'frame':observation.frame,
                 'control':control,'skill':deepcopy(policy.trace()),'raw_observation':{'players':players},
                 'input_provenance':{'observed':ACTION_PACKETS['wait'].wire(),'latest_completed_flush':None}})
             if frame==4:source_observation=observation
@@ -175,3 +183,34 @@ class OptionProfileTests(unittest.TestCase):
         self.assertEqual(choose_sources(root,3),[])
         with self.assertRaisesRegex(ValueError,'cannot relabel'):
             next(generate_cases(root,[name],1))
+
+    def test_new_episode_cancels_old_option_without_a_false_completion_or_audit_failure(self):
+        root,run,rows=self.fixture(episode_boundary=True)
+        report=inspect_policy(run)
+        self.assertEqual(report['status'],'pass',report)
+        self.assertEqual(report['acknowledgements'],{'cancelled:episode_boundary':1})
+        self.assertEqual(report['option_outcomes'],{})
+        self.assertEqual(report['pending_provider_skills'],0)
+        self.assertEqual(rows[36]['control']['packet'],ACTION_PACKETS['wait'].wire())
+        with patch('socket.socket',side_effect=AssertionError('network forbidden')),patch('subprocess.Popen',side_effect=AssertionError('process forbidden')):
+            incident=export_incident(root,run,episode=2,frame=-117,after_frames=0)
+            replay=replay_incident(root,root/'build/jev/incidents'/incident['incident_id'])
+        self.assertEqual(replay['status'],'pass',replay)
+        self.assertEqual(replay['replayed_records'],43)
+
+    def test_boundary_cannot_launder_a_success_or_retained_controller_input(self):
+        for change in ('success','packet'):
+            _,run,rows=self.fixture(episode_boundary=True)
+            if change=='success':rows[36]['skill']['transitions'][0]['status']='succeeded'
+            else:rows[36]['control']['packet']=ACTION_PACKETS['right'].wire()
+            (run/'frames.jsonl').write_bytes(b''.join(canonical(row)+b'\n' for row in rows))
+            report=inspect_policy(run)
+            self.assertEqual(report['status'],'fail',change)
+
+    def test_malformed_option_report_is_an_explicit_audit_failure(self):
+        _,run,rows=self.fixture()
+        rows[-1]['skill']['transitions'][0]['option']='invalid'
+        (run/'frames.jsonl').write_bytes(b''.join(canonical(row)+b'\n' for row in rows))
+        report=inspect_policy(run)
+        self.assertEqual(report['status'],'fail')
+        self.assertIn('option_event_schema',report['errors'])

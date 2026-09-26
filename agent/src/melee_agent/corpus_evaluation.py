@@ -49,6 +49,8 @@ def evaluate_corpus(root, corpus_id, budget_directory, max_requests, *, transpor
         raise ValueError("No states have at least two available candidates")
     ledger = SpendLedger(owned_path(root, budget_directory)/"spend.jsonl")
     before = ledger.report()
+    if before.get("sealed"):
+        raise BudgetError("Experiment budget is sealed")
     if datetime.now(timezone.utc) >= datetime.fromisoformat(before["deadline_utc"]):
         raise BudgetError("Experiment deadline reached")
     counted_transport = CountingTransport(transport if transport is not None else

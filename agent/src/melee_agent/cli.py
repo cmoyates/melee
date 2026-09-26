@@ -75,6 +75,12 @@ def main(argv=None):
     budget.add_argument("--limit-usd", default="1")
     budget.add_argument("--max-requests", type=int, default=600)
     budget.add_argument("--max-input-tokens", type=int, default=1000000)
+    continuation = provider_commands.add_parser("continue-budget", help="Permanently seal a parent and carry only unspent dollars into one bounded child")
+    continuation.add_argument("--from-directory", required=True)
+    continuation.add_argument("--directory", required=True)
+    continuation.add_argument("--deadline-utc", required=True)
+    continuation.add_argument("--max-requests", type=int, required=True)
+    continuation.add_argument("--max-input-tokens", type=int, required=True)
     provider_probe = provider_commands.add_parser("probe", help="Make one paid synthetic Decisions request, with no retries")
     provider_probe.add_argument("--budget", required=True)
     provider_probe.add_argument("--timeout", type=float, default=5)
@@ -149,6 +155,10 @@ def main(argv=None):
             if args.provider_command == "init-budget":
                 ledger = SpendLedger.create(root, args.directory, deadline_utc=args.deadline_utc,
                     limit_usd=args.limit_usd, max_requests=args.max_requests, max_input_tokens=args.max_input_tokens)
+                report = ledger.report()
+            elif args.provider_command == "continue-budget":
+                ledger = SpendLedger.continue_experiment(root, args.from_directory, args.directory,
+                    deadline_utc=args.deadline_utc, max_requests=args.max_requests, max_input_tokens=args.max_input_tokens)
                 report = ledger.report()
             elif args.provider_command == "budget":
                 report = SpendLedger(owned_path(root, args.directory) / "spend.jsonl").report()

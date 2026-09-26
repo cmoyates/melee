@@ -60,6 +60,8 @@ def preflight(root, policy, budget_directory, max_requests):
         raise ProviderError("unverified_model_alias")
     ledger = SpendLedger(owned_path(root, budget_directory) / "spend.jsonl")
     report = ledger.report()
+    if report.get("sealed"):
+        raise BudgetError("Experiment budget is sealed")
     if datetime.fromisoformat(report["deadline_utc"]) <= datetime.now(timezone.utc):
         raise BudgetError("Budget deadline reached")
     if report["reservation_exceeded"]:
@@ -96,6 +98,8 @@ class ProviderBackend:
             raise ProviderError("invalid_run_request_limit")
         self.ledger = SpendLedger(owned_path(root, budget_directory) / "spend.jsonl")
         self.budget_before = self.ledger.report()
+        if self.budget_before.get("sealed"):
+            raise BudgetError("Experiment budget is sealed")
         self.max_requests = max_requests
         global_remaining = (datetime.fromisoformat(self.budget_before["deadline_utc"]) - datetime.now(timezone.utc)).total_seconds()
         self.run_deadline_ns = min(run_deadline_ns, time.monotonic_ns() + int(global_remaining * 1e9))

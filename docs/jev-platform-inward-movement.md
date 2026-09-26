@@ -25,6 +25,25 @@ both side platforms, both top-platform endpoints, the retained native sample,
 the unchanged normal interior margin, outward refusal, unknown/airborne/damage
 refusal, and actual inward fallback/heuristic selection.
 
-Fresh live escape validation is pending. This slice does not implement dropping
+Live capture `match-bc351343464341e1a829d6c94b8cd54e` ran for 300 seconds
+on Battlefield against Mario CPU 3 using the free delayed-provider fixture.
+All 17,394 gameplay frames passed raw integrity and exact semantic/controller
+replay with unchanged launch sources. Seven moves used the newly allowed
+inward path: five on the right platform and two on the left. Six observed the
+required six-unit displacement, native ground movement, directional input and
+neutral release; one was interrupted by hitlag before acknowledgement.
+The exact previously trapped left-platform position, x=-19.995738983154297,
+escaped to x=-26.35573959350586 at frame 15423 and completed release at 15424.
+The mirrored right inner edge and right outer edge also completed. The top
+platform and left outer edge have host coverage but were not exercised live.
+
+The partial match ended at Fox 1 stock, Mario 4; no final result is claimed.
+There were zero observation gaps, recorder losses or replay errors; controllers
+neutralized and owned processes stopped. No paid provider was contacted.
+Frame SHA-256: `54593c50c4b48c45a8cfcb50b8d82f1da664f76657be65d3a8654dca87be2ab1`.
+Packet SHA-256: `6175d3dd4a847d75a2600eba4399b7b14d557b73561bf201693f3bb52b9de4f6`.
+Private raw motion diagnostics are retained alongside the full replay audit.
+
+This slice does not implement dropping
 through platforms, directed platform jumps or complete navigation between
 support surfaces, and it does not establish improved playing strength.

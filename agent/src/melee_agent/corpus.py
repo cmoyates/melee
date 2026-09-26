@@ -11,7 +11,7 @@ from .config import owned_path
 from .incidents import open_regular, read_json, stream_records
 from .matches import locate_run
 from .semantic import SemanticHistory, canonical, compact_observation
-from .tactical_choices import LABELS as CANDIDATE_ORDER, PROFILE, legal_candidates
+from .tactical_choices import PROFILE, legal_candidates, profile_labels
 from .source_states import captured_observation
 from .trace_limits import MAX_SOURCE_BYTES
 
@@ -40,14 +40,15 @@ def episode_split(run_id, episode):
     return "train" if number < 6 else "tuning" if number < 8 else "held_out"
 
 
-def choose_sources(root, limit):
+def choose_sources(root, limit, *, profile=PROFILE):
+    profile_labels(profile)
     candidates = []
     for folder in (root/"build/jev/runs").glob("match-*"):
         if not folder.is_dir() or folder.is_symlink() or not (folder/"summary.json").is_file():
             continue
         summary = read_json(folder/"summary.json", 1048576)
-        if summary.get('candidate_profile',PROFILE) != PROFILE:
-            continue  # This compiler/evaluator still targets the atomic catalog.
+        if summary.get('candidate_profile',PROFILE) != profile:
+            continue
         if (summary.get("status") not in ("captured", "complete", "scenario_recorded", "skills_verified") or
                 summary.get("replay_errors") or not summary.get("neutralized") or not summary.get("worker_stopped") or
                 not summary.get("emulator_stopped")):
@@ -84,15 +85,16 @@ def response_annotations(row):
     return replies
 
 
-def generate_cases(root, runs, maximum_states):
+def generate_cases(root, runs, maximum_states, *, profile=PROFILE):
+    profile_labels(profile)
     base_quota, remainder = divmod(maximum_states, len(runs))
     total = 0
     for run_index, run_id in enumerate(runs):
         quota = base_quota+int(run_index < remainder)
         folder = locate_run(root, run_id)
         summary = read_json(folder/"summary.json", 1048576)
-        if summary.get('candidate_profile',PROFILE) != PROFILE:
-            raise ValueError('Atomic corpus cannot relabel an experimental candidate profile')
+        if summary.get('candidate_profile',PROFILE) != profile:
+            raise ValueError('Corpus cannot relabel a different candidate profile')
         expected_frames = sum(row.get("observations", 0) for row in summary.get("episodes", []))
         history = SemanticHistory()
         previous_trace = None
@@ -116,9 +118,9 @@ def generate_cases(root, runs, maximum_states):
             source_index += 1
             if not selected or emitted >= quota:
                 continue
-            labels = legal_candidates(observation)
+            labels = legal_candidates(observation,profile)
             state = compact_observation(observation, labels, active_skill=active, skill_known=known, history=prior)
-            yield {"schema_version": 1, "source": {"run_id": run_id, "episode": observation.episode,
+            yield {"schema_version": 1, 'candidate_profile':profile, "source": {"run_id": run_id, "episode": observation.episode,
                 "frame": observation.frame, "observation_schema_version": row["control"]["observation"]["schema_version"],
                 "raw_record_sha256": hashlib.sha256(line).hexdigest()},
                 "split": episode_split(run_id, observation.episode), "state": state.wire(), "state_sha256": state.sha256,
@@ -152,10 +154,10 @@ def summarize_cases(cases):
         "evaluation_limit": "Extraction/legality corpus only. Sparse historical responses refer to their own earlier source frames and raw representation; they do not score the new compact representation."}
 
 
-def build_corpus(root, maximum_states=5000, source_limit=12):
+def build_corpus(root, maximum_states=5000, source_limit=12, *, profile=PROFILE):
     if type(maximum_states) is not int or not 1000 <= maximum_states <= 10000 or type(source_limit) is not int or not 3 <= source_limit <= 24:
         raise ValueError("Invalid corpus bounds")
-    runs = choose_sources(root, source_limit)
+    runs = choose_sources(root, source_limit,profile=profile)
     if len(runs) < 3:
         raise ValueError("Corpus needs at least three compatible completed source sessions")
     corpus_id = "corpus-"+uuid.uuid4().hex
@@ -163,17 +165,18 @@ def build_corpus(root, maximum_states=5000, source_limit=12):
     folder.mkdir(parents=True)
     sources = {run_id: {name: digest(locate_run(root, run_id)/name) for name in ("frames.jsonl", "summary.json")}
         for run_id in runs}
-    cases = list(generate_cases(root, runs, maximum_states))
+    cases = list(generate_cases(root, runs, maximum_states,profile=profile))
     raw = "".join(canonical(row)+"\n" for row in cases).encode()
     if len(raw) > MAX_CORPUS_BYTES:
         raise ValueError("Corpus artifact exceeds bound")
     (folder/"states.jsonl").write_bytes(raw)
     manifest = {"schema_version": 1, "corpus_id": corpus_id, "source_runs": runs, "source_sha256": sources,
         "compiler_sha256": compiler_hashes(),
-        "maximum_states": maximum_states, "split_by": "episode", "candidate_order": list(CANDIDATE_ORDER),
+        "maximum_states": maximum_states, "split_by": "episode", 'candidate_profile':profile,
+        "candidate_order": list(profile_labels(profile)),
         "state_file_sha256": hashlib.sha256(raw).hexdigest(), "summary": summarize_cases(cases)}
     (folder/"manifest.json").write_text(json.dumps(manifest, indent=2)+"\n")
-    return {"corpus_id": corpus_id, **manifest["summary"]}
+    return {"corpus_id": corpus_id, 'candidate_profile':profile, **manifest["summary"]}
 
 
 def validate_corpus(root, corpus_id):
@@ -181,8 +184,11 @@ def validate_corpus(root, corpus_id):
         raise ValueError("Invalid corpus identifier")
     folder = owned_path(root, "build/jev/corpora/"+corpus_id)
     manifest = read_json(folder/"manifest.json", 1048576)
+    profile = manifest.get('candidate_profile',PROFILE)
+    if type(profile) is not str:
+        raise ValueError('Invalid corpus candidate profile')
     if (manifest.get("schema_version") != 1 or manifest.get("corpus_id") != corpus_id or
-            manifest.get("candidate_order") != list(CANDIDATE_ORDER) or manifest.get("split_by") != "episode" or
+            manifest.get("candidate_order") != list(profile_labels(profile)) or manifest.get("split_by") != "episode" or
             type(manifest.get("maximum_states")) is not int or not 1000 <= manifest["maximum_states"] <= 10000 or
             not isinstance(manifest.get("source_runs"), list) or not 3 <= len(manifest["source_runs"]) <= 24 or
             any(type(run_id) is not str for run_id in manifest["source_runs"]) or
@@ -197,8 +203,8 @@ def validate_corpus(root, corpus_id):
     path = folder/"states.jsonl"
     if path.stat().st_size > MAX_CORPUS_BYTES or digest(path) != manifest["state_file_sha256"]:
         raise ValueError("Corpus state file changed")
-    expected = list(generate_cases(root, manifest["source_runs"], manifest["maximum_states"]))
+    expected = list(generate_cases(root, manifest["source_runs"], manifest["maximum_states"],profile=profile))
     actual = [row for _, row in stream_records(path, MAX_CORPUS_BYTES)]
     if actual != expected or summarize_cases(actual) != manifest["summary"]:
         raise ValueError("Corpus state, split, history or label no longer matches its source")
-    return {"corpus_id": corpus_id, "status": "pass", "recompiled_states": len(actual), **manifest["summary"]}
+    return {"corpus_id": corpus_id, 'candidate_profile':profile, "status": "pass", "recompiled_states": len(actual), **manifest["summary"]}

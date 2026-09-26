@@ -64,6 +64,9 @@ def trace_lines(handle, supplement):
 
 def inspect_policy(run, *, require_participation=True):
     summary = json.loads((run / "summary.json").read_text())
+    if 'local_policy' in summary:
+        from .local_policy_evidence import inspect_local_policy
+        return inspect_local_policy(run)
     launch = json.loads((run / "launch.json").read_text())
     errors, outcomes, faults = Counter(), Counter(), Counter()
     acknowledgements, input_owners = Counter(), Counter()

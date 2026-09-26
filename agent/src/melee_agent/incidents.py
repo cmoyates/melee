@@ -18,7 +18,7 @@ from .doctor import STOCK_DISC_SHA1
 from .engine import BUTTONS, Decision, FrameExecutor, Observation, Packet
 from .trace_limits import MAX_PREFIX_BYTES, MAX_SOURCE_BYTES
 
-CONTRACT_MODULES = ("engine.py", "skills.py", "ground_combat.py", "aerial.py", "stage.py", "rules.py", "async_policy.py", "fox_reflex.py", "provider.py", "live_provider.py", "semantic.py", "native_motions.py")
+CONTRACT_MODULES = ("engine.py", "skills.py", "ground_combat.py", "aerial.py", "stage.py", "rules.py", "async_policy.py", "fox_reflex.py", "provider.py", "live_provider.py", "semantic.py", "native_motions.py", "tactical_choices.py")
 MAX_RECORDS = 40_000
 LIBMELEE_COMMIT = "bce21f09984b286e6d36bfd2939e4cd4691f94c2"
 

@@ -14,6 +14,7 @@ from .rules import STARTING_STOCKS
 from .recorder import FrameRecorder, RecorderError
 from .raw_observation import LifeTracker, RawStreamTap, player_record, stage_record
 from .input_trace import InputTrace
+from .local_combat_policy import LOCAL_MODES
 
 
 class StopRequested(BaseException):
@@ -74,7 +75,7 @@ def run(run_dir):
         elif options["policy"] == "skill-check":
             from .skill_check import SkillCheckPolicy
             policy = SkillCheckPolicy(options["skill_repeats"])
-        elif options["policy"] in ("heuristic", "random-legal"):
+        elif options["policy"] in LOCAL_MODES:
             from .local_combat_policy import LocalCombatPolicy
             policy = LocalCombatPolicy(options["policy"])
         elif options["policy"] in ("delayed-fake", "jev", "faults"):
@@ -271,7 +272,7 @@ def run(run_dir):
             faults.release.set()
         if policy is not None and hasattr(policy, "close"):
             try:
-                outcome["local_policy" if options["policy"] in ("heuristic", "random-legal") else "async_policy"] = policy.close()
+                outcome["local_policy" if options["policy"] in LOCAL_MODES else "async_policy"] = policy.close()
             except Exception:
                 outcome.update(status="error", failure_reason="policy_shutdown_failed")
         if options["policy"] == "skill-check" and policy is not None:

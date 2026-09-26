@@ -465,6 +465,12 @@ rtk proxy agent/.venv/bin/melee-agent capture --policy random-legal --duration 1
 
 These are offline provider modes. Jab, down-tilt and grab share observed skill
 commitment and local recovery; both selectors use the same legal candidates.
+For comparisons with the grounded Jev catalog, use the separately named
+`heuristic-tactical` and `random-tactical` profiles. They share the complete
+legal choice set with Jev; local timing and provider latency remain distinct.
+See [shared tactical baselines](../docs/jev-tactical-baselines.md) for the
+profile, fixed CLI seed, retained historical modes and live validation limits.
+
 See the [grounded combat contract](../docs/jev-grounded-combat-contract.md) for
 motion, contact, capture and completion distinctions and current live evidence.
 

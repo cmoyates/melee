@@ -47,4 +47,33 @@ with the later lifecycle, teeter and aerial changes. Its failure is preserved.
 383 asset-free host tests pass, including 15 batch tests for ordered checkpoints,
 crash recovery, failed-slot retention, changed source/artifacts, immutable
 deadlines, metadata ambiguity, credential stripping, watchdog EOF and separate
-cohort links. Native checkpoint/resume evidence is pending.
+cohort links. Agent-offline and native-build CI pass. Repository-wide
+clang-format currently reports existing native/Showboat files outside this
+change; this is not a completely green repository-wide CI result.
+
+Native pilot `batch-03c15ea4fa8f49d4a244b032d04cc415` fixed two fresh matches
+with `fox-aerial-v1` and 600-second caps. Its first random match,
+`match-71f28b4e2dfd4ce793edb633da2e26c5`, completed a 0-3 loss in 286.84 seconds.
+The runner audited all 16,320 game frames, exact control packets, raw integrity,
+source identity, rules/result and owned cleanup, then stopped at its requested
+one-match checkpoint. A separate `batch inspect` reverified the retained hashes.
+All four spend journals matched the post-aerial-probe checkpoint. `batch resume`
+then completed heuristic match `match-7471080391724c6a93fc481d665532d5`: a 0-3
+loss in 436.91 seconds, with all 25,348 game frames replaying exactly. Both raw
+audits, source/rules/result and cleanup checks passed. A final independent
+`batch inspect` rechecked both results and their artifact hashes, reporting two
+verified matches, two losses and zero failed attempts. Spending hashes remained
+unchanged. The pilot proves the checkpoint workflow, not the ten-match J19 gate
+or comparative strength. Its complete journal SHA-256 is
+`2f745a47f189274736b327c6c4cc053346b2f5c40ce47bcd1c1220663d7a2488`.
+
+The completed pilot recording supplied a third compatible session for aerial
+corpus `corpus-98380674b9a740be9fe9d47a42960c7f`. All 4,959 states recompiled
+exactly with network/process creation blocked: 3,301 training states and 1,658
+tuning states, with no held-out episode. Sources include the prior paid capture,
+free asynchronous match and this random match. Six provider and 58 simulated
+replies are sparse historical annotations, not optimal-action labels. No new
+evaluation, tuning or provider call was performed by this extraction.
+
+States SHA-256: `3203508bae3b924830c30112a7073697fa86d546abf40338f4b391b65b929817`.
+Manifest SHA-256: `c9e5847d84ed27fdf29eb5b19e830c89b90ffc9b3235b748b14274f0012d0548`.

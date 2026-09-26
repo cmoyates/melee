@@ -6,7 +6,7 @@ import random
 from .fox_reflex import FoxReflex
 from .ground_combat import combat_candidates, select_combat
 from .skills import SkillArbiter, can_start, relative_skill
-from .tactical_choices import PROFILE, OPTION_PROFILE, legal_candidates, profile_labels
+from .tactical_choices import PROFILE, legal_candidates, profile_labels
 
 LOCAL_MODES = ("heuristic", "random-legal", "heuristic-tactical", "random-tactical")
 
@@ -57,7 +57,10 @@ class LocalCombatPolicy:
                 label = self.rng.choice(tactical) if tactical else None
             else:
                 label = select_combat(observation, "heuristic" if tactical is not None else self.mode, self.rng)
-                if label is None and self.profile == OPTION_PROFILE and 'approach_jab' in tactical:
+                if (label is None and tactical is not None and 'sh_nair' in tactical and
+                        not b.grounded and abs(b.x-a.x) <= 22 and 0 < b.y-a.y <= 20):
+                    label = 'sh_nair'
+                if label is None and tactical is not None and 'approach_jab' in tactical:
                     label = 'approach_jab'
             if label is None and tactical != ():
                 label = ("approach" if can_start(relative_skill("approach", observation), observation) is None else

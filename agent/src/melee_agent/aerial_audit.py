@@ -9,13 +9,24 @@ from .stage import support_surface
 
 
 def audit_aerial(name, report, rows, errors):
-    evidence = {"short_hop_observed": False, "aerial_acknowledged": False, "completed": False,
-        "lcancel_attempt_observed": False, "nair_landing_frames": None, "reduced_landing_lag": None}
+    aerial = None
+    completed = False
     try:
+        completed = report["result"]["status"] == "succeeded"
         skill = report["skill"]
         if skill != rows[-1]["scenario"]["skill"]:
             errors["aerial_report_trace_mismatch"] += 1
         aerial = (skill.get("event") or {}).get("aerial") or (skill.get("active") or {}).get("aerial")
+    except (KeyError, TypeError, IndexError):
+        errors["aerial_report_missing"] += 1
+    return audit_aerial_trace(name, aerial, rows, errors, completed=completed)
+
+
+def audit_aerial_trace(name, aerial, rows, errors, *, completed):
+    """Raw primitive evidence shared by mechanical and asynchronous trials."""
+    evidence = {"short_hop_observed": False, "aerial_acknowledged": False, "completed": False,
+        "lcancel_attempt_observed": False, "nair_landing_frames": None, "reduced_landing_lag": None}
+    try:
         if aerial is None:
             errors["aerial_report_missing"] += 1
             return evidence
@@ -49,7 +60,7 @@ def audit_aerial(name, report, rows, errors):
                 raw(attempt)["airborne"] == 1 and combat_counters(raw(attempt)) == (0, 0))
             if not evidence["lcancel_attempt_observed"]:
                 errors["lcancel_attempt_not_observed"] += 1
-        if report["result"]["status"] == "succeeded":
+        if completed:
             landing, end = aerial["landing_frame"], aerial["end_frame"]
             evidence["completed"] = (evidence["aerial_acknowledged"] and aerial["status"] == "succeeded" and
                 landing is not None and ack < landing <= end == rows[-1]["frame"] and
@@ -68,7 +79,7 @@ def audit_aerial(name, report, rows, errors):
                     evidence["nair_landing_frames"] = measured
         if aerial["reduced_landing_lag"] is not None:
             errors["uncalibrated_lcancel_success_claim"] += 1
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, IndexError):
         errors["aerial_evidence_unavailable"] += 1
     return evidence
 

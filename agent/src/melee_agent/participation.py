@@ -12,6 +12,7 @@ DEFINITIONS = {
     'airborne': 'Fox is airborne without the preceding conditions.',
     'grounded_atomic_combat': 'At least one locally legal jab, down tilt or grab.',
     'grounded_option_only': 'Approach-jab is legal but no atomic combat action is legal.',
+    'grounded_aerial_only': 'Short-hop aerial is legal but no atomic combat or approach-jab action is legal.',
     'grounded_other': 'Other grounded state.',
     'unavailable_source': 'The source observation is unavailable in the retained recording or bounded delivery audit window.',
 }
@@ -32,6 +33,8 @@ def opportunity_phase(observation,profile):
         return 'grounded_atomic_combat'
     if 'approach_jab' in candidates:
         return 'grounded_option_only'
+    if 'sh_nair' in candidates:
+        return 'grounded_aerial_only'
     return 'grounded_other'
 
 

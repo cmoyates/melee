@@ -63,7 +63,7 @@ def main(argv=None):
     corpus_build.add_argument("--split-by", choices=("episode",), default="episode")
     corpus_build.add_argument("--maximum-states", type=int, default=5000)
     corpus_build.add_argument("--source-limit", type=int, default=12)
-    corpus_build.add_argument('--profile',choices=('grounded-tactical-v1','approach-jab-v1'),default='grounded-tactical-v1')
+    corpus_build.add_argument('--profile',choices=tuple(PROFILES),default=PROFILE)
     corpus_verify = corpus_commands.add_parser("validate", aliases=["verify"])
     corpus_verify.add_argument("corpus_id")
     corpus_evaluate = corpus_commands.add_parser("evaluate", help="Explicit paid frozen-state Decisions evaluation; no emulator")

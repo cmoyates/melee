@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -124,13 +125,23 @@ class SpendLedger:
             deadline = datetime.fromisoformat(header["deadline_utc"])
             require(deadline.tzinfo is not None)
             reservations, settled = {}, {}
-            for row in records[1:]:
+            seal = None
+            for index, row in enumerate(records[1:], 1):
                 if row["kind"] == "reserve":
                     require(set(row) == {"kind", "id", "cost_nano_usd", "input_tokens", "payload_sha256"})
                     require(row["id"] not in reservations and type(row["id"]) is str)
                     require(positive_int(row["cost_nano_usd"]) and positive_int(row["input_tokens"]))
                     require(type(row["payload_sha256"]) is str and len(row["payload_sha256"]) == 64)
                     reservations[row["id"]] = row
+                elif row["kind"] == "seal":
+                    require(index == len(records)-1)
+                    require(set(row) == {"kind", "directory", "deadline_utc", "limit_nano_usd", "max_requests", "max_input_tokens"})
+                    directory = row["directory"]
+                    require(type(directory) is str and len(directory) <= 512 and directory.startswith("build/jev/"))
+                    require(all(part not in ("", ".", "..") for part in directory.split("/")))
+                    child_header = {key: value for key, value in row.items() if key not in ("kind", "directory")}
+                    SpendLedger._state([{**child_header, "kind": "budget", "schema_version": 1}])
+                    seal = row
                 else:
                     require(row["kind"] == "settle")
                     require(set(row) == {"kind", "id", "cost_nano_usd", "input_tokens"})
@@ -142,7 +153,10 @@ class SpendLedger:
             # An unexpected provider charge above a reservation permanently blocks more calls.
             overrun = any(row["cost_nano_usd"] > reservations[key]["cost_nano_usd"] or
                             row["input_tokens"] > reservations[key]["input_tokens"] for key, row in settled.items())
-            return header, reservations, settled, sum(r["cost_nano_usd"] for r in rows), sum(r["input_tokens"] for r in rows), overrun
+            cost = sum(r["cost_nano_usd"] for r in rows)
+            if seal is not None:
+                require(not overrun and seal["limit_nano_usd"] == header["limit_nano_usd"]-cost)
+            return header, reservations, settled, cost, sum(r["input_tokens"] for r in rows), overrun
         except (AssertionError, KeyError, IndexError, TypeError, ValueError):
             raise BudgetError("Budget journal is invalid") from None
 
@@ -152,7 +166,10 @@ class SpendLedger:
         if type(payload_sha256) is not str or len(payload_sha256) != 64 or any(c not in "0123456789abcdef" for c in payload_sha256):
             raise BudgetError("Invalid payload digest")
         with self._locked() as handle:
-            header, reserved, _, cost, tokens, overrun = self._state(self._read(handle))
+            records = self._read(handle)
+            header, reserved, _, cost, tokens, overrun = self._state(records)
+            if records[-1]["kind"] == "seal":
+                raise BudgetError("Experiment budget is sealed")
             if datetime.now(timezone.utc) >= datetime.fromisoformat(header["deadline_utc"]):
                 raise BudgetError("Experiment deadline reached")
             if (overrun or len(reserved) >= header["max_requests"] or cost + cost_nano_usd > header["limit_nano_usd"] or
@@ -168,14 +185,79 @@ class SpendLedger:
         if type(input_tokens) is not int or input_tokens < 0:
             raise BudgetError("Invalid provider token usage")
         with self._locked() as handle:
-            _, reserved, settled, _, _, _ = self._state(self._read(handle))
+            records = self._read(handle)
+            _, reserved, settled, _, _, _ = self._state(records)
+            if records[-1]["kind"] == "seal":
+                raise BudgetError("Experiment budget is sealed")
             if request_id not in reserved or request_id in settled:
                 raise BudgetError("Unknown or already settled reservation")
             self._append(handle, {"kind": "settle", "id": request_id, "cost_nano_usd": cost, "input_tokens": input_tokens})
 
     def report(self):
         with self._locked() as handle:
-            header, reserved, settled, cost, tokens, overrun = self._state(self._read(handle))
+            records = self._read(handle)
+            header, reserved, settled, cost, tokens, overrun = self._state(records)
         return {**header, "requests": len(reserved), "unsettled_requests": len(reserved) - len(settled),
                 "accounted_nano_usd": cost, "reported_nano_usd": sum(r["cost_nano_usd"] for r in settled.values()),
-                "accounted_input_tokens": tokens, "reservation_exceeded": overrun}
+                "accounted_input_tokens": tokens, "reservation_exceeded": overrun,
+                **({"sealed": True, "continuation": records[-1]} if records[-1]["kind"] == "seal" else {})}
+
+    @classmethod
+    def continue_experiment(cls, root, parent_directory, directory, *, deadline_utc, max_requests, max_input_tokens):
+        """Seal one parent and assign its unspent money to exactly one child.
+
+        Call after provider workers stop. Unknown charges stay fully reserved;
+        even late settlements cannot refund a sealed parent's accounting.
+        Identical retries reuse an existing child without resetting it. An
+        interrupted initialization with no child journal fails closed.
+        """
+        root = root.resolve()
+        parent_folder = owned_path(root, parent_directory)
+        child_folder = owned_path(root, directory)
+        if parent_folder == child_folder:
+            raise BudgetError("Continuation requires a separate directory")
+        deadline = datetime.fromisoformat(deadline_utc)
+        if (deadline.tzinfo is None or deadline <= datetime.now(timezone.utc) or
+                not positive_int(max_requests) or not positive_int(max_input_tokens)):
+            raise BudgetError("Invalid continuation bounds")
+        parent = cls(parent_folder/"spend.jsonl")
+        with parent._locked() as handle:
+            records = parent._read(handle)
+            header, _, _, cost, _, overrun = parent._state(records)
+            remaining = header["limit_nano_usd"]-cost
+            if overrun or remaining <= 0:
+                raise BudgetError("No conservatively unspent budget")
+            seal = {"kind": "seal", "directory": str(child_folder.relative_to(root)),
+                "deadline_utc": deadline.astimezone(timezone.utc).isoformat(), "limit_nano_usd": remaining,
+                "max_requests": max_requests, "max_input_tokens": max_input_tokens}
+            if records[-1]["kind"] == "seal":
+                if records[-1] != seal:
+                    raise BudgetError("Sealed continuation cannot be reconfigured")
+                if not (child_folder/"spend.jsonl").is_file():
+                    raise BudgetError("Sealed continuation journal is missing")
+            else:
+                if child_folder.exists():
+                    raise BudgetError("Continuation directory already exists")
+                parent._state([*records, seal])
+                parent._append(handle, seal)
+            # Keep the parent lock until child initialization completes. A
+            # competing caller cannot authorize a second destination.
+            child = cls.create(root, seal["directory"], deadline_utc=seal["deadline_utc"],
+                limit_usd=str(Decimal(remaining)/NANO_USD), max_requests=max_requests, max_input_tokens=max_input_tokens)
+            handle.seek(0)
+            funding = {"schema_version": 1, "parent_ledger": str(parent.path.relative_to(root)),
+                "parent_sha256": hashlib.sha256(handle.read()).hexdigest(),
+                "parent_limit_nano_usd": header["limit_nano_usd"], "parent_accounted_nano_usd": cost,
+                "child_limit_nano_usd": remaining, "parent_sealed": True}
+            provenance = child_folder/"funding.json"
+            try:
+                fd = os.open(provenance, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            except FileExistsError:
+                if provenance.is_symlink() or provenance.stat().st_size > 65536 or json.loads(provenance.read_text()) != funding:
+                    raise BudgetError("Continuation funding provenance mismatch")
+            else:
+                with os.fdopen(fd, "w") as output:
+                    output.write(json.dumps(funding, sort_keys=True)+"\n")
+                    output.flush()
+                    os.fsync(output.fileno())
+        return child

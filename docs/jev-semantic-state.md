@@ -86,13 +86,12 @@ Payload reports include UTF-8 byte sizes and a rough bytes/4 token estimate.
 That estimate is not the provider tokenizer or billed usage. Paid validation
 must report the actual returned usage separately.
 
-The 1,000-state provider/recorded-response evaluation acceptance remains open.
-An extraction corpus with thousands of rows is not thousands of evaluated Jev
-decisions. Sparse historical answers do not validate this new representation.
-Live semantic transport and complete incident replay evidence are recorded
-below. Provider coverage remains nineteen valid frozen-state answers plus
-thirty-nine valid live answers, rather than one thousand evaluated decisions.
-No win-rate or personality-control claim follows from these results.
+The ordered 1,000-state evaluation is now recorded below: all selected states
+were attempted once, with 983 valid answers and seventeen retained refusals.
+Sparse historical answers are separate annotations, not validation labels for
+the new representation. Live semantic transport and complete incident replay
+evidence are reported separately. No win-rate or personality-control claim
+follows from these results.
 
 The integrated host suite passes 267 tests. A ninety-second delayed-fake
 Battlefield capture (`match-179d2cdf68234d3ebac9540b826135a9`) retained 4,803
@@ -133,6 +132,55 @@ Fox had three stocks and Mario four at the bounded end. The episode covered
 110.83 observed seconds after setup, so the older J11 two-minute live-acceptance
 field is correctly false. This is transport/integration evidence, not a full
 match, playing-strength result, or satisfied 1,000-state evaluation gate.
+
+## Ordered 1,000-state evaluation
+
+On September 26, evaluation `evaluation-a4001c3a2aca4009aed30c97c4e156b9`
+attempted 1,000 unique ordered states from
+`corpus-5104654e16d645f28d040422cc73c4be`, once each, without retries. All
+3,988 corpus states recompiled exactly before and after evaluation. Independent
+checks matched every response to the selected source/frame/state digest and
+verified the corpus, evaluation-code and response-file hashes.
+
+There were 983 validated answers and seventeen `invalid_distribution_sum`
+refusals. The CLI correctly returned `partial` and exit status 1 because some
+answers were invalid, although all 1,000 selected states were attempted. Invalid
+distributions were neither normalized nor retried. Every valid answer resolved
+to `typesafe/jev-1.13-20260917`.
+
+| Episode split | Attempted | Validated |
+| --- | ---: | ---: |
+| Train | 662 | 650 |
+| Tuning | 209 | 205 |
+| Held out | 129 | 128 |
+
+Valid choices were approach 768, jump 102, down-tilt 85, grab sixteen, jab seven
+and neutral five. Neither shield nor retreat was selected. These frequencies
+describe this corpus and prompt; they are not correctness scores. There were
+310 valid answers with confidence below 0.5. The frozen evaluator does not apply
+these choices to a controller or claim they would pass live freshness/context
+checks.
+
+Valid reply latency was median 446.9 ms, p95 545.6 ms and maximum 1,434.0 ms.
+Median billed input was 1,739 tokens; total billed input, including refused
+answers, was 1,744,034 tokens. All 1,000 charges settled, totaling $0.073249428.
+Across retained experiment ledgers, total accounted spend was $0.098803958 of
+the original $1, including $0.008 in two earlier uncertain reservations. Budget
+continuation transferred only remaining dollars; see the
+[continuation contract](jev-budget-continuation.md).
+
+Replay-only label agreement is unavailable: the corpus's thirteen historical
+provider annotations and seventy simulated annotations all refer to an older
+raw representation and their own source frames, with no compact-state binding.
+There are zero eligible same-representation provider label pairs. Comparing
+them to newly generated delivery-frame states would mislabel the evidence.
+The live pilot above remains the separate applied-decision result; this frozen
+evaluation launches no emulator and sends no controller inputs.
+
+Response-file SHA-256:
+`33119813d0bffd1a40887a6137dd113b846172618840ec48c7a3147e84aa25bd`.
+Raw states, replies, usage journals and the independent audit remain private
+under ignored `build/jev/`.
 
 ## Explicit paid frozen-state evaluation
 

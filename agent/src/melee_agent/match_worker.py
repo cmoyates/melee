@@ -196,7 +196,7 @@ def run(run_dir):
                                     for p, v in state.players.items()}}
                     if hasattr(policy, "trace"):
                         record["scenario" if options["policy"] == "scenario" else "skill"] = policy.trace()
-                    if options["policy"] == "scenario" and policy.complete:
+                    if options["policy"] == "scenario" and policy.ready_to_stop:
                         pending_record = record
                         frames.publish(record)
                         pending_record = None

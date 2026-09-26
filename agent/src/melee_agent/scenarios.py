@@ -84,6 +84,8 @@ RECOVERY_SUITE = tuple(ScenarioV1("recovery-"+height+"-"+("left" if direction < 
 COMBAT_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
     kind, direction, measured_policy="ground-combat-v1")
     for kind, name in COMBAT_KINDS.items() for direction in (-1, 1))
+COMBAT_CALIBRATION_SUITE = tuple(ScenarioV1("calibration-"+spec.name, spec.kind, spec.direction,
+    measured_policy=spec.measured_policy) for spec in COMBAT_SUITE)
 AERIAL_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
     kind, direction, measured_policy="aerial-v1")
     for kind, name in AERIAL_KINDS.items() for direction in (-1, 1))
@@ -100,6 +102,8 @@ def find_suite(name):
         return RECOVERY_SUITE
     if name == "ground-combat-v1":
         return COMBAT_SUITE
+    if name == "ground-combat-calibration-v1":
+        return COMBAT_CALIBRATION_SUITE
     if name == "aerial-v1":
         return AERIAL_SUITE
     if name == "aerial-calibration-v1":
@@ -110,13 +114,15 @@ def find_suite(name):
 
 
 def scenario_suite(spec):
+    if spec in COMBAT_CALIBRATION_SUITE:
+        return "ground-combat-calibration-v1"
     if spec in AERIAL_CALIBRATION_SUITE:
         return "aerial-calibration-v1"
     return {"fox-reflex-v1": "recovery-v1", "ground-combat-v1": "ground-combat-v1", "aerial-v1": "aerial-v1", "approach-jab-v1":"approach-jab-v1"}.get(spec.measured_policy, "mechanics-v1")
 
 
 def find_scenario(name):
-    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE+AERIAL_SUITE+OPTION_SUITE+AERIAL_CALIBRATION_SUITE:
+    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE+AERIAL_SUITE+OPTION_SUITE+AERIAL_CALIBRATION_SUITE+COMBAT_CALIBRATION_SUITE:
         if spec.name == name:
             return spec
     raise ValueError("Unknown fixed mechanical scenario")

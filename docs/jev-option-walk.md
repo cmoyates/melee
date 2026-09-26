@@ -26,5 +26,16 @@ Raw option evidence now requires walking packets and native walking motion;
 full-stick or dash substitutions fail. Host coverage includes mirrored packets,
 dash refusal/abort, waiting for an existing dash to settle, old movement behavior,
 exact delayed/local option replay, cancellation and raw evidence tampering.
-Fresh live walking trials are pending. The three right setup failures remain
-an explicit separate limitation; this change does not weaken their predicate.
+All 336 host tests pass. Fresh six-trial walking suite
+`scenarios-6431388d85ba438ba16e3297a80e694d` retained one complete left trial,
+two left damage interruptions, one right guard interruption and two right setup
+timeouts. All 2,780 game frames replayed exactly; every raw audit and source
+identity check passed. No provider was contacted. Summary SHA-256:
+`f105bbda7a2f350b435892f169190032b495d95c26978cc36bc5dce8c95871a6`.
+
+The complete trial `match-d2ad0fed0dc74f1abd475b8170cc5c28` pressed jab at frame
+208, observed native jab at 209, paired hitlag/damage contact at 210, and completed
+with actionable neutral release at 229. Another left trial acknowledged jab
+before damage aborted it. The pilot gate still fails for the right side. These
+twelve total trials are retained across both implementations; the result is
+evidence of one working live sequence, not a reliability or strength claim.

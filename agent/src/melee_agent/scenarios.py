@@ -250,12 +250,13 @@ class ScenarioPolicy:
         self.setup_phase = "combat_opportunity"
         direction = self.spec.direction
         distance = (b.x-a.x)*direction
+        option = self.spec.kind in OPTION_KINDS
         toward_air, away_air = ("right", "left") if direction > 0 else ("left", "right")
         if self.combat_crossing:
             self.setup_phase = "crossing_short_hop"
             if not a.grounded:
                 self.crossing_airborne = True
-                return away_air if distance < 8 else toward_air
+                return away_air if distance < (24 if option else 8) else toward_air
             if self.crossing_airborne or observation.frame-self.crossing_started >= 8:
                 self.combat_crossing = False
                 return "wait"
@@ -268,6 +269,10 @@ class ScenarioPolicy:
             return "left" if surface == "right" else "right"
         if not a.grounded:
             return "left" if a.x > 0 else "right"
+        if option and support_surface(b.x,b.y,b.grounded) != 'ground':
+            # Horizontal spacing is not a setup opportunity while Mario is on
+            # a platform or airborne. Chasing it can consume the whole stage.
+            return 'wait'
         toward, away = ("slow_right", "slow_left") if direction > 0 else ("slow_left", "slow_right")
         if distance <= 0 and direction*a.x <= -35:
             self.combat_recentering = True
@@ -280,14 +285,15 @@ class ScenarioPolicy:
             # position until the opponent approaches instead of chasing back
             # into the same edge geometry. The ordinary setup deadline remains.
             return toward_air if direction*a.x < -15 else "wait"
-        if (distance <= 0 and abs(b.x-a.x) < 18 and 14 <= a.details.action_id <= 23 and
+        needs_space = (distance <= 0 or (option and distance < 18 and
+            support_surface(b.x,b.y,b.grounded) == 'ground'))
+        if (needs_space and abs(b.x-a.x) < 18 and 14 <= a.details.action_id <= 23 and
                 not a.details.input_jump_held and abs(a.x-20*direction) < 55):
             self.combat_crossing = True
             self.crossing_started = observation.frame
             self.crossing_airborne = False
             self.setup_phase = "crossing_short_hop"
             return "jump_"+away_air
-        option = self.spec.kind in OPTION_KINDS
         if distance < (20 if option else 3):
             return away
         if distance > (28 if option else COMBAT[COMBAT_KINDS[self.spec.kind]]["range"]-1):

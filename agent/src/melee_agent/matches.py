@@ -20,6 +20,7 @@ from .stage import STAGE_NAME, STAGE_ID
 from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
 from .trace_limits import MAX_SOURCE_BYTES
 from .local_combat_policy import LOCAL_MODES
+from .match_lifecycle import replay_layout_valid
 
 
 def isolated_environment():
@@ -68,7 +69,7 @@ def preflight(root, duration, episodes, policy, capture=False):
         raise ValueError("Invalid capture mode")
     if type(episodes) is not int or not 1 <= episodes <= (100 if capture else 10) or (policy == "input-probe" and episodes != 1):
         raise ValueError("Choose 1-10 matches, or exactly one input probe; captures allow 100 episodes")
-    if policy not in ("smoke", "scripted", "input-probe", "skill-check", "delayed-fake", "jev", "faults", "scenario", *LOCAL_MODES):
+    if policy not in ("smoke", "scripted", "input-probe", "neutral-probe", "skill-check", "delayed-fake", "jev", "faults", "scenario", *LOCAL_MODES):
         raise ValueError("Unknown local policy")
     if not config.disc_image or not config.runtime or not config.runtime_sha256:
         raise ValueError("Configure the verified local disc and runtime first")
@@ -122,6 +123,9 @@ def read_worker_result(path):
                         for k in ("accepted", "written", "unwritten", "rejected")) or
                     recorder["accepted"] != recorder["written"] + recorder["unwritten"]):
                 raise ValueError("Invalid recorder result")
+        if 'completed_matches' in result and (type(result['completed_matches']) is not int or
+                result['completed_matches'] != sum(e.get('match_completed') is True for e in result['episodes'])):
+            raise ValueError('Invalid completed match count')
         if "local_policy" in result:
             report = result["local_policy"]
             if (not isinstance(report, dict) or report.get("schema_version") != 1 or
@@ -294,10 +298,8 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             except (ValueError, OSError, KeyError, TypeError):
                 replay_errors += 1
         complete = (reason == "worker_finished" and result.get("status") == "matches_complete" and
-                    len(result["episodes"]) == episodes and
-                    all(e.get("result_event_verified") is True for e in result["episodes"]) and
-                    len(replays) == episodes and replay_errors == 0 and
-                    all(r["outcome"] in ("game", "time") and expected_settings(r["settings"]) for r in replays))
+                    replay_errors == 0 and replay_layout_valid(result['episodes'],replays,
+                        complete=True,expected_matches=episodes))
         try:
             probe_ok = (reason == "worker_finished" and result.get("status") == "probe_complete" and
                         probe_passed(result.get("probe_samples", [])))
@@ -316,7 +318,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             complete = probe_ok = False
         captured = (capture and reason == "timeout" and result.get("status") == "interrupted" and
                     result["neutralized"] and stopped and receiver_closed and not cleanup_errors and bool(result["episodes"]) and
-                    bool(replays) and replay_errors == 0 and all(expected_settings(r["settings"]) for r in replays) and
+                    bool(replays) and replay_errors == 0 and replay_layout_valid(result['episodes'],replays) and
                     recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
                     recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
         if policy in ("delayed-fake", "jev", "faults"):
@@ -342,6 +344,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
         status = "scenario_recorded" if scenario_ok else "skills_verified" if skill_ok else "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
                     "policy": policy, "episodes": result["episodes"], "replays": replays,
+                    "completed_matches": result.get('completed_matches',sum(e.get('result_event_verified') is True for e in result['episodes'])),
                     "replay_errors": replay_errors, "neutralized": result["neutralized"],
                     "elapsed_seconds": time.monotonic() - started,
                     "provider_contacted": bool(policy == "jev" and provider_report.get("http_calls", 0)),

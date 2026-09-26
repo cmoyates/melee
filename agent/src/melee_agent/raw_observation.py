@@ -68,6 +68,18 @@ class RawStreamTap:
     """Pinned adapter hook; at most 64 post-frame events are retained."""
     def __init__(self, console):
         self.events = OrderedDict()
+        self.start_index = 0
+        self.settings = None
+        if hasattr(console, "_Console__game_start"):
+            start = console._Console__game_start
+            def game_start(state, event):
+                from .replay import game_settings
+                settings = game_settings(event[:int(console.eventsize[0x36])])
+                start(state, event)
+                self.start_index += 1
+                self.settings = settings
+                self.events.clear()
+            console._Console__game_start = game_start
         original = console._Console__post_frame
         def post(state, event):
             original(state, event)

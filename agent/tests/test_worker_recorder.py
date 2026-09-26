@@ -40,10 +40,11 @@ class WorkerRecorderTests(unittest.TestCase):
         class Console:
             def __init__(self, **kwargs):
                 self.controllers, self.frame = [], -124
-                self.eventsize = {0x38: 0x4d}
+                self.eventsize = {0x38: 0x4d, 0x36: 0xf0}
                 self.zero_indices = {0: {14}, 1: {14}}
                 self.slp_version_tuple = (3, 18, 0)
                 self._Console__post_frame = lambda state, event: None
+                self._Console__game_start = lambda state, event: None
             def connect(self): return True
             def stop(self): events.append("console_stopped")
             def step(self):
@@ -51,6 +52,9 @@ class WorkerRecorderTests(unittest.TestCase):
                 for controller in self.controllers:
                     controller.flush()
                 self.frame += 1
+                if self.frame == -123:
+                    from test_matches import replay_fixture
+                    self._Console__game_start(None,replay_fixture()[8:8+0xf0])
                 players = {}
                 for port in (1, 2):
                     character = characters.FOX if port == 1 else characters.MARIO

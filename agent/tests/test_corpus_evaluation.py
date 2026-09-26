@@ -24,7 +24,7 @@ class CorpusEvaluationTests(unittest.TestCase):
         self.calls.append(request)
         candidates = request["questions"]["action"]["criteria"]
         self.assertEqual(list(candidates), request["state"]["mechanical"]["legal_candidates"])
-        self.assertEqual(request["state"]["kind"], "CompactObservationV1")
+        self.assertEqual(request["state"]["kind"], "CompactObservationV2")
         choice = next(iter(candidates))
         return 200, {}, json.dumps({"model": VERIFIED_MODEL, "provider": "TypeSafe",
             "answers": {"action": {"type": "choice", "choice": choice,

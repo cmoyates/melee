@@ -23,7 +23,7 @@ class SupervisorTests(unittest.TestCase):
             policy = LocalCombatPolicy(mode)
             policy.decide(ground())
             report = policy.close()
-            code, summary = self.exercise(worker_text=json.dumps({"episodes": [{"result_event_verified": True}],
+            code, summary = self.exercise(worker_text=json.dumps({"episodes": [{"episode":1,"winner_port":2,"last_stocks":[0,4],"result_event_verified": True}],
                 "neutralized": True, "status": "matches_complete", "local_policy": report}), fake_replay=True)
             self.assertEqual(code, 0)
             self.assertEqual(summary["local_policy"], report)
@@ -76,9 +76,11 @@ class SupervisorTests(unittest.TestCase):
                 if scan_error:
                     stack.enter_context(patch.object(matches, "artifact_bytes", side_effect=PermissionError("private path")))
                 if fake_replay:
+                    from test_matches import replay_fixture
+                    from melee_agent.replay import summarize_raw
+                    replay = {**summarize_raw(replay_fixture()),'sha256':'f'*64}
                     stack.enter_context(patch("melee_agent.replay.summarize_file", side_effect=ValueError("incomplete replay") if bad_replay else None,
-                        return_value={"outcome": "game", "settings": {}}))
-                    stack.enter_context(patch("melee_agent.replay.expected_settings", return_value=True))
+                        return_value=replay))
                 if scenario:
                     stack.enter_context(patch("melee_agent.scenarios.verified_trial", return_value=True))
                 with redirect_stdout(output):
@@ -151,7 +153,7 @@ class SupervisorTests(unittest.TestCase):
 
     def test_verified_episode_and_replay_complete_only_after_neutralization(self):
         for neutralized in (True, False):
-            code, summary = self.exercise(worker_text=json.dumps({"episodes": [{"result_event_verified": True}],
+            code, summary = self.exercise(worker_text=json.dumps({"episodes": [{"episode":1,"winner_port":2,"last_stocks":[0,4],"result_event_verified": True}],
                 "neutralized": neutralized, "status": "matches_complete"}), fake_replay=True)
             self.assertEqual(code, 0 if neutralized else 2)
             self.assertEqual(summary["status"], "complete" if neutralized else "incomplete")

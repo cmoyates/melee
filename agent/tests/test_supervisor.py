@@ -44,7 +44,8 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(summary["reason"], "worker_result_invalid")
 
     def exercise(self, *, worker_text=None, start_error=False, scan_error=False,
-                summary_error=False, artifact_limit=False, fake_replay=False, scenario=False, bad_replay=False):
+                summary_error=False, artifact_limit=False, fake_replay=False, scenario=False, bad_replay=False,
+                bot_port=1, replay_bot_port=1):
         root = Path(tempfile.mkdtemp(prefix="jev-supervisor-test-")).resolve()
         config = Config(slippi_port=0, limits=Limits(max_artifact_bytes=1 if artifact_limit else 1_000_000))
         children = []
@@ -55,6 +56,7 @@ class SupervisorTests(unittest.TestCase):
         def spawn(command, **kwargs):
             if len(command) > 3 and command[3] == "melee_agent.match_worker":
                 run = Path(command[-1])
+                self.last_launch=json.loads((run/'launch.json').read_text())
                 (run / "ready.json").write_text('{}')
                 if worker_text is not None:
                     (run / "worker-result.json").write_text(worker_text)
@@ -89,13 +91,17 @@ class SupervisorTests(unittest.TestCase):
                     from test_matches import replay_fixture
                     from melee_agent.replay import summarize_raw
                     replay = {**summarize_raw(replay_fixture()),'sha256':'f'*64}
+                    if replay_bot_port==2:
+                        a,b=replay['settings']['players'][:2]
+                        replay['settings']['players'][:2]=[{**b,'port':1},{**a,'port':2}]
+                        replay.update(winner_port=1,placements=[0,1,-1,-1])
                     stack.enter_context(patch("melee_agent.replay.summarize_file", side_effect=ValueError("incomplete replay") if bad_replay else None,
                         return_value=replay))
                 if scenario:
                     stack.enter_context(patch("melee_agent.scenarios.verified_trial", return_value=True))
                 with redirect_stdout(output):
                     code = matches.supervise(root, 2, 1, "scenario" if scenario else "smoke",
-                        scenario_name="jab-left" if scenario else None)
+                        scenario_name="jab-left" if scenario else None,bot_port=bot_port)
             summary = json.loads(output.getvalue().splitlines()[-1])
             self.assertTrue(all(child.poll() is not None for child in children))
             self.assertIsNone(unrelated.poll())
@@ -112,6 +118,18 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(summary["reason"], "supervisor_error")
         self.assertEqual(summary["supervisor_error_type"], "OSError")
+
+    def test_port_two_supervisor_requires_matching_worker_and_replay_roles(self):
+        for replay_port,worker_port in ((2,2),(1,2),(2,1)):
+            worker={'episodes':[{'episode':1,'bot_port':worker_port,'winner_port':1,
+                'last_stocks':[0,3],'result_event_verified':True}],
+                'neutralized':True,'status':'matches_complete'}
+            code,summary=self.exercise(worker_text=json.dumps(worker),fake_replay=True,
+                bot_port=2,replay_bot_port=replay_port)
+            self.assertEqual(code,0 if replay_port==worker_port==2 else 2)
+            self.assertEqual(self.last_launch['bot_port'],2)
+            self.assertEqual(summary['bot_port'],2)
+            self.assertEqual(summary['episodes'][0]['winner_port'],1)
 
     def test_completed_scenario_requires_a_verified_replay_before_success(self):
         worker = {"episodes": [], "neutralized": True, "status": "scenario_complete", "scenario": {},

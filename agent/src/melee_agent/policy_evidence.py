@@ -15,6 +15,7 @@ from .ground_combat import COMBAT
 from .skills import can_start, relative_skill
 from .stage import support_surface
 from .participation import Participation, opportunity_phase
+from .player_roles import raw_fighter, record_bot_port, validate_bot_port
 
 
 def check_acknowledgement(trial, event, row, sources, combat=None, option=None, aerial=None):
@@ -24,8 +25,8 @@ def check_acknowledgement(trial, event, row, sources, combat=None, option=None, 
     if source is None or ack is None or event.get("source_frame") != trial["frame"]:
         return False
     old_row, ack_row = source[2], ack[2]
-    raw = ack_row["raw_observation"]["players"]["1"]["raw_post"]
-    old = old_row["raw_observation"]["players"]["1"]["raw_post"]
+    raw = raw_fighter(ack_row)
+    old = raw_fighter(old_row)
     observed = row["input_provenance"]["observed"]
     if (any(observed["buttons"].values()) or max(observed["l"], observed["r"]) > .025 or
             any(abs(v-.5) > .025 for key in ("main", "c") for v in observed[key])):
@@ -46,7 +47,7 @@ def check_acknowledgement(trial, event, row, sources, combat=None, option=None, 
     if spec.name == "jump":
         length = event["jumpsquat_observed_frames"]
         knee = sources.get((trial["episode"], event["ack_frame"]-length)) if type(length) is int else None
-        return (knee is not None and knee[2]["raw_observation"]["players"]["1"]["raw_post"]["action_id"] == 24 and
+        return (knee is not None and raw_fighter(knee[2])["action_id"] == 24 and
             packet["buttons"]["X"] and raw["airborne"] and raw["action_id"] in (25,26,27,28) and raw["speed_y_self"] > 0)
     if spec.name == "shield":
         return (raw["action_id"] == 179 and ack_row["input_provenance"]["observed"]["buttons"]["L"] and
@@ -76,6 +77,9 @@ def inspect_policy(run, *, require_participation=True):
         from .local_policy_evidence import inspect_local_policy
         return inspect_local_policy(run)
     launch = json.loads((run / "launch.json").read_text())
+    bot_port = validate_bot_port(launch.get('bot_port',1))
+    if validate_bot_port(summary.get('bot_port',1)) != bot_port:
+        raise ValueError('Summary controller role differs from launch')
     profile = launch.get('candidate_profile',PROFILE)
     labels = profile_labels(profile)
     if (summary.get('candidate_profile',PROFILE) != profile or
@@ -105,6 +109,7 @@ def inspect_policy(run, *, require_participation=True):
             row = json.loads(line)
             if row["menu"] != "IN_GAME":
                 continue
+            record_bot_port(row,bot_port)
             game_frames += 1
             if game_frames > 1_000_000:
                 raise ValueError("Trace audit frame limit")

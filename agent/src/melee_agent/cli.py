@@ -23,6 +23,8 @@ def main(argv=None):
     match.add_argument("--budget", help="Existing shared budget directory; required for jev")
     match.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
     match.add_argument("--profile", choices=tuple(PROFILES), default=PROFILE)
+    match.add_argument('--bot-port',type=int,choices=(1,2),default=1,
+        help='Fox controller port; Mario CPU3 occupies the other port')
     capture = commands.add_parser("capture", help="Capture until a wall-clock deadline, retaining partial final match")
     capture.add_argument("--duration", type=int, default=600)
     capture.add_argument("--policy", choices=("scripted", "smoke", "neutral-probe", "delayed-fake", "jev", "faults", "heuristic", "random-legal", "heuristic-tactical", "random-tactical"), default="scripted")
@@ -244,7 +246,8 @@ def main(argv=None):
     if args.command == "match":
         from .matches import launch
         return launch(root, args.duration, args.episodes, args.policy,
-            budget_directory=args.budget, max_requests=args.max_requests,candidate_profile=args.profile)
+            budget_directory=args.budget, max_requests=args.max_requests,candidate_profile=args.profile,
+            **({'bot_port':args.bot_port} if args.bot_port != 1 else {}))
     if args.command == "capture":
         from .matches import launch
         return launch(root, args.duration, 100, args.policy, capture=True,

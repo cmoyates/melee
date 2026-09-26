@@ -8,10 +8,14 @@ from .incidents import PacketDigest, RecordedClock, contract_hashes, read_json, 
 from .local_combat_policy import LOCAL_MODES, LocalCombatPolicy
 from .trace_limits import MAX_SOURCE_BYTES
 from .tactical_choices import PROFILE
+from .player_roles import record_bot_port, validate_bot_port
 
 
 def inspect_local_policy(run):
     summary, launch = read_json(run/'summary.json'), read_json(run/'launch.json')
+    bot_port = validate_bot_port(launch.get('bot_port',1))
+    if validate_bot_port(summary.get('bot_port',1)) != bot_port:
+        raise ValueError('Summary controller role differs from launch')
     report = summary['local_policy']
     mode, seed = report['mode'], report['seed']
     if mode not in LOCAL_MODES or launch['policy'] != mode or summary['policy'] != mode:
@@ -31,6 +35,7 @@ def inspect_local_policy(run):
         digest.update(line)
         if row['menu'] != 'IN_GAME':
             continue
+        record_bot_port(row,bot_port)
         control = row['control']
         clock.values = [control['executor_started_ns'], control['queued_ns']]
         actual = executor.step(Observation.parse(control['observation']))

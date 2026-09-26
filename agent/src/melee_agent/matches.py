@@ -163,7 +163,11 @@ def read_worker_result(path):
         return empty, type(error).__name__
 
 
-def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None, candidate_profile=PROFILE):
+def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None, candidate_profile=PROFILE, bot_port=1):
+    from .player_roles import validate_bot_port
+    validate_bot_port(bot_port)
+    if bot_port != 1 and policy in ('scenario','skill-check','faults'):
+        raise ValueError('Mechanical scenarios and fault injection currently require port 1')
     profile_labels(candidate_profile)
     if candidate_profile != PROFILE and policy not in ('jev','delayed-fake','heuristic-tactical','random-tactical'):
         raise ValueError('Experimental candidates require an explicit tactical policy')
@@ -205,6 +209,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
         run_dir.mkdir()
         (run_dir / "replays").mkdir()
         options = {"schema_version": 2, "run_id": run_id, "runtime": str(runtime), "disc": str(image),
+                    **({'bot_port':bot_port} if bot_port != 1 else {}),
                     "runtime_sha256": config.runtime_sha256, "disc_sha1": STOCK_DISC_SHA1,
                     "libmelee_commit": "bce21f09984b286e6d36bfd2939e4cd4691f94c2",
                     "duration_seconds": duration, "port": config.slippi_port,
@@ -303,7 +308,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             except (ValueError, OSError, KeyError, TypeError):
                 replay_errors += 1
         complete = (reason == "worker_finished" and result.get("status") == "matches_complete" and
-                    replay_errors == 0 and replay_layout_valid(result['episodes'],replays,
+                    replay_errors == 0 and replay_layout_valid(result['episodes'],replays,bot_port=bot_port,
                         complete=True,expected_matches=episodes))
         try:
             probe_ok = (reason == "worker_finished" and result.get("status") == "probe_complete" and
@@ -323,7 +328,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             complete = probe_ok = False
         captured = (capture and reason == "timeout" and result.get("status") == "interrupted" and
                     result["neutralized"] and stopped and receiver_closed and not cleanup_errors and bool(result["episodes"]) and
-                    bool(replays) and replay_errors == 0 and replay_layout_valid(result['episodes'],replays) and
+                    bool(replays) and replay_errors == 0 and replay_layout_valid(result['episodes'],replays,bot_port=bot_port) and
                     recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
                     recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
         if policy in ("delayed-fake", "jev", "faults"):
@@ -359,6 +364,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
             recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
         status = "scenario_recorded" if scenario_ok else "skills_verified" if skill_ok else "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
+                    **({'bot_port':bot_port} if bot_port != 1 else {}),
                     "policy": policy, "candidate_profile":candidate_profile, "episodes": result["episodes"], "replays": replays,
                     "completed_matches": result.get('completed_matches',sum(e.get('result_event_verified') is True for e in result['episodes'])),
                     "replay_errors": replay_errors, "neutralized": result["neutralized"],
@@ -394,10 +400,16 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
         return 0 if complete or probe_ok or captured or skill_ok or scenario_ok else 2
 
 
-def launch(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None, candidate_profile=PROFILE):
+def launch(root, duration, episodes, policy, capture=False, skill_repeats=20, budget_directory=None, max_requests=None, fault_mode=None, scenario_name=None, candidate_profile=PROFILE, bot_port=1):
+    from .player_roles import validate_bot_port
+    validate_bot_port(bot_port)
+    if bot_port != 1 and policy in ('scenario','skill-check','faults'):
+        raise ValueError('Mechanical scenarios and fault injection currently require port 1')
     from .live_provider import provider_environment
     command = [sys.executable, "-B", "-m", "melee_agent.matches", str(root), str(duration), str(episodes), policy,
                 str(int(capture)), str(skill_repeats), budget_directory or "", str(max_requests or 0), fault_mode or "", scenario_name or "", candidate_profile]
+    if bot_port != 1:
+        command.append(str(bot_port))
     supervisor = subprocess.Popen(command, stdin=subprocess.PIPE, start_new_session=True, env=provider_environment(policy))
     try:
         return supervisor.wait()
@@ -427,7 +439,8 @@ if __name__ == "__main__":
                                     (int(sys.argv[8]) or None) if len(sys.argv) > 8 else None,
                                     (sys.argv[9] or None) if len(sys.argv) > 9 else None,
                                     (sys.argv[10] or None) if len(sys.argv) > 10 else None,
-                                    sys.argv[11] if len(sys.argv) > 11 else PROFILE))
+                                    sys.argv[11] if len(sys.argv) > 11 else PROFILE,
+                                    int(sys.argv[12]) if len(sys.argv) > 12 else 1))
     except Exception as error:
         print(json.dumps({"status": "blocked", "error_type": type(error).__name__,
                             "message": "Match setup failed; check local runtime configuration and launch availability."}))

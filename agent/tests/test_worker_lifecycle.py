@@ -17,16 +17,17 @@ from test_matches import replay_fixture
 
 
 class WorkerLifecycleTests(unittest.TestCase):
-    def exercise(self, verified_start, menu_scene=None, *, scenario=False):
+    def exercise(self, verified_start, menu_scene=None, *, scenario=False, bot_port=1, wrong_roles=False):
         buttons = Enum('Button',{ 'BUTTON_'+name:i for i,name in enumerate((*BUTTONS,'MAIN','C'))})
         characters = Enum('Character',{'FOX':1,'MARIO':0})
         stages = Enum('Stage',{'BATTLEFIELD':31})
         menus = Enum('Menu',{'IN_GAME':1,'SLIPPI_ONLINE_CSS':2,'POSTGAME_SCORES':3,'CHARACTER_SELECT':4,'UNKNOWN_MENU':5})
-        sequence = iter([(-123,False),(28800,False),(-123,True),
+        sequence = iter([(-123,False),*([(0,False)] if bot_port==2 else []),(28800,False),(-123,True),
             *([('menu',True)] if menu_scene is not None else []),(-122,True),(0,True),(None,True)])
         if scenario:
             sequence = iter([(-123,False),(0,False),(2,False),(3,False)])
         events = []
+        actor_port = 1 if wrong_roles else bot_port
 
         class Console:
             def __init__(self,**kwargs):
@@ -50,14 +51,16 @@ class WorkerLifecycleTests(unittest.TestCase):
                     return NS(frame=-123,menu_state=menus.UNKNOWN_MENU)
                 if frame == -123 and (not sudden or verified_start):
                     header = bytearray(replay_fixture()[8:8+0xf0])
+                    if actor_port == 2:
+                        header[0x65:0x89],header[0x89:0xad] = header[0x89:0xad],header[0x65:0x89]
                     if sudden:
                         header[5] &= ~2
                         header[0x67] = header[0x8b] = 1
                     self._Console__game_start(None,header)
                 players = {}
                 for port in (1,2):
-                    character = characters.FOX if port == 1 else characters.MARIO
-                    stocks = (0 if frame == 0 and port == 1 else 1) if sudden else 4
+                    character = characters.FOX if port == actor_port else characters.MARIO
+                    stocks = (0 if frame == 0 and port == actor_port else 1) if sudden else 4
                     percent = 300. if sudden else 0.
                     data = bytearray(0x4d)
                     data[0] = 0x38
@@ -65,10 +68,12 @@ class WorkerLifecycleTests(unittest.TestCase):
                     data[5:8] = bytes([port-1,0,character.value])
                     struct.pack_into('>H',data,8,14)
                     struct.pack_into('>f',data,0x16,percent)
+                    x = (10. if port == actor_port else -20.) if bot_port==2 else 0.
+                    struct.pack_into('>f',data,0xa,x)
                     data[0x21] = stocks
                     self._Console__post_frame(None,data)
-                    players[port] = NS(character=character,cpu_level=0 if port == 1 else 3,
-                        stock=stocks,percent=percent,position=NS(x=0.,y=0.),on_ground=True,jumps_left=2,
+                    players[port] = NS(character=character,cpu_level=0 if port == actor_port else 3,
+                        stock=stocks,percent=percent,position=NS(x=x,y=0.),on_ground=True,jumps_left=2,
                         action=NS(value=14,name='STANDING'),action_frame=1,hitstun_frames_left=0,
                         hitlag_left=0,invulnerable=False,facing=True,speed_ground_x_self=0.,
                         speed_air_x_self=0.,speed_y_self=0.,speed_x_attack=0.,speed_y_attack=0.,
@@ -77,25 +82,35 @@ class WorkerLifecycleTests(unittest.TestCase):
                 return NS(frame=frame,players=players,stage=stages.BATTLEFIELD,is_teams=False,menu_state=menus.IN_GAME)
 
         class Controller:
-            def __init__(self,console,port): console.controllers.append(self)
+            def __init__(self,console,port):
+                self.port=port
+                console.controllers.append(self)
+                events.append(('controller',port))
             def connect(self): pass
             def release_all(self): events.append('neutral')
             def flush(self): pass
             def disconnect(self): events.append('disconnected')
-            def tilt_analog(self,*args): pass
+            def tilt_analog(self,*args): events.append(('tilt',self.port,*args))
             def press_shoulder(self,*args): pass
             def press_button(self,*args): pass
 
         run = Path(tempfile.mkdtemp(prefix='jev-worker-lifecycle-'))
         (run/'launch.json').write_text(json.dumps({'runtime':'fixture','port':51441,'run_id':'fixture',
+            **({'bot_port':bot_port} if bot_port != 1 else {}),
             'policy':'scenario' if scenario else 'scripted','scenario_name':'offstage-left',
             'max_frame_bytes':1000000,'episodes':1}))
         fake = NS(Console=Console,Controller=Controller,Button=buttons,MenuHelper=lambda:None,
             Menu=menus,Character=characters,Stage=stages)
         previous = {s:signal.getsignal(s) for s in (signal.SIGINT,signal.SIGTERM)}
+        replays=[replay(),replay(True)]
+        if actor_port==2:
+            for value in replays:
+                a,b=value['settings']['players'][:2]
+                value['settings']['players'][:2]=[{**b,'port':1},{**a,'port':2}]
+                value['winner_port']=1
         try:
             with patch.dict('sys.modules',{'melee':fake}), patch.object(match_worker,'completed_replay',
-                    side_effect=[replay(),replay(True)]):
+                    side_effect=replays):
                 match_worker.run(run)
         finally:
             for sig,handler in previous.items(): signal.signal(sig,handler)
@@ -104,7 +119,29 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertTrue(outcome['neutralized'])
         self.assertEqual(events[-1],'stopped')
         self.assertEqual(outcome['recorder']['unwritten'],0)
+        self.events,self.last_run=events,run
         return outcome,rows
+
+    def test_port_two_worker_controls_fox_and_preserves_native_result_and_indices(self):
+        outcome,rows=self.exercise(True,bot_port=2)
+        self.assertEqual(outcome['status'],'matches_complete')
+        self.assertEqual(outcome['episodes'][-1]['winner_port'],1)
+        self.assertEqual(outcome['episodes'][-1]['last_stocks'],[0,1])
+        self.assertEqual([event for event in self.events if event[0]=='controller'],[('controller',2),('controller',1)])
+        self.assertTrue(any(event[0]=='tilt' and event[1]==2 and event[3]!=.5 for event in self.events))
+        self.assertFalse(any(event[0]=='tilt' and event[1]==1 for event in self.events))
+        for row in rows:
+            self.assertEqual((row['schema_version'],row['bot_port']),(5,2))
+            self.assertEqual(row['raw_observation']['players']['2']['raw_post']['character_internal_id'],1)
+            self.assertEqual(row['raw_observation']['players']['1']['raw_post']['character_internal_id'],0)
+            self.assertEqual(row['control']['observation']['bot']['x'],10.)
+            self.assertEqual(row['control']['observation']['opponent']['x'],-20.)
+
+    def test_port_two_launch_rejects_native_port_one_matchup(self):
+        outcome,rows=self.exercise(True,bot_port=2,wrong_roles=True)
+        self.assertEqual(outcome['status'],'error')
+        self.assertEqual(outcome['completed_matches'],0)
+        self.assertEqual(rows,[])
 
     def test_verified_reset_records_two_segments_and_one_final_match(self):
         outcome,rows = self.exercise(True)

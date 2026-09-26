@@ -6,6 +6,7 @@ from .aerial import AERIAL, GROUND_START, NAIR, NAIR_LANDING
 from .engine import ACTION_PACKETS
 from .raw_observation import combat_counters
 from .stage import support_surface
+from .player_roles import raw_fighter
 
 
 def audit_aerial(name, report, rows, errors):
@@ -32,7 +33,7 @@ def audit_aerial_trace(name, aerial, rows, errors, *, completed):
             return evidence
         indexed = {row["frame"]: row for row in rows}
         def raw(frame):
-            return indexed[frame]["raw_observation"]["players"]["1"]["raw_post"]
+            return raw_fighter(indexed[frame])
         def packet(frame):
             return indexed[frame]["control"]["packet"]
         jump, knee, release, takeoff = (aerial[key] for key in

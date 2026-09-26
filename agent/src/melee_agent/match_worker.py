@@ -16,6 +16,7 @@ from .raw_observation import LifeTracker, RawStreamTap, player_record, stage_rec
 from .input_trace import InputTrace
 from .local_combat_policy import LOCAL_MODES
 from .tactical_choices import PROFILE
+from .player_roles import validate_bot_port
 from .match_lifecycle import (MatchBoundaryError, completed_replay, record_observation,
     record_sudden_death_menu, start_segment, verify_sudden_death)
 
@@ -33,6 +34,8 @@ def write_json(path, value):
 def run(run_dir):
     import melee
     options = json.loads((run_dir / "launch.json").read_text())
+    bot_port = validate_bot_port(options.get('bot_port',1))
+    opponent_port = 3-bot_port
     candidate_profile = options.get('candidate_profile',PROFILE)
     console = None
     controllers = []
@@ -59,7 +62,7 @@ def run(run_dir):
             infinite_time=False, instant_match_restart=False)
         raw_stream = RawStreamTap(console)
         lives = LifeTracker()
-        controllers = [melee.Controller(console, port) for port in (1, 2)]
+        controllers = [melee.Controller(console, port) for port in (bot_port, opponent_port)]
         if faults:
             faults.wrap_flush(controllers[0])
         input_trace = InputTrace(controllers[0])
@@ -133,21 +136,21 @@ def run(run_dir):
                 if state.menu_state == melee.Menu.IN_GAME:
                     if set(state.players) != {1, 2} or state.is_teams:
                         raise RuntimeError("unexpected controller roles")
-                    a, b = state.players[1], state.players[2]
+                    a, b = state.players[bot_port], state.players[opponent_port]
                     if (a.character != melee.Character.FOX or b.character != melee.Character.MARIO or
                             a.cpu_level != 0 or b.cpu_level != 3 or state.stage != melee.Stage.BATTLEFIELD):
                         raise RuntimeError("unexpected matchup")
                     current = int(state.frame)
                     new_segment = False
                     if in_game and last_frame is not None and current < last_frame:
-                        verified = completed_replay(run_dir,episode['episode'],episode['phase'])
+                        verified = completed_replay(run_dir,episode['episode'],episode['phase'],bot_port=bot_port)
                         verify_sudden_death(episode,verified,raw_stream.settings,current,
                             [int(a.stock),int(b.stock)],[float(a.percent),float(b.percent)],raw_stream.start_index)
                         episode.update(result_event_verified=True,continued_as_sudden_death=True,
                             match_completed=False,winner_port=None,replay_sha256=verified['sha256'],
                             elapsed_seconds=now-episode['started_monotonic'],return_scene='SUDDEN_DEATH')
                         episode = start_segment(len(outcome['episodes'])+1,episode['match_number'],
-                            'sudden_death',current,now,raw_stream.start_index,raw_stream.settings)
+                            'sudden_death',current,now,raw_stream.start_index,raw_stream.settings,bot_port=bot_port)
                         input_trace.leave_game()
                         last_frame = None
                         new_segment = True
@@ -155,7 +158,7 @@ def run(run_dir):
                         if int(a.stock) != STARTING_STOCKS or int(b.stock) != STARTING_STOCKS:
                             raise RuntimeError("unexpected starting stocks")
                         episode = start_segment(len(outcome['episodes'])+1,outcome['completed_matches']+1,
-                            'regulation',current,now,raw_stream.start_index,raw_stream.settings)
+                            'regulation',current,now,raw_stream.start_index,raw_stream.settings,bot_port=bot_port)
                         last_frame = None
                         new_segment = True
                     if raw_stream.start_index != episode['start_event_index']:
@@ -171,7 +174,7 @@ def run(run_dir):
                     sudden_death = episode['phase'] == 'sudden_death'
                     control = executor.step(observe(state, episode["episode"], clock, raw_players,
                         starting_stocks=1 if sudden_death else STARTING_STOCKS,
-                        time_limit_seconds=None if sudden_death else TIME_LIMIT_SECONDS))
+                        time_limit_seconds=None if sudden_death else TIME_LIMIT_SECONDS,bot_port=bot_port))
                     if new_segment:
                         outcome['episodes'].append(episode)
                         in_game = True
@@ -179,7 +182,8 @@ def run(run_dir):
                     last_frame = current
                     packet_id = input_trace.queue(control)
                     controllers[1].release_all()
-                    record = {"schema_version": 4, "run_id": options["run_id"],
+                    record = {"schema_version": 5 if bot_port != 1 else 4, "run_id": options["run_id"],
+                                **({'bot_port':bot_port} if bot_port != 1 else {}),
                                 "episode": episode["episode"], "frame": current,
                                 "monotonic": now, "menu": "IN_GAME", "control": control,
                                 "raw_observation": {"schema_version": 2, "players": raw_players,
@@ -234,7 +238,7 @@ def run(run_dir):
                             raise RuntimeError("unexpected game exit scene: " + state.menu_state.name)
                         # Slippi skips the vanilla results screen. Require its recorded
                         # GAME/TIME event rather than treating CSS or stock zero as a result.
-                        verified = completed_replay(run_dir,episode['episode'],episode['phase'])
+                        verified = completed_replay(run_dir,episode['episode'],episode['phase'],bot_port=bot_port)
                         if (verified['winner_port'] not in (1,2) or
                                 (verified['outcome'] == 'time' and len(set(episode['last_stocks'])) == 1) or
                                 (episode['phase'] == 'sudden_death' and verified['outcome'] != 'game')):
@@ -253,8 +257,8 @@ def run(run_dir):
                             time.sleep(1)
                             outcome["status"] = "matches_complete"
                             break
-                    ready = (2 in state.players and state.players[2].character == melee.Character.MARIO and
-                                state.players[2].cpu_level == 3 and state.players[2].coin_down)
+                    ready = (opponent_port in state.players and state.players[opponent_port].character == melee.Character.MARIO and
+                                state.players[opponent_port].cpu_level == 3 and state.players[opponent_port].coin_down)
                     helpers[1].menu_helper_simple(state, controllers[1], melee.Character.MARIO,
                         melee.Stage.BATTLEFIELD, cpu_level=3, autostart=False)
                     helpers[0].menu_helper_simple(state, controllers[0], melee.Character.FOX,

@@ -76,9 +76,9 @@ def summarize_file(path, maximum_bytes):
     return result
 
 
-def expected_settings(settings, *, phase="regulation"):
+def expected_settings(settings, *, phase="regulation", bot_port=1):
     from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
-    if phase not in ("regulation", "sudden_death"):
+    if phase not in ("regulation", "sudden_death") or type(bot_port) is not int or bot_port not in (1,2):
         return False
     if not settings or settings["game_mode"] != 1 or settings["stage_id"] != STAGE_ID or settings["teams"]:
         return False
@@ -88,7 +88,12 @@ def expected_settings(settings, *, phase="regulation"):
     if settings.get("timer_enabled", True) is not timed or settings.get("timer_counts_up", False):
         return False
     stocks = STARTING_STOCKS if timed else 1
-    a, b, c, d = settings["players"]
+    players = settings['players']
+    if len(players) != 4 or any(p.get('port',index) != index for index,p in enumerate(players,1)):
+        return False
+    if bot_port != 1 and any('port' not in p for p in players):
+        return False
+    a, b, c, d = players[bot_port-1], players[2-bot_port], players[2], players[3]
     return (a["character_external"] == 2 and a["type"] == 0 and a["stocks"] == stocks and
             b["character_external"] == 8 and b["type"] == 1 and b["stocks"] == stocks and
             b["cpu_level"] == 3 and c["type"] == d["type"] == 3)

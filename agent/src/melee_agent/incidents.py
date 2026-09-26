@@ -17,6 +17,7 @@ from .config import load_config, owned_path
 from .doctor import STOCK_DISC_SHA1
 from .engine import BUTTONS, Decision, FrameExecutor, Observation, Packet
 from .trace_limits import MAX_PREFIX_BYTES, MAX_SOURCE_BYTES
+from .player_roles import record_bot_port, validate_bot_port
 
 CONTRACT_MODULES = ("engine.py", "skills.py", "ground_combat.py", "aerial.py", "stage.py", "rules.py", "async_policy.py", "fox_reflex.py", "provider.py", "live_provider.py", "semantic.py", "native_motions.py", "tactical_choices.py", "approach_jab.py")
 MAX_RECORDS = 40_000
@@ -120,6 +121,9 @@ def export_incident(root, run, *, episode=1, frame=None, request_id=None, after_
         raise IncidentError("invalid_incident_selector")
     launch = read_json(run / "launch.json")
     summary = read_json(run / "summary.json", 1_048_576)
+    bot_port = validate_bot_port(launch.get('bot_port',1))
+    if validate_bot_port(summary.get('bot_port',1)) != bot_port:
+        raise IncidentError('controller_role_mismatch')
     trace = run / "frames.jsonl"
     original_stat = trace.stat()
     focus = None
@@ -130,6 +134,7 @@ def export_incident(root, run, *, episode=1, frame=None, request_id=None, after_
         source_digest.update(line)
         if row["menu"] != "IN_GAME":
             continue
+        record_bot_port(row,bot_port)
         matches = (row["episode"], row["frame"]) == (episode, frame) if request_id is None else any(
             (event["delivery"]["reply"].get("metadata") or {}).get("request_id") == request_id
             for event in row.get("skill", {}).get("policy_events", []))
@@ -173,6 +178,7 @@ def export_incident(root, run, *, episode=1, frame=None, request_id=None, after_
         raise IncidentError("source_changed_during_extraction")
     provider = summary.get("async_policy", {}).get("bridge", {}).get("provider") or {}
     declared = {"runtime_sha256": launch.get("runtime_sha256"), "disc_sha1": launch.get("disc_sha1"),
+        **({'bot_port':launch['bot_port']} if launch.get('bot_port',1) != 1 else {}),
         "candidate_profile": launch.get("candidate_profile", "grounded-tactical-v1"),
         "libmelee_commit": launch.get("libmelee_commit"), "stage_id": launch["stage_id"],
         "starting_stocks": launch["starting_stocks"], "time_limit_seconds": launch["match_time_limit_seconds"],
@@ -223,6 +229,7 @@ def verify_bundle(root, folder):
     if manifest["declared_provenance"] != manifest["expected_provenance"]:
         raise IncidentError("provenance_mismatch")
     provenance = manifest["declared_provenance"]
+    validate_bot_port(provenance.get('bot_port',1))
     if provenance["source_sha256"] != contract_hashes():
         raise IncidentError("policy_contract_mismatch")
     if provenance["provider_config_sha256"] is not None:

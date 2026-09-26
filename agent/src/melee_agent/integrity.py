@@ -3,11 +3,15 @@
 import hashlib
 import json
 import math
+from .player_roles import record_bot_port, validate_bot_port
 
 
 def inspect_integrity(run):
     launch = json.loads((run / "launch.json").read_text())
     summary = json.loads((run / "summary.json").read_text())
+    bot_port = validate_bot_port(launch.get('bot_port',1))
+    if validate_bot_port(summary.get('bot_port',1)) != bot_port:
+        raise ValueError('Summary controller role differs from launch')
     declared_segments = {segment.get('episode'):segment for segment in summary['episodes']}
     digest = hashlib.sha256()
     episodes, counts, errors, transitions = {}, {"records": 0, "game_records": 0}, {}, []
@@ -35,8 +39,9 @@ def inspect_integrity(run):
             if record["menu"] != "IN_GAME":
                 continue
             counts["game_records"] += 1
-            if record["schema_version"] != 4:
-                raise ValueError("Capture integrity requires frame schema 4")
+            if record["schema_version"] not in (4,5):
+                raise ValueError("Capture integrity requires frame schema 4 or 5")
+            record_bot_port(record,bot_port)
             episode, frame = record["episode"], record["frame"]
             if current_episode != episode:
                 if current_episode is not None and episode != current_episode + 1:
@@ -55,6 +60,19 @@ def inspect_integrity(run):
             item["observations"] += 1
             item["negative_frames"] += int(frame < 0)
             observation = record["control"]["observation"]
+            if record['schema_version'] == 5:
+                players = record['raw_observation']['players']
+                if set(players) != {'1','2'}:
+                    raise ValueError('Explicit roles require both native players')
+                for name,port,character in (('bot',bot_port,1),('opponent',3-bot_port,0)):
+                    raw = players[str(port)]['raw_post']
+                    fighter = observation[name]
+                    if (raw['character_internal_id'] != character or
+                            (fighter['x'],fighter['y'],fighter['details']['action_id'],fighter['details']['percent']) !=
+                            (raw['x'],raw['y'],raw['action_id'],raw['percent'])):
+                        error('normalized_player_role_mismatch')
+                if record['players'][str(bot_port)]['observed_main'] != record['input_provenance']['observed']['main']:
+                    error('input_controller_role_mismatch')
             if (observation["episode"], observation["frame"]) != (episode, frame):
                 error("control_identity")
             if observation.get('schema_version') == 5:
@@ -81,7 +99,7 @@ def inspect_integrity(run):
                 item["stock_losses"][port] = item["stock_losses"].get(port, 0) + max(0, loss)
                 life = player["life_generation_derived"]
                 if observation.get('schema_version') == 5:
-                    fighter = observation['bot' if port == '1' else 'opponent']
+                    fighter = observation['bot' if int(port) == bot_port else 'opponent']
                     if fighter['stocks_remaining'] != stock or fighter['details']['life_generation_derived'] != life:
                         error('normalized_stock_or_life_mismatch')
                 if life != item["stock_losses"][port] + 1:

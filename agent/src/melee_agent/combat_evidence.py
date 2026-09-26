@@ -4,6 +4,7 @@ from .engine import ACTION_PACKETS
 from .ground_combat import COMBAT, START_ACTIONS, CAPTOR, CAPTURED, GUARD
 from .raw_observation import combat_counters, normalized_hurtbox
 from .stage import support_surface
+from .player_roles import raw_fighter
 
 
 def audit_combat_trace(name, combat, rows, errors, *, completed):
@@ -20,7 +21,7 @@ def audit_combat_trace(name, combat, rows, errors, *, completed):
             evidence["motion_acknowledged"] = (press is not None and combat["press_frame"] < combat["ack_frame"] and
                 press["control"]["decision"]["action"] == COMBAT[name]["action"] and
                 press["control"]["packet"] == ACTION_PACKETS[COMBAT[name]["action"]].wire() and
-                ack["raw_observation"]["players"]["1"]["raw_post"]["action_id"] == expected_motion)
+                raw_fighter(ack)["action_id"] == expected_motion)
             if not evidence["motion_acknowledged"]:
                 errors["combat_motion_not_observed"] += 1
         elif combat["ack_frame"] is not None:
@@ -32,8 +33,8 @@ def audit_combat_trace(name, combat, rows, errors, *, completed):
                 return evidence
         for frame in combat["contact_frames"]:
             row, prior = indexed[frame], indexed[frame-1]
-            a, b = (row["raw_observation"]["players"][port]["raw_post"] for port in ("1", "2"))
-            previous = prior["raw_observation"]["players"]["2"]["raw_post"]
+            a, b = raw_fighter(row), raw_fighter(row,opponent=True)
+            previous = raw_fighter(prior,opponent=True)
             valid = (name != "grab" and evidence["motion_acknowledged"] and a["action_id"] == expected_motion and
                 combat_counters(a)[0] > 0 and combat_counters(b)[0] > 0 and b["percent"] > previous["percent"] and
                 normalized_hurtbox(b) == 0 and b["action_id"] not in GUARD)
@@ -42,19 +43,19 @@ def audit_combat_trace(name, combat, rows, errors, *, completed):
             evidence["contact_events"] += int(valid)
         for frame in combat["shield_contact_frames"]:
             row = indexed[frame]
-            a, b = (row["raw_observation"]["players"][port]["raw_post"] for port in ("1", "2"))
+            a, b = raw_fighter(row), raw_fighter(row,opponent=True)
             if not combat_counters(a)[0] or b["action_id"] not in (179, 181):
                 errors["combat_shield_contact_not_observed"] += 1
         if combat["capture_frame"] is not None:
             row = indexed[combat["capture_frame"]]
-            a, b = (row["raw_observation"]["players"][port]["raw_post"] for port in ("1", "2"))
+            a, b = raw_fighter(row), raw_fighter(row,opponent=True)
             evidence["capture_observed"] = (name == "grab" and evidence["motion_acknowledged"] and
                 a["action_id"] in CAPTOR and b["action_id"] in CAPTURED)
             if not evidence["capture_observed"]:
                 errors["combat_capture_not_observed"] += 1
         if completed:
             end = rows[-1]
-            a = end["raw_observation"]["players"]["1"]["raw_post"]
+            a = raw_fighter(end)
             evidence["completed"] = (evidence["motion_acknowledged"] and combat["status"] == "succeeded" and
                 combat["end_frame"] == end["frame"] and a["action_id"] in START_ACTIONS and not a["airborne"] and
                 support_surface(a["x"], a["y"], True) in ("ground", "left", "right", "top") and

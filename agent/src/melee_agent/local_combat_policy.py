@@ -54,7 +54,8 @@ class LocalCombatPolicy:
             else:
                 label = select_combat(observation, "heuristic" if tactical is not None else self.mode, self.rng)
             if label is None and tactical != ():
-                label = "approach" if can_start(relative_skill("approach", observation), observation) is None else "neutral"
+                label = ("approach" if can_start(relative_skill("approach", observation), observation) is None else
+                    "retreat" if tactical is not None and "retreat" in tactical else "neutral")
             refusal = self.arbiter.request(relative_skill(label, observation), observation) if label is not None else "no_legal_candidates"
             self.selection = {"frame": observation.frame, "mode": self.mode,
                 "combat_candidates": list(candidates), "selected": label, "refusal": refusal}

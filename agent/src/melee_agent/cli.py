@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .doctor import diagnose
+from .tactical_choices import PROFILE, PROFILES
 
 
 def main(argv=None):
@@ -21,22 +22,24 @@ def main(argv=None):
     match.add_argument("--episodes", type=int, default=1)
     match.add_argument("--budget", help="Existing shared budget directory; required for jev")
     match.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
+    match.add_argument("--profile", choices=tuple(PROFILES), default=PROFILE)
     capture = commands.add_parser("capture", help="Capture until a wall-clock deadline, retaining partial final match")
     capture.add_argument("--duration", type=int, default=600)
     capture.add_argument("--policy", choices=("scripted", "smoke", "neutral-probe", "delayed-fake", "jev", "faults", "heuristic", "random-legal", "heuristic-tactical", "random-tactical"), default="scripted")
     capture.add_argument("--fault", help="Explicit runtime-v1 fault mode; only with policy faults")
     capture.add_argument("--budget", help="Existing shared budget directory; required for jev")
     capture.add_argument("--max-requests", type=int, help="Explicit 1-200 attempt cap for this jev run")
+    capture.add_argument("--profile", choices=tuple(PROFILES), default=PROFILE)
     soak = commands.add_parser("soak", help="Thirty-minute runtime-v1 fault schedule; no external provider calls")
     soak.add_argument("--budget", required=True, help="Existing paid ledger to verify remains unchanged")
     soak.add_argument("--duration", type=int, default=1800)
     skills = commands.add_parser("skill-check", help="Observed movement, combat, aerial and recovery repetitions on Battlefield")
     skills.add_argument("--repeats", type=int, default=20)
     skills.add_argument("--duration", type=int, help="Hard wall-clock limit; defaults to 600s movement, 3000s combat, 2400s aerial/recovery")
-    skills.add_argument("--suite", choices=("movement-v1", "recovery-v1", "ground-combat-v1", "aerial-v1"), default="movement-v1")
+    skills.add_argument("--suite", choices=("movement-v1", "recovery-v1", "ground-combat-v1", "aerial-v1", "approach-jab-v1"), default="movement-v1")
     skills.add_argument("--policy", choices=("offline",), default="offline")
     scenarios = commands.add_parser("scenarios", help="Fresh-match mechanical scenario suite with explicit setup outcomes")
-    scenarios.add_argument("--suite", choices=("mechanics-v1", "recovery-v1", "ground-combat-v1", "aerial-v1"), default="mechanics-v1")
+    scenarios.add_argument("--suite", choices=("mechanics-v1", "recovery-v1", "ground-combat-v1", "aerial-v1", "approach-jab-v1"), default="mechanics-v1")
     scenarios.add_argument("--repeats", type=int, default=10)
     scenarios.add_argument("--duration", type=int, default=2400, help="Hard wall-clock suite limit")
     scenarios.add_argument("--seed", type=int, default=0, help="Trial ordering only; does not seed game RNG")
@@ -60,6 +63,7 @@ def main(argv=None):
     corpus_build.add_argument("--split-by", choices=("episode",), default="episode")
     corpus_build.add_argument("--maximum-states", type=int, default=5000)
     corpus_build.add_argument("--source-limit", type=int, default=12)
+    corpus_build.add_argument('--profile',choices=('grounded-tactical-v1','approach-jab-v1'),default='grounded-tactical-v1')
     corpus_verify = corpus_commands.add_parser("validate", aliases=["verify"])
     corpus_verify.add_argument("corpus_id")
     corpus_evaluate = corpus_commands.add_parser("evaluate", help="Explicit paid frozen-state Decisions evaluation; no emulator")
@@ -98,6 +102,7 @@ def main(argv=None):
             command.add_argument("--integrity", action="store_true")
             command.add_argument("--skills", action="store_true")
             command.add_argument("--policy-evidence", action="store_true")
+            command.add_argument("--scenario-evidence", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
     if args.command == "corpus":
@@ -107,7 +112,7 @@ def main(argv=None):
                 from .corpus_evaluation import evaluate_corpus
                 report = evaluate_corpus(root, args.corpus_id, args.budget, args.max_requests)
             else:
-                report = (build_corpus(root, args.maximum_states, args.source_limit) if args.corpus_command == "build"
+                report = (build_corpus(root, args.maximum_states, args.source_limit,profile=args.profile) if args.corpus_command == "build"
                     else validate_corpus(root, args.corpus_id))
             print(json.dumps(report, allow_nan=False))
             return 1 if args.corpus_command == "evaluate" and report["status"] != "completed" else 0
@@ -188,13 +193,13 @@ def main(argv=None):
     if args.command == "match":
         from .matches import launch
         return launch(root, args.duration, args.episodes, args.policy,
-            budget_directory=args.budget, max_requests=args.max_requests)
+            budget_directory=args.budget, max_requests=args.max_requests,candidate_profile=args.profile)
     if args.command == "capture":
         from .matches import launch
         return launch(root, args.duration, 100, args.policy, capture=True,
-                        budget_directory=args.budget, max_requests=args.max_requests, fault_mode=args.fault)
+                        budget_directory=args.budget, max_requests=args.max_requests, fault_mode=args.fault,candidate_profile=args.profile)
     if args.command == "skill-check":
-        if args.suite in ("recovery-v1", "ground-combat-v1", "aerial-v1"):
+        if args.suite in ("recovery-v1", "ground-combat-v1", "aerial-v1", "approach-jab-v1"):
             from .scenario_runner import run_suite
             try:
                 return run_suite(root, args.repeats, (3000 if args.suite == "ground-combat-v1" else 2400) if args.duration is None else args.duration,
@@ -216,6 +221,11 @@ def main(argv=None):
                 if args.policy_evidence:
                     from .policy_evidence import inspect_policy
                     report = inspect_policy(run)
+                    print(json.dumps(report, allow_nan=False))
+                    return 0 if report["status"] == "pass" else 1
+                elif args.scenario_evidence:
+                    from .scenario_runner import inspect_scenario
+                    report = inspect_scenario(run)
                     print(json.dumps(report, allow_nan=False))
                     return 0 if report["status"] == "pass" else 1
                 elif args.skills:

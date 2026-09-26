@@ -11,7 +11,7 @@ from .fox_reflex import FoxReflex
 from .semantic import SemanticHistory, compact_observation
 from .skills import SkillArbiter, can_start, inhibited, relative_skill
 from .stage import support_surface
-from .tactical_choices import LABELS, legal_candidates
+from .tactical_choices import LABELS, PROFILE, legal_candidates, profile_labels
 
 MAX_AGE_NS = 1_000_000_000
 MAX_FRAME_AGE = 60
@@ -67,7 +67,7 @@ class Delivery:
     reply: Reply
 
 
-def rejection(delivery, observation, run_id, generation, last_applied, now_ns, committed):
+def rejection(delivery, observation, run_id, generation, last_applied, now_ns, committed, *, profile=PROFILE):
     """Apply-time checks; submitting a newer request does not supersede a reply."""
     expected, reply = delivery.expected, delivery.reply
     c = reply.context
@@ -95,7 +95,7 @@ def rejection(delivery, observation, run_id, generation, last_applied, now_ns, c
         return "wrong_skill_generation"
     if c.context_key != context_key(observation):
         return "context_changed"
-    if reply.action not in delivery.candidates or reply.action not in LABELS:
+    if reply.action not in delivery.candidates or reply.action not in profile_labels(profile):
         return "invalid_candidate"
     if committed:
         return "skill_committed"
@@ -224,7 +224,9 @@ class LatestBridge:
 
 
 class AsyncPolicy:
-    def __init__(self, run_id, bridge=None, clock=time.monotonic_ns):
+    def __init__(self, run_id, bridge=None, clock=time.monotonic_ns, *, profile=PROFILE):
+        profile_labels(profile)
+        self.profile = profile
         self.run_id = run_id
         self.bridge = bridge if bridge is not None else LatestBridge(run_id, OrderingBackend())
         self.clock = clock
@@ -280,7 +282,7 @@ class AsyncPolicy:
                 self.arbiter.generation += 1
                 self.counts["generation_invalidations"] += 1
             self.last_invalidation = identity
-        candidates = legal_candidates(observation)
+        candidates = legal_candidates(observation,self.profile)
         offered = candidates if not emergency else ()
         self.semantic_state = compact_observation(observation, offered, active_skill=self.arbiter.trace()["active"],
             skill_known=True, history=self.semantic_history.before(observation))
@@ -293,7 +295,7 @@ class AsyncPolicy:
             generation = self.arbiter.generation
             committed = self.arbiter.active is not None
             previous = self.last_applied
-            reason = rejection(delivery, observation, self.run_id, generation, previous, now, committed)
+            reason = rejection(delivery, observation, self.run_id, generation, previous, now, committed,profile=self.profile)
             if emergency and reason is None:
                 reason = "emergency"
             if reason is None:
@@ -325,11 +327,11 @@ class AsyncPolicy:
         return decision
 
     def trace(self):
-        return {**self.arbiter.trace(), "policy_events": self.events, "last_applied_sequence": self.last_applied,
+        return {**self.arbiter.trace(), "candidate_profile": self.profile, "policy_events": self.events, "last_applied_sequence": self.last_applied,
                 "transitions": self.skill_events, "input_owner": self.last_owner,
                 "decision_ns": self.decision_ns, "exchange_busy": self.exchange_busy,
                 "reflex": self.recovery.trace(), "semantic_state": self.semantic_state.wire() if self.semantic_state else None}
 
     def close(self):
-        return {"schema_version": 1, "max_age_ns": MAX_AGE_NS, "max_frame_age": MAX_FRAME_AGE,
+        return {"schema_version": 1, "candidate_profile": self.profile, "max_age_ns": MAX_AGE_NS, "max_frame_age": MAX_FRAME_AGE,
                 "policy": dict(self.counts), "bridge": self.bridge.close(), "reflex": self.recovery.trace()}

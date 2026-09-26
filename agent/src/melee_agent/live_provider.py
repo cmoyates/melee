@@ -14,6 +14,7 @@ from .budget import BudgetError, SpendLedger
 from .config import owned_path
 from .provider import DecisionsClient, MODEL_ALIAS, OpenRouterTransport, ProviderError
 from .semantic import CompactObservation, SEMANTIC_VERSION, compact_observation
+from .tactical_choices import PROFILE, OPTION_PROFILE, profile_labels
 
 DESCRIPTIONS = {
     "neutral": "Release all inputs briefly; observe and wait for a better opportunity.",
@@ -30,10 +31,18 @@ INSTRUCTIONS = ("Control Fox against a level 3 Mario CPU on Battlefield. Choose 
     "candidates. Attack or grab when useful; reposition, shield, jump or wait when appropriate. "
     "Each choice commits to one bounded skill. Local code owns timing, interruption, recovery and legality. "
     "Choose exactly one provided label and return its complete probability distribution.")
+OPTION_DESCRIPTIONS = {**DESCRIPTIONS, "approach_jab":
+    "On shared ground or platform, close distance through up to four short movements, release and settle, then attempt one jab only if currently legal. Stop on changed support, crossing, damage or a 180-simulation-frame deadline. Contact is not guaranteed."}
 
 
-def policy_config_hash():
-    return hashlib.sha256(json.dumps({"model": MODEL_ALIAS, "descriptions": DESCRIPTIONS,
+def descriptions(profile=PROFILE):
+    labels = profile_labels(profile)
+    source = OPTION_DESCRIPTIONS if profile == OPTION_PROFILE else DESCRIPTIONS
+    return {label:source[label] for label in labels}
+
+
+def policy_config_hash(profile=PROFILE):
+    return hashlib.sha256(json.dumps({"model": MODEL_ALIAS, "descriptions": descriptions(profile), "candidate_profile":profile,
         "instructions": INSTRUCTIONS, "max_inflight": 1, "interval_seconds": 1,
         "response_timeout_seconds": 1, "minimum_confidence": MIN_CONFIDENCE,
         "circuit_failure_threshold": 3, "circuit_open_seconds": 2,
@@ -96,7 +105,9 @@ class ProviderBackend:
     interval = 1.
     accepts_semantic = True
 
-    def __init__(self, root, budget_directory, max_requests, run_deadline_ns, *, transport=None):
+    def __init__(self, root, budget_directory, max_requests, run_deadline_ns, *, transport=None, profile=PROFILE):
+        self.descriptions = descriptions(profile)
+        self.profile = profile
         if type(max_requests) is not int or not 1 <= max_requests <= 200:
             raise ProviderError("invalid_run_request_limit")
         self.ledger = SpendLedger(owned_path(root, budget_directory) / "spend.jsonl")
@@ -115,7 +126,7 @@ class ProviderBackend:
         self.failures = 0
         self.open_until_ns = 0
         self.health_events = []
-        self.config_hash = policy_config_hash()
+        self.config_hash = policy_config_hash(profile)
 
     def call(self, observation, context, candidates, stop, semantic=None):
         if stop.is_set() or time.monotonic_ns() + 3_000_000_000 >= self.run_deadline_ns:
@@ -137,7 +148,7 @@ class ProviderBackend:
             if (not isinstance(semantic, CompactObservation) or
                     (context.semantic_sha256 is not None and context.semantic_sha256 != semantic.sha256)):
                 raise ProviderError("semantic_snapshot_binding")
-            result = self.client.submit(observation, {label: DESCRIPTIONS[label] for label in candidates},
+            result = self.client.submit(observation, {label: self.descriptions[label] for label in candidates},
                 deadline_ns=min(time.monotonic_ns() + 1_000_000_000, self.run_deadline_ns - 2_000_000_000),
                 instructions=INSTRUCTIONS, compact_state=semantic).result(timeout=1.5)
             if (result.episode, result.frame, result.observed_ns) != (context.episode, context.frame, context.observed_ns):
@@ -175,7 +186,7 @@ class ProviderBackend:
 
     def close(self):
         closed = self.client.close(timeout=1.25)
-        return {"schema_version": 1, "requested_model": MODEL_ALIAS, "config_sha256": self.config_hash,
+        return {"schema_version": 1, "candidate_profile":self.profile, "requested_model": MODEL_ALIAS, "config_sha256": self.config_hash,
             "max_requests": self.max_requests, "attempts": self.attempts, "counts": dict(self.counts),
             "health_events": self.health_events,
             "http_calls": self.transport.calls, "http_active": self.transport.active,

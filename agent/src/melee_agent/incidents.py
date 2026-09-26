@@ -18,7 +18,7 @@ from .doctor import STOCK_DISC_SHA1
 from .engine import BUTTONS, Decision, FrameExecutor, Observation, Packet
 from .trace_limits import MAX_PREFIX_BYTES, MAX_SOURCE_BYTES
 
-CONTRACT_MODULES = ("engine.py", "skills.py", "ground_combat.py", "aerial.py", "stage.py", "rules.py", "async_policy.py", "fox_reflex.py", "provider.py", "live_provider.py", "semantic.py", "native_motions.py", "tactical_choices.py")
+CONTRACT_MODULES = ("engine.py", "skills.py", "ground_combat.py", "aerial.py", "stage.py", "rules.py", "async_policy.py", "fox_reflex.py", "provider.py", "live_provider.py", "semantic.py", "native_motions.py", "tactical_choices.py", "approach_jab.py")
 MAX_RECORDS = 40_000
 LIBMELEE_COMMIT = "bce21f09984b286e6d36bfd2939e4cd4691f94c2"
 
@@ -173,6 +173,7 @@ def export_incident(root, run, *, episode=1, frame=None, request_id=None, after_
         raise IncidentError("source_changed_during_extraction")
     provider = summary.get("async_policy", {}).get("bridge", {}).get("provider") or {}
     declared = {"runtime_sha256": launch.get("runtime_sha256"), "disc_sha1": launch.get("disc_sha1"),
+        "candidate_profile": launch.get("candidate_profile", "grounded-tactical-v1"),
         "libmelee_commit": launch.get("libmelee_commit"), "stage_id": launch["stage_id"],
         "starting_stocks": launch["starting_stocks"], "time_limit_seconds": launch["match_time_limit_seconds"],
         "source_sha256": {name: launch.get("source_sha256", {}).get(name) for name in CONTRACT_MODULES},
@@ -226,7 +227,7 @@ def verify_bundle(root, folder):
         raise IncidentError("policy_contract_mismatch")
     if provenance["provider_config_sha256"] is not None:
         from .live_provider import policy_config_hash
-        if provenance["provider_config_sha256"] != policy_config_hash():
+        if provenance["provider_config_sha256"] != policy_config_hash(provenance.get('candidate_profile','grounded-tactical-v1')):
             raise IncidentError("provider_config_mismatch")
     if (provenance["stage_id"], provenance["starting_stocks"], provenance["time_limit_seconds"]) != (31, 4, 480):
         raise IncidentError("rules_provenance_mismatch")
@@ -319,7 +320,8 @@ class PacketDigest:
 def replay_incident(root, folder):
     manifest = verify_bundle(root, folder)
     bridge, clock, sink = RecordedBridge(), RecordedClock(), PacketDigest()
-    policy = AsyncPolicy(manifest["run_id"], bridge, clock=lambda: bridge.row["times"]["policy_ns"])
+    policy = AsyncPolicy(manifest["run_id"], bridge, clock=lambda: bridge.row["times"]["policy_ns"],
+        profile=manifest['declared_provenance'].get('candidate_profile','grounded-tactical-v1'))
     executor = FrameExecutor(policy, sink, clock)
     decisions = hashlib.sha256()
     count = accepted = 0

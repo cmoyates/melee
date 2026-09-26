@@ -5,15 +5,17 @@ import hashlib
 import json
 import math
 
-from .engine import Observation
-from .async_policy import LABELS
+from .engine import ACTION_PACKETS, Observation
+from .tactical_choices import PROFILE, profile_labels
 from .combat_evidence import audit_combat_trace
+from .option_evidence import audit_option_trace
 from .ground_combat import COMBAT
 from .skills import can_start, relative_skill
 from .stage import support_surface
+from .participation import Participation, opportunity_phase
 
 
-def check_acknowledgement(trial, event, row, sources, combat=None):
+def check_acknowledgement(trial, event, row, sources, combat=None, option=None):
     """Require raw motion evidence and observed release for an accepted skill."""
     source = sources.get((trial["episode"], trial["frame"]))
     ack = sources.get((trial["episode"], event.get("ack_frame")))
@@ -32,6 +34,8 @@ def check_acknowledgement(trial, event, row, sources, combat=None):
         return False
     if spec.name in COMBAT:
         return combat is not None and combat["completed"]
+    if spec.name == 'approach_jab':
+        return option is not None and option['completed']
     if spec.name == "move":
         return (not raw["airborne"] and (raw["x"]-old["x"])*spec.direction >= 6 and
             raw["speed_ground_x_self"]*spec.direction > 0 and packet["main"][0] == (1 if spec.direction > 0 else 0))
@@ -68,9 +72,16 @@ def inspect_policy(run, *, require_participation=True):
         from .local_policy_evidence import inspect_local_policy
         return inspect_local_policy(run)
     launch = json.loads((run / "launch.json").read_text())
+    profile = launch.get('candidate_profile',PROFILE)
+    labels = profile_labels(profile)
+    if (summary.get('candidate_profile',PROFILE) != profile or
+            summary.get('async_policy',{}).get('candidate_profile',PROFILE) != profile):
+        raise ValueError('Policy candidate profile mismatch')
     errors, outcomes, faults = Counter(), Counter(), Counter()
     acknowledgements, input_owners = Counter(), Counter()
     combat_outcomes = Counter()
+    option_outcomes = Counter()
+    participation = Participation((summary.get('async_policy') or {}).get('bridge',{}).get('provider'))
     pending_skills, consumed = {}, {}
     sources = OrderedDict()
     queued_ms, flushed_ms, delays_ms, applied_ms, gaps_ms = [], [], [], [], []
@@ -98,6 +109,10 @@ def inspect_policy(run, *, require_participation=True):
                 gaps_ms.append((observation.observed_ns-previous_observation.observed_ns)/1e6)
             previous_observation = observation
             skill = row.get("skill", {})
+            phase = opportunity_phase(observation,profile)
+            participation.observe(observation,phase,skill.get('input_owner'))
+            if skill.get('candidate_profile',PROFILE) != profile:
+                errors['trace_candidate_profile_mismatch'] += 1
             sources[observation.episode, observation.frame] = (observation, skill, row)
             if len(sources) > 256:
                 sources.popitem(last=False)
@@ -122,6 +137,9 @@ def inspect_policy(run, *, require_participation=True):
                 delays_ms.append((reply["received_ns"]-c["observed_ns"])/1e6)
                 faults[reply["fault"]] += 1
                 accepted = event["accepted"]
+                request_source = sources.get((c['episode'],c['frame']))
+                source_phase = opportunity_phase(request_source[0],profile) if request_source else 'unavailable_source'
+                participation.delivery(source_phase,phase,accepted)
                 outcomes["accepted" if accepted else "rejected:" + str(event["reason"])] += 1
                 if event["last_applied_before"] != last_applied:
                     errors["applied_sequence_accounting"] += 1
@@ -145,7 +163,7 @@ def inspect_policy(run, *, require_participation=True):
                     0 <= event["apply_ns"]-c["observed_ns"] <= 1_000_000_000, "accepted_stale_time")
                 check(c["skill_generation"] == event["generation_before"], "accepted_wrong_generation")
                 check(not event["committed_before"] and not event["emergency"], "accepted_during_commitment_or_emergency")
-                check(reply["action"] in candidates and reply["action"] in LABELS, "accepted_invalid_candidate")
+                check(reply["action"] in candidates and reply["action"] in labels, "accepted_invalid_candidate")
                 confidence = (reply.get("metadata") or {}).get("confidence")
                 check(confidence is None or confidence >= .15, "accepted_low_confidence")
                 actual_hash = hashlib.sha256(json.dumps(candidates, separators=(",", ":")).encode()).hexdigest()
@@ -183,7 +201,8 @@ def inspect_policy(run, *, require_participation=True):
                         active["skill"] == spec.name and active["direction"] == spec.direction and
                         skill["generation"] == c["skill_generation"] + 1, "accepted_skill_not_started")
                     pending_skills[c["skill_generation"]+1] = {"episode": observation.episode,
-                        "frame": observation.frame, "spec": spec, "label": reply["action"]}
+                        "frame": observation.frame, "spec": spec, "label": reply["action"],
+                        'source_phase':source_phase,'application_phase':phase}
                 except (KeyError, TypeError, ValueError):
                     errors["accepted_invalid_skill"] += 1
                 last_applied = sequence
@@ -194,7 +213,23 @@ def inspect_policy(run, *, require_participation=True):
                 trial = pending_skills.pop(event["generation"], None)
                 if trial is None:
                     continue
+                if trial['episode'] != observation.episode:
+                    # The new segment's -123 is not an end frame inside the
+                    # old motion. Verify cancellation/output, never completion.
+                    valid = (observation.episode == trial['episode']+1 and observation.frame == -123 and
+                        event['status'] == 'aborted' and event.get('reason') == 'death_or_respawn' and
+                        event.get('episode') == observation.episode and event.get('frame') == observation.frame and
+                        event.get('source_frame') == trial['frame'] and
+                        (event.get('skill'),event.get('direction')) == (trial['spec'].name,trial['spec'].direction) and
+                        control['packet'] == ACTION_PACKETS['wait'].wire())
+                    if valid:
+                        acknowledgements['cancelled:episode_boundary'] += 1
+                        participation.terminal(trial,'cancelled:episode_boundary')
+                    else:
+                        errors['invalid_episode_boundary_cancellation'] += 1
+                    continue
                 combat = None
+                option = None
                 if trial["spec"].name in COMBAT:
                     history = [value[2] for (episode, frame), value in sources.items()
                         if episode == trial["episode"] and trial["frame"] <= frame <= observation.frame]
@@ -218,17 +253,33 @@ def inspect_policy(run, *, require_participation=True):
                     combat_outcomes["completed:"+name] += int(combat["completed"])
                     combat_outcomes["contacts:"+name] += combat["contact_events"]
                     combat_outcomes["captures:"+name] += int(combat["capture_observed"])
+                elif trial['spec'].name == 'approach_jab':
+                    history = [value[2] for (episode,frame),value in sources.items()
+                        if episode == trial['episode'] and trial['frame'] <= frame <= observation.frame]
+                    details = event.get('option') or {}
+                    if not isinstance(details,dict):
+                        errors['option_event_schema'] += 1
+                        details = {}
+                    if (event.get('source_frame') != trial['frame'] or details.get('source_frame') != trial['frame'] or
+                            event.get('episode') != trial['episode'] or details.get('direction') != trial['spec'].direction or
+                            details.get('ack_frame') != event.get('ack_frame') or details.get('end_frame') != observation.frame):
+                        errors['option_event_identity_mismatch'] += 1
+                    option = audit_option_trace(details,history,errors,completed=event['status']=='succeeded')
+                    for name,value in option.items():
+                        option_outcomes[name] += int(value)
                 if event["status"] == "succeeded":
                     try:
-                        valid = check_acknowledgement(trial, event, row, sources, combat)
+                        valid = check_acknowledgement(trial, event, row, sources, combat,option)
                     except (KeyError, TypeError, ValueError):
                         valid = False
                     if valid:
                         acknowledgements["observed:"+trial["spec"].name] += 1
+                        participation.terminal(trial,'completed:'+trial['spec'].name)
                     else:
                         errors["unverified_provider_skill_success"] += 1
                 else:
                     acknowledgements[event["status"]] += 1
+                    participation.terminal(trial,event['status'])
     report = summary.get("async_policy")
     if report:
         for key, count in outcomes.items():
@@ -272,11 +323,14 @@ def inspect_policy(run, *, require_participation=True):
             "observed_skill_classes": sorted(observed_classes), "criteria_met": not errors and continuous >= 120 and
                 observed_successes >= 20 and len(observed_classes) >= 3 and summary.get("provider_contacted") is True}
     return {"schema_version": 1, "run_id": summary["run_id"], "status": "pass" if not errors else "fail",
+        "candidate_profile":profile,
         "frames_sha256": digest.hexdigest(), "game_frames": game_frames, "errors": dict(errors),
         "supplemental_records": int(summary.get("last_unrecorded_record") is not None),
         "outcomes": dict(outcomes), "injected_faults": dict(faults), "reordered_deliveries": reordered,
         "acknowledgements": dict(acknowledgements), "pending_provider_skills": len(pending_skills),
         "combat_outcomes": dict(combat_outcomes),
+        "option_outcomes":dict(option_outcomes),
+        'participation':participation.report(),
         "input_owner_frames": dict(input_owners),
         "provider_owned_frame_fraction": input_owners.get("provider", 0)/game_frames
             if game_frames and not input_owners.get("unrecorded") else None,

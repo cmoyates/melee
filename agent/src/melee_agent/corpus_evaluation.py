@@ -13,26 +13,26 @@ from .budget import BudgetError, SpendLedger
 from .config import owned_path
 from .corpus import MAX_CORPUS_BYTES, digest, validate_corpus
 from .incidents import stream_records
-from .live_provider import CountingTransport, DESCRIPTIONS
+from .live_provider import CountingTransport, descriptions
+from .tactical_choices import PROFILE
 from .matches import locate_run
 from .provider import DecisionsClient, MODEL_ALIAS, OpenRouterTransport, ProviderError
 from .semantic import CompactObservation, canonical
 from .source_states import captured_observation
 from .trace_limits import MAX_SOURCE_BYTES
 
-CRITERIA = {**DESCRIPTIONS,
-    "jab": "Perform one quick grounded jab at the nearby opponent, then release inputs.",
-    "dtilt": "Perform one grounded down tilt at the nearby opponent, then release inputs.",
-    "grab": "Attempt one grounded grab of the nearby opponent; no automatic throw is included."}
 INSTRUCTIONS = ("Control Fox against Mario CPU level 3 on Battlefield. Choose the most useful available skill "
     "to take stocks while preserving Fox's stocks. Use the locally computed spacing, stock comparison and legal "
     "candidates. These are bounded skills; local code owns timing, interruption and recovery. "
     "Choose exactly one provided label and return its complete probability distribution.")
 
 
-def select_cases(rows, maximum):
+def select_cases(rows, maximum, *, profile=PROFILE):
+    criteria = descriptions(profile)
+    if any(row.get('candidate_profile',PROFILE) != profile for row in rows):
+        raise ValueError('Corpus evaluation profile mismatch')
     eligible = [row for row in rows if 2 <= len(row["state"]["mechanical"]["legal_candidates"]) <= 16]
-    if any(label not in CRITERIA for row in eligible for label in row["state"]["mechanical"]["legal_candidates"]):
+    if any(label not in criteria for row in eligible for label in row["state"]["mechanical"]["legal_candidates"]):
         raise ValueError("Unsupported corpus evaluation candidates")
     count = min(maximum, len(eligible))
     return [eligible[i*(len(eligible)-1)//max(1, count-1)] for i in range(count)]
@@ -44,8 +44,10 @@ def evaluate_corpus(root, corpus_id, budget_directory, max_requests, *, transpor
     if os.environ.get("OPENROUTER_MODEL", MODEL_ALIAS) != MODEL_ALIAS:
         raise ProviderError("unverified_model_alias")
     validation = validate_corpus(root, corpus_id)
+    profile = validation['candidate_profile']
+    criteria = descriptions(profile)
     folder = owned_path(root, "build/jev/corpora/"+corpus_id)
-    selected = select_cases([row for _, row in stream_records(folder/"states.jsonl", MAX_CORPUS_BYTES)], max_requests)
+    selected = select_cases([row for _, row in stream_records(folder/"states.jsonl", MAX_CORPUS_BYTES)], max_requests,profile=profile)
     if not selected:
         raise ValueError("No states have at least two available candidates")
     ledger = SpendLedger(owned_path(root, budget_directory)/"spend.jsonl")
@@ -73,7 +75,8 @@ def evaluate_corpus(root, corpus_id, budget_directory, max_requests, *, transpor
     manifest = {"schema_version": 1, "corpus_id": corpus_id, "evaluation_id": evaluation_id,
         "corpus_manifest_sha256": digest(folder/"manifest.json"), "corpus_validation": validation,
         "requested_model": MODEL_ALIAS, "maximum_requests": max_requests, "budget_before": before,
-        "instructions": INSTRUCTIONS, "criteria_order": list(CRITERIA), "criteria": CRITERIA,
+        'candidate_profile':profile,
+        "instructions": INSTRUCTIONS, "criteria_order": list(criteria), "criteria": criteria,
         "request_interval_seconds": 1, "request_timeout_seconds": 3,
         "selected": [{"source": row["source"], "state_sha256": row["state_sha256"], "split": row["split"]} for row in selected],
         "source_sha256": {name: digest(Path(__file__).parent/name) for name in
@@ -95,7 +98,7 @@ def evaluate_corpus(root, corpus_id, budget_directory, max_requests, *, transpor
                 # monotonic lifetime, including after a host reboot.
                 observation = replace(original, observed_ns=time.monotonic_ns())
                 compact = CompactObservation(observation.episode, observation.frame, observation.observed_ns, canonical(row["state"]))
-                candidates = {label: CRITERIA[label] for label in row["state"]["mechanical"]["legal_candidates"]}
+                candidates = {label: criteria[label] for label in row["state"]["mechanical"]["legal_candidates"]}
                 result = {"source": source, "state_sha256": compact.sha256, "split": row["split"],
                     "original_observed_ns": original.observed_ns}
                 start = time.monotonic()
@@ -121,6 +124,7 @@ def evaluate_corpus(root, corpus_id, budget_directory, max_requests, *, transpor
     after = ledger.report()
     valid = [r for r in results if r["status"] == "validated"]
     report = {"schema_version": 1, "corpus_id": corpus_id, "evaluation_id": evaluation_id,
+        'candidate_profile':profile,
         "status": "completed" if len(valid) == len(selected) else "partial",
         "selected_states": len(selected), "attempted_states": len(results), "validated_responses": len(valid),
         "reserved_requests": after["requests"]-before["requests"],

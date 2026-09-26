@@ -44,7 +44,7 @@ class AsyncPolicyTests(unittest.TestCase):
     def test_complete_request_binding_rejects_each_forged_field(self):
         original = delivery()
         changes = dict(run_id="other", episode=2, bot_life=2, opponent_life=2, frame=9,
-            observed_ns=0, sequence=2, skill_generation=1, candidate_hash="fake", context_key=())
+            observed_ns=0, sequence=2, skill_generation=1, candidate_hash="fake", context_key=(), semantic_sha256="forged")
         for key, value in changes.items():
             changed = replace(original, reply=replace(original.reply, context=replace(original.expected, **{key: value})))
             self.assertEqual(self.check(changed), "request_binding", key)

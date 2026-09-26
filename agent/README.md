@@ -4,10 +4,10 @@ Fox first; build the common foundation for natural-language personality control
 and a future Showboat Captain Falcon. Existing Showboat remains a separate
 historical implementation and baseline.
 
-The workspace includes bootstrap, doctor, supervised local matches and a bounded
-paid Decisions adapter/benchmark. Live Jev control and personality control remain
-later slices. The
-scripted policy is a temporary controller test; it is not a Jev-powered bot.
+The workspace includes supervised Battlefield matches, frame/replay recording,
+local recovery and combat skills, and bounded asynchronous Jev movement/defense
+control through OpenRouter. The complete tactical player and personality control
+remain later slices. The scripted policy is a temporary controller test.
 
 ## Setup
 
@@ -88,6 +88,30 @@ both its revision header and full SHA-1. Compressed CISO/RVZ/WIA/WBFS inputs are
 reported blocked, not corrupt; prepare a separate verified raw image later
 without overwriting the original. The existing patched Showboat disc is not a
 stock input. Doctor neither extracts nor copies any disc.
+
+## Semantic states and frozen-state evaluation
+
+Live asynchronous policies compile `CompactObservationV1` with named motions,
+Battlefield platforms, stocks/stock leader, match time, resources, current skill,
+causal history and locally legal candidates. The immutable snapshot is bound to
+the provider request and retained in private replay evidence.
+
+```sh
+rtk proxy uv run --project agent --no-sync melee-agent corpus build --sources local --split-by episode
+rtk proxy uv run --project agent --no-sync melee-agent corpus validate CORPUS_ID
+```
+
+These two commands make no provider calls. Evaluation requires an existing
+finite ledger, an explicit request bound and the ignored environment file:
+
+```sh
+rtk proxy uv run --project agent --no-sync --env-file agent/.env melee-agent corpus evaluate CORPUS_ID --budget EXISTING_BUDGET_DIRECTORY --max-requests 20
+```
+
+The paid command evaluates frozen states without launching a game. It reports
+model answers and usage, not gameplay success or correct labels. Corpus rows
+and raw captures remain ignored. See the [semantic-state contract](../docs/jev-semantic-state.md)
+for provenance, source hashes, split boundaries and measured acceptance limits.
 
 ## Doctor contract
 

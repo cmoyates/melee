@@ -17,7 +17,7 @@ from .config import load_config, owned_path
 from .doctor import STOCK_DISC_SHA1
 from .engine import BUTTONS, Decision, FrameExecutor, Observation, Packet
 
-CONTRACT_MODULES = ("engine.py", "skills.py", "ground_combat.py", "aerial.py", "stage.py", "rules.py", "async_policy.py", "fox_reflex.py", "provider.py", "live_provider.py")
+CONTRACT_MODULES = ("engine.py", "skills.py", "ground_combat.py", "aerial.py", "stage.py", "rules.py", "async_policy.py", "fox_reflex.py", "provider.py", "live_provider.py", "semantic.py", "native_motions.py")
 MAX_PREFIX_BYTES = 134_217_728
 MAX_RECORDS = 40_000
 LIBMELEE_COMMIT = "bce21f09984b286e6d36bfd2939e4cd4691f94c2"
@@ -99,7 +99,7 @@ def compact_record(row):
             "events": [{"sequence": event["delivery"]["expected"]["sequence"],
                 "accepted": event["accepted"], "reason": event["reason"]} for event in skill["policy_events"]],
             "skill": {key: skill[key] for key in ("generation", "active", "event")},
-            "input_owner": skill.get("input_owner"), "reflex": skill.get("reflex")}}
+            "input_owner": skill.get("input_owner"), "reflex": skill.get("reflex"), "semantic_state": skill.get("semantic_state")}}
 
 
 def validate_clock(row, observation):
@@ -286,7 +286,7 @@ def restore_context(value):
 class RecordedBridge:
     def __init__(self):
         self.row = None
-    def exchange(self, observation, generation, candidates):
+    def exchange(self, observation, generation, candidates, semantic=None):
         if self.row["exchange_busy"]:
             return None
         result = []
@@ -335,7 +335,7 @@ def replay_incident(root, folder):
             for e in trace["policy_events"]]
         actual = {"decision": control["decision"], "packet": control["packet"], "events": events,
             "skill": {key: trace[key] for key in ("generation", "active", "event")},
-            "input_owner": trace["input_owner"], "reflex": trace.get("reflex")}
+            "input_owner": trace["input_owner"], "reflex": trace.get("reflex"), "semantic_state": trace.get("semantic_state")}
         count += 1
         accepted += sum(e["accepted"] for e in events)
         decisions.update(canonical({"decision": control["decision"], "events": events})+b"\n")

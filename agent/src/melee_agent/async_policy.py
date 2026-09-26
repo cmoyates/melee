@@ -8,6 +8,7 @@ import threading
 import time
 
 from .fox_reflex import FoxReflex
+from .semantic import SemanticHistory, compact_observation
 from .skills import SkillArbiter, can_start, inhibited, relative_skill
 from .stage import support_surface
 
@@ -40,12 +41,13 @@ class RequestContext:
     skill_generation: int
     candidate_hash: str
     context_key: tuple
+    semantic_sha256: str | None = None
 
 
-def bind(run_id, observation, sequence, generation, candidates):
+def bind(run_id, observation, sequence, generation, candidates, semantic_sha256=None):
     return RequestContext(run_id, observation.episode, observation.bot.details.life_generation_derived,
         observation.opponent.details.life_generation_derived, observation.frame, observation.observed_ns,
-        sequence, generation, candidate_hash(candidates), context_key(observation))
+        sequence, generation, candidate_hash(candidates), context_key(observation), semantic_sha256)
 
 
 @dataclass(frozen=True)
@@ -153,11 +155,11 @@ class LatestBridge:
         for thread in self.threads:
             thread.start()
 
-    def exchange(self, observation, generation, candidates):
+    def exchange(self, observation, generation, candidates, semantic=None):
         if not self.lock.acquire(blocking=False):
             return None
         try:
-            self.latest = (observation, generation, tuple(candidates))
+            self.latest = (observation, generation, tuple(candidates), semantic)
             result = list(self.deliveries)
             self.deliveries.clear()
             return result
@@ -171,19 +173,21 @@ class LatestBridge:
                 now = time.monotonic()
                 if latest is None or now < self.next_request or getattr(self.backend, "exhausted", False):
                     continue
-                observation, generation, candidates = latest
+                observation, generation, candidates, semantic = latest
                 source = (observation.episode, observation.frame)
                 if len(candidates) < 2 or source == self.last_source or time.monotonic_ns() - observation.observed_ns > MAX_AGE_NS:
                     continue
                 self.next_request = now + self.backend.interval
                 self.last_source = source
                 self.sequence += 1
-                context = bind(self.run_id, observation, self.sequence, generation, candidates)
+                context = bind(self.run_id, observation, self.sequence, generation, candidates,
+                    semantic.sha256 if semantic is not None else None)
                 self.active += 1
                 self.counts["submitted"] += 1
                 self.counts["peak_inflight"] = max(self.counts["peak_inflight"], self.active)
             try:
-                replies = self.backend.call(observation, context, candidates, self.stop)
+                replies = self.backend.call(observation, context, candidates, self.stop,
+                    **({"semantic": semantic} if getattr(self.backend, "accepts_semantic", False) else {}))
                 deliveries = [Delivery(context, candidates, reply) for reply in replies]
             except Exception:
                 deliveries = []
@@ -237,6 +241,8 @@ class AsyncPolicy:
         self.last_owner = "idle"
         self.decision_ns = None
         self.exchange_busy = False
+        self.semantic_history = SemanticHistory()
+        self.semantic_state = None
 
     def _record_skill_event(self):
         event = self.arbiter.last_event
@@ -275,7 +281,10 @@ class AsyncPolicy:
                 self.counts["generation_invalidations"] += 1
             self.last_invalidation = identity
         candidates = tuple(label for label in LABELS if can_start(relative_skill(label, observation), observation) is None)
-        deliveries = self.bridge.exchange(observation, self.arbiter.generation, candidates if not emergency else ())
+        offered = candidates if not emergency else ()
+        self.semantic_state = compact_observation(observation, offered, active_skill=self.arbiter.trace()["active"],
+            skill_known=True, history=self.semantic_history.before(observation))
+        deliveries = self.bridge.exchange(observation, self.arbiter.generation, offered, self.semantic_state)
         self.exchange_busy = deliveries is None
         if deliveries is None:
             self.counts["mailbox_busy"] += 1
@@ -319,7 +328,7 @@ class AsyncPolicy:
         return {**self.arbiter.trace(), "policy_events": self.events, "last_applied_sequence": self.last_applied,
                 "transitions": self.skill_events, "input_owner": self.last_owner,
                 "decision_ns": self.decision_ns, "exchange_busy": self.exchange_busy,
-                "reflex": self.recovery.trace()}
+                "reflex": self.recovery.trace(), "semantic_state": self.semantic_state.wire() if self.semantic_state else None}
 
     def close(self):
         return {"schema_version": 1, "max_age_ns": MAX_AGE_NS, "max_frame_age": MAX_FRAME_AGE,

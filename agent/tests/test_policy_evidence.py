@@ -1,5 +1,6 @@
 from dataclasses import asdict, replace
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,7 +8,7 @@ import unittest
 from melee_agent.async_policy import AsyncPolicy, Delivery, Reply, bind
 from melee_agent.engine import ACTION_PACKETS
 from melee_agent.policy_evidence import inspect_policy
-from test_async_policy import ManualBridge, delivery, state
+from test_async_policy import ManualBridge, state
 
 
 class PolicyEvidenceTests(unittest.TestCase):
@@ -19,7 +20,11 @@ class PolicyEvidenceTests(unittest.TestCase):
         for frame in (10, 11):
             observation = state(frame, 1_000_000_000 + (frame-10)*16_000_000)
             if frame == 11:
-                bridge.replies = [delivery()]
+                snapshot = rows[0]["skill"]["semantic_state"]
+                candidates = tuple(snapshot["mechanical"]["legal_candidates"])
+                digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                context = bind("test", state(), 1, 0, candidates, digest)
+                bridge.replies = [Delivery(context, candidates, Reply(context, "neutral", 1_000_000_001))]
             policy.decide(observation)
             rows.append({"menu": "IN_GAME", "run_id": "test", "control": {
                 "observation": asdict(observation), "queued_ns": 1_100_000_001},
@@ -51,6 +56,22 @@ class PolicyEvidenceTests(unittest.TestCase):
         self.assertIn("accepted_wrong_life", report["errors"])
         self.assertIn("source_life_mismatch", report["errors"])
 
+    def test_semantic_context_must_match_the_recorded_source_snapshot(self):
+        rows, summary = self.fixture()
+        event = rows[-1]["skill"]["policy_events"][0]
+        payload = rows[0]["skill"]["semantic_state"]
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        event["delivery"]["expected"]["semantic_sha256"] = digest
+        event["delivery"]["reply"]["context"]["semantic_sha256"] = digest
+        self.assertEqual(self.audit(rows, summary)["status"], "pass")
+        event["delivery"]["expected"]["semantic_sha256"] = None
+        event["delivery"]["reply"]["context"]["semantic_sha256"] = None
+        self.assertIn("source_semantic_mismatch", self.audit(rows, summary)["errors"])
+        event["delivery"]["expected"]["semantic_sha256"] = digest
+        event["delivery"]["reply"]["context"]["semantic_sha256"] = digest
+        payload["relative"]["stock_leader"] = "forged"
+        self.assertIn("source_semantic_mismatch", self.audit(rows, summary)["errors"])
+
     def test_terminal_record_supplement_accounts_for_last_packet_after_logger_failure(self):
         rows, summary = self.fixture()
         summary["last_unrecorded_record"] = rows.pop()
@@ -77,8 +98,6 @@ class PolicyEvidenceTests(unittest.TestCase):
         clock = [1_000_000_000]
         policy = AsyncPolicy("test", bridge, clock=lambda: clock[0]+10_000)
         policy.next_fallback_ns = 9_000_000_000
-        candidates = ("neutral", "approach")
-        context = bind("test", state(), 1, 0, candidates)
         rows = []
         for frame, x in ((10,0.), (11,0.), (12,3.), (13,6.), (14,7.)):
             clock[0] = 1_000_000_000 + (frame-10)*16_000_000
@@ -86,6 +105,10 @@ class PolicyEvidenceTests(unittest.TestCase):
                 self_velocity_x=2. if frame in (12,13) else 0., input_neutral_derived=frame not in (12,13))
             observation = replace(observation, bot=replace(observation.bot, x=x))
             if frame == 11:
+                snapshot = rows[0]["skill"]["semantic_state"]
+                candidates = tuple(snapshot["mechanical"]["legal_candidates"])
+                digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                context = bind("test", state(), 1, 0, candidates, digest)
                 bridge.replies = [Delivery(context, candidates, Reply(context, "approach", clock[0]))]
             decision = policy.decide(observation)
             rows.append({"menu": "IN_GAME", "run_id": "test", "control": {"observation": asdict(observation),

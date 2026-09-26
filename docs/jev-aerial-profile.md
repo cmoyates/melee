@@ -26,7 +26,17 @@ duration, direction and uncalibrated reduced-lag claims, and prove interruption
 cancels follow-ups while allowing the defensive tech. A mock provider transport
 and paid-incident metadata bind the new profile without a real API call.
 
-Native asynchronous and paid confirmation are pending. The earlier mechanical
+Free native match `match-510f0f50c56f4208bfbc1111fe0b4b26` completed a 0-4 loss
+in 356.50 seconds using simulated delayed responses. All six accepted aerials
+showed short hop, native Nair, a completed neutral landing and an L-cancel input
+attempt. Each recorded seven Nair-landing frames; this is not a new matched
+control calibration or a claim inferred from the L-button pulse. Six of seven
+accepted approach-jab options also completed with contact. All 20,507 game
+frames replayed exactly, with raw policy/integrity, source, rules/result and
+owned cleanup checks passing. All four spend journals remained unchanged.
+Private exact replay: `incident-4335f3381b214534837dc5d127f744d6`.
+
+Paid aerial confirmation is pending. The earlier mechanical
 suite acknowledged all 80 aerials with known terminal controller state, but only
 68 completed cleanly; its stronger clean-completion gate remains unmet. This
 profile does not change that result or establish playing strength.

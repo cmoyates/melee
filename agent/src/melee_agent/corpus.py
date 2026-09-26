@@ -11,7 +11,7 @@ from .config import owned_path
 from .incidents import open_regular, read_json, stream_records
 from .matches import locate_run
 from .semantic import SemanticHistory, canonical, compact_observation
-from .tactical_choices import LABELS as CANDIDATE_ORDER, legal_candidates
+from .tactical_choices import LABELS as CANDIDATE_ORDER, PROFILE, legal_candidates
 from .source_states import captured_observation
 from .trace_limits import MAX_SOURCE_BYTES
 
@@ -46,6 +46,8 @@ def choose_sources(root, limit):
         if not folder.is_dir() or folder.is_symlink() or not (folder/"summary.json").is_file():
             continue
         summary = read_json(folder/"summary.json", 1048576)
+        if summary.get('candidate_profile',PROFILE) != PROFILE:
+            continue  # This compiler/evaluator still targets the atomic catalog.
         if (summary.get("status") not in ("captured", "complete", "scenario_recorded", "skills_verified") or
                 summary.get("replay_errors") or not summary.get("neutralized") or not summary.get("worker_stopped") or
                 not summary.get("emulator_stopped")):
@@ -89,6 +91,8 @@ def generate_cases(root, runs, maximum_states):
         quota = base_quota+int(run_index < remainder)
         folder = locate_run(root, run_id)
         summary = read_json(folder/"summary.json", 1048576)
+        if summary.get('candidate_profile',PROFILE) != PROFILE:
+            raise ValueError('Atomic corpus cannot relabel an experimental candidate profile')
         expected_frames = sum(row.get("observations", 0) for row in summary.get("episodes", []))
         history = SemanticHistory()
         previous_trace = None

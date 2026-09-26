@@ -180,4 +180,5 @@ class GroundedTacticsTests(unittest.TestCase):
             self.assertEqual(main(['match', '--policy', 'jev', '--duration', '540', '--episodes', '1',
                 '--budget', 'build/jev/existing', '--max-requests', '60']), 0)
         self.assertEqual(launch.call_args.args[1:], (540, 1, 'jev'))
-        self.assertEqual(launch.call_args.kwargs, {'budget_directory': 'build/jev/existing', 'max_requests': 60})
+        self.assertEqual(launch.call_args.kwargs, {'budget_directory': 'build/jev/existing', 'max_requests': 60,
+            'candidate_profile':'grounded-tactical-v1'})

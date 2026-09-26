@@ -7,6 +7,7 @@ from .engine import FrameExecutor, Observation
 from .incidents import PacketDigest, RecordedClock, contract_hashes, read_json, stream_records
 from .local_combat_policy import LOCAL_MODES, LocalCombatPolicy
 from .trace_limits import MAX_SOURCE_BYTES
+from .tactical_choices import PROFILE
 
 
 def inspect_local_policy(run):
@@ -19,7 +20,10 @@ def inspect_local_policy(run):
         hashlib.sha256((Path(__file__).parent/'local_combat_policy.py').read_bytes()).hexdigest()}
     if any(launch['source_sha256'].get(name) != digest for name, digest in expected.items()):
         raise ValueError('Local policy replay requires the launch source checkout')
-    policy, clock, packets = LocalCombatPolicy(mode, seed), RecordedClock(), PacketDigest()
+    profile = launch.get('candidate_profile',PROFILE)
+    if report.get('profile',PROFILE) != profile or summary.get('candidate_profile',PROFILE) != profile:
+        raise ValueError('Local policy candidate profile mismatch')
+    policy, clock, packets = LocalCombatPolicy(mode, seed,profile=profile), RecordedClock(), PacketDigest()
     executor = FrameExecutor(policy, packets, clock)
     records, selections, divergence = 0, 0, None
     digest = hashlib.sha256()
@@ -37,7 +41,7 @@ def inspect_local_policy(run):
             divergence = {'episode':row['episode'], 'frame':row['frame']}
             break
     summary_matches = divergence is None and policy.close() == report
-    return {'schema_version':1, 'run_id':launch['run_id'], 'mode':mode, 'seed':seed,
+    return {'schema_version':1, 'run_id':launch['run_id'], 'mode':mode, 'seed':seed, 'candidate_profile':profile,
         'status':'pass' if records and divergence is None and summary_matches else 'fail',
         'replayed_records':records, 'selections':selections, 'divergence':divergence,
         'summary_matches':summary_matches, 'packets_sha256':packets.digest.hexdigest(),

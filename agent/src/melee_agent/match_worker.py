@@ -15,6 +15,7 @@ from .recorder import FrameRecorder, RecorderError
 from .raw_observation import LifeTracker, RawStreamTap, player_record, stage_record
 from .input_trace import InputTrace
 from .local_combat_policy import LOCAL_MODES
+from .tactical_choices import PROFILE
 from .match_lifecycle import (MatchBoundaryError, completed_replay, record_observation,
     start_segment, verify_sudden_death)
 
@@ -32,6 +33,7 @@ def write_json(path, value):
 def run(run_dir):
     import melee
     options = json.loads((run_dir / "launch.json").read_text())
+    candidate_profile = options.get('candidate_profile',PROFILE)
     console = None
     controllers = []
     recorder = None
@@ -79,20 +81,20 @@ def run(run_dir):
             policy = SkillCheckPolicy(options["skill_repeats"])
         elif options["policy"] in LOCAL_MODES:
             from .local_combat_policy import LocalCombatPolicy
-            policy = LocalCombatPolicy(options["policy"])
+            policy = LocalCombatPolicy(options["policy"],profile=candidate_profile)
         elif options["policy"] in ("delayed-fake", "jev", "faults"):
             from .async_policy import AsyncPolicy, LatestBridge
             bridge = None
             if options["policy"] == "jev":
                 from .live_provider import ProviderBackend
                 backend = ProviderBackend(Path(__file__).resolve().parents[3], options["budget_directory"],
-                    options["max_provider_requests"], options["run_deadline_ns"])
+                    options["max_provider_requests"], options["run_deadline_ns"],profile=candidate_profile)
                 bridge = LatestBridge(options["run_id"], backend)
             elif faults:
                 from .runtime_faults import FaultBackend
                 backend = FaultBackend(Path(__file__).resolve().parents[3], run_dir, faults, options["run_deadline_ns"])
                 bridge = LatestBridge(options["run_id"], backend)
-            policy = AsyncPolicy(options["run_id"], bridge)
+            policy = AsyncPolicy(options["run_id"], bridge,profile=candidate_profile)
             if faults:
                 original_decide = policy.decide
                 def fault_decide(observation):

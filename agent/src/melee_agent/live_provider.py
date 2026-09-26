@@ -13,12 +13,13 @@ from .async_policy import MIN_CONFIDENCE, Reply
 from .budget import BudgetError, SpendLedger
 from .config import owned_path
 from .provider import DecisionsClient, MODEL_ALIAS, OpenRouterTransport, ProviderError
+from .semantic import CompactObservation, SEMANTIC_VERSION, compact_observation
 
 DESCRIPTIONS = {
     "neutral": "Release all inputs briefly; observe and wait for a better opportunity.",
     "approach": "Move a short safe distance toward the opponent on the current support surface.",
     "retreat": "Move a short safe distance away from the opponent on the current support surface.",
-    "jump": "Perform a vertical short hop, releasing jump after observed takeoff.",
+    "jump": "Perform a vertical ground jump, releasing jump after observed takeoff.",
     "shield": "Raise shield, hold briefly after it is observed, then release all inputs.",
 }
 INSTRUCTIONS = ("Control Fox against a level 3 Mario CPU on Battlefield. Choose the most useful available skill "
@@ -32,7 +33,8 @@ def policy_config_hash():
     return hashlib.sha256(json.dumps({"model": MODEL_ALIAS, "descriptions": DESCRIPTIONS,
         "instructions": INSTRUCTIONS, "max_inflight": 1, "interval_seconds": 1,
         "response_timeout_seconds": 1, "minimum_confidence": MIN_CONFIDENCE,
-        "circuit_failure_threshold": 3, "circuit_open_seconds": 2}, sort_keys=True).encode()).hexdigest()
+        "circuit_failure_threshold": 3, "circuit_open_seconds": 2,
+        "semantic_version": SEMANTIC_VERSION}, sort_keys=True).encode()).hexdigest()
 
 
 def provider_environment(policy):
@@ -87,6 +89,7 @@ class ProviderBackend:
     name = "openrouter-decisions-v1"
     max_inflight = 1
     interval = 1.
+    accepts_semantic = True
 
     def __init__(self, root, budget_directory, max_requests, run_deadline_ns, *, transport=None):
         if type(max_requests) is not int or not 1 <= max_requests <= 200:
@@ -107,7 +110,7 @@ class ProviderBackend:
         self.health_events = []
         self.config_hash = policy_config_hash()
 
-    def call(self, observation, context, candidates, stop):
+    def call(self, observation, context, candidates, stop, semantic=None):
         if stop.is_set() or time.monotonic_ns() + 3_000_000_000 >= self.run_deadline_ns:
             self.exhausted = True
             return []
@@ -120,12 +123,20 @@ class ProviderBackend:
         try:
             if time.monotonic_ns() < self.open_until_ns:
                 raise ProviderError("circuit_open")
+            if semantic is None:
+                if context.semantic_sha256 is not None:
+                    raise ProviderError("missing_semantic_snapshot")
+                semantic = compact_observation(observation, candidates)
+            if (not isinstance(semantic, CompactObservation) or
+                    (context.semantic_sha256 is not None and context.semantic_sha256 != semantic.sha256)):
+                raise ProviderError("semantic_snapshot_binding")
             result = self.client.submit(observation, {label: DESCRIPTIONS[label] for label in candidates},
                 deadline_ns=min(time.monotonic_ns() + 1_000_000_000, self.run_deadline_ns - 2_000_000_000),
-                instructions=INSTRUCTIONS).result(timeout=1.5)
+                instructions=INSTRUCTIONS, compact_state=semantic).result(timeout=1.5)
             if (result.episode, result.frame, result.observed_ns) != (context.episode, context.frame, context.observed_ns):
                 raise ProviderError("response_observation_mismatch")
             metadata = asdict(result)
+            metadata["semantic_sha256"] = semantic.sha256
             attempt.update(status="validated", request_id=result.request_id,
                 received_ns=result.received_ns, result=metadata)
             self.counts["validated"] += 1

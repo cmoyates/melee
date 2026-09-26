@@ -95,6 +95,20 @@ class IncidentTests(unittest.TestCase):
         with self.assertRaises(IncidentError):
             verify_bundle(self.root, self.folder)
 
+    def test_changed_semantic_state_diverges_before_any_controller_difference(self):
+        from dataclasses import replace
+        from melee_agent.semantic import canonical as semantic_json, compact_observation
+        def wrong_state(*args, **kwargs):
+            compact = compact_observation(*args, **kwargs)
+            payload = compact.wire()
+            payload["bot"]["native_motion_name"] = "InventedMotion"
+            return replace(compact, payload_json=semantic_json(payload))
+        with patch("melee_agent.async_policy.compact_observation", side_effect=wrong_state):
+            report = replay_incident(self.root, self.folder)
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["divergence"]["frame"], 0)
+        self.assertEqual(report["divergence"]["different_fields"], ["semantic_state"])
+
     def test_wrong_episode_fails_even_after_recomputing_file_hash(self):
         path = self.folder / "prefix.jsonl"
         rows = [json.loads(line) for line in path.read_bytes().splitlines()]

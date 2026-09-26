@@ -164,7 +164,7 @@ class DecisionsClient:
         self._timers = set()
 
     def submit(self, observation, candidates, *, deadline_ns, instructions="Choose the best available action for Fox.",
-                additional_questions=None):
+                additional_questions=None, compact_state=None):
         if not isinstance(observation, Observation):
             raise ProviderError("invalid_observation")
         if (not isinstance(candidates, dict) or not 2 <= len(candidates) <= 16 or
@@ -196,7 +196,17 @@ class DecisionsClient:
             raise ProviderError("invalid_deadline")
         if observation.observed_ns > now:
             raise ProviderError("future_observation")
-        payload = json.dumps({"model": MODEL_ALIAS, "state": asdict(observation),
+        state = asdict(observation)
+        if compact_state is not None:
+            from .semantic import CompactObservation
+            if (not isinstance(compact_state, CompactObservation) or
+                    (compact_state.episode, compact_state.frame, compact_state.observed_ns) !=
+                    (observation.episode, observation.frame, observation.observed_ns)):
+                raise ProviderError("compact_state_binding")
+            state = compact_state.wire()
+            if state["mechanical"]["legal_candidates"] != list(candidates):
+                raise ProviderError("compact_candidate_binding")
+        payload = json.dumps({"model": MODEL_ALIAS, "state": state,
             "questions": questions,
             "provider": {"only": ["TypeSafe"], "allow_fallbacks": False,
                             "max_price": {"prompt": 0.042, "completion": 0}}},

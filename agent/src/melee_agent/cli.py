@@ -51,6 +51,19 @@ def main(argv=None):
     replay = commands.add_parser("replay-incident", help="Verify and replay a sealed prefix without network or emulator")
     replay.add_argument("incident_path")
     replay.add_argument("--verify", action="store_true", help="Integrity verification is always required")
+    corpus = commands.add_parser("corpus", help="Build, verify, or explicitly evaluate private semantic states")
+    corpus_commands = corpus.add_subparsers(dest="corpus_command", required=True)
+    corpus_build = corpus_commands.add_parser("build")
+    corpus_build.add_argument("--sources", choices=("local",), default="local")
+    corpus_build.add_argument("--split-by", choices=("episode",), default="episode")
+    corpus_build.add_argument("--maximum-states", type=int, default=5000)
+    corpus_build.add_argument("--source-limit", type=int, default=12)
+    corpus_verify = corpus_commands.add_parser("validate", aliases=["verify"])
+    corpus_verify.add_argument("corpus_id")
+    corpus_evaluate = corpus_commands.add_parser("evaluate", help="Explicit paid frozen-state Decisions evaluation; no emulator")
+    corpus_evaluate.add_argument("corpus_id")
+    corpus_evaluate.add_argument("--budget", required=True)
+    corpus_evaluate.add_argument("--max-requests", type=int, required=True)
     smoke = commands.add_parser("smoke", help="Asset-free deterministic frame-to-controller regression")
     smoke.add_argument("--backend", choices=("fake",), default="fake")
     smoke.add_argument("--fixture", type=Path)
@@ -79,6 +92,21 @@ def main(argv=None):
             command.add_argument("--policy-evidence", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
+    if args.command == "corpus":
+        from .corpus import build_corpus, validate_corpus
+        try:
+            if args.corpus_command == "evaluate":
+                from .corpus_evaluation import evaluate_corpus
+                report = evaluate_corpus(root, args.corpus_id, args.budget, args.max_requests)
+            else:
+                report = (build_corpus(root, args.maximum_states, args.source_limit) if args.corpus_command == "build"
+                    else validate_corpus(root, args.corpus_id))
+            print(json.dumps(report, allow_nan=False))
+            return 1 if args.corpus_command == "evaluate" and report["status"] != "completed" else 0
+        except (ValueError, OSError, KeyError, TypeError):
+            print(json.dumps({"status": "fail", "reason": "corpus_invalid_or_unavailable",
+                "provider_contacted": None if args.corpus_command == "evaluate" else False}))
+            return 1
     if args.command == "scenario-run":
         from .matches import launch
         return launch(root, args.duration, 1, "scenario", scenario_name=args.name)

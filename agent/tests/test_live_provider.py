@@ -71,6 +71,43 @@ class LiveProviderTests(unittest.TestCase):
         self.assertEqual(second["budget_before"]["requests"], 1)
         self.assertEqual(second["budget_after"]["requests"], 2)
 
+    def test_compact_snapshot_is_bound_to_request_and_sent_without_raw_state(self):
+        from melee_agent.semantic import compact_observation
+        observation = state(ns=time.monotonic_ns())
+        compact = compact_observation(observation, self.candidates, skill_known=True)
+        context = bind("test", observation, 1, 0, self.candidates, compact.sha256)
+        backend = ProviderBackend(self.root, "build/jev/budget", 2, time.monotonic_ns()+10_000_000_000, transport=self.response)
+        try:
+            reply = backend.call(observation, context, self.candidates, threading.Event(), semantic=compact)[0]
+            self.assertIsNone(reply.error)
+            self.assertEqual(self.payload["state"], compact.wire())
+            self.assertEqual(reply.metadata["semantic_sha256"], context.semantic_sha256)
+            self.assertEqual(self.payload["state"]["kind"], "CompactObservationV1")
+            self.assertNotIn("details", self.payload["state"]["bot"])
+        finally:
+            self.assertEqual(backend.close()["http_calls"], 1)
+
+    def test_mismatched_compact_identity_candidates_or_hash_never_spends(self):
+        from dataclasses import replace
+        from melee_agent.semantic import compact_observation
+        observation = state(ns=time.monotonic_ns())
+        compact = compact_observation(observation, self.candidates)
+        context = bind("test", observation, 1, 0, self.candidates, compact.sha256)
+        cases = [
+            (context, None, "missing_semantic_snapshot"),
+            (replace(context, semantic_sha256="0"*64), compact, "semantic_snapshot_binding"),
+            (replace(context, semantic_sha256=None), compact_observation(state(11, observation.observed_ns), self.candidates), "compact_state_binding"),
+            (replace(context, semantic_sha256=None), compact_observation(observation, tuple(reversed(self.candidates))), "compact_candidate_binding"),
+        ]
+        for request, snapshot, reason in cases:
+            backend = ProviderBackend(self.root, "build/jev/budget", 1, time.monotonic_ns()+10_000_000_000, transport=self.response)
+            try:
+                reply = backend.call(observation, request, self.candidates, threading.Event(), semantic=snapshot)[0]
+                self.assertEqual(reply.error, reason)
+            finally:
+                self.assertEqual(backend.close()["http_calls"], 0)
+        self.assertEqual(self.ledger.report()["requests"], 0)
+
     def test_shutdown_margin_prevents_new_paid_request(self):
         backend = ProviderBackend(self.root, "build/jev/budget", 1, time.monotonic_ns()+2_000_000_000, transport=self.response)
         self.assertEqual(self.call(backend), [])

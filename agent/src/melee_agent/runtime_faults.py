@@ -159,7 +159,7 @@ class FaultBackend(ProviderBackend):
             self.client.close()
         injected.cancel = cancel
 
-    def call(self, observation, context, candidates, stop):
+    def call(self, observation, context, candidates, stop, semantic=None):
         if self.replace_client:
             closed = self.client.close(timeout=1.25)
             if closed["workers_alive"] or closed["timers_alive"]:
@@ -167,7 +167,7 @@ class FaultBackend(ProviderBackend):
             self.client = DecisionsClient(self.ledger, self.transport, max_in_flight=1)
             self.replace_client = False
             self.faults.record("client_recreated", source_frame=observation.frame, episode=observation.episode)
-        replies = super().call(observation, context, candidates, stop)
+        replies = super().call(observation, context, candidates, stop, semantic=semantic)
         if self.exhausted and len(self.attempts) == self.max_requests:
             self.faults.record("rate_cap", attempts=len(self.attempts))
         return replies

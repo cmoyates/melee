@@ -145,6 +145,18 @@ def inspect_policy(run, *, require_participation=True):
                 check(source is not None, "missing_accepted_source")
                 if source:
                     old, old_skill, _ = source
+                    semantic_hash = c.get("semantic_sha256")
+                    snapshot = old_skill.get("semantic_state")
+                    if semantic_hash is not None or snapshot is not None:
+                        calculated = hashlib.sha256(json.dumps(snapshot, sort_keys=True,
+                            separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+                        check(snapshot is not None and calculated == semantic_hash, "source_semantic_mismatch")
+                        mechanical = snapshot.get("mechanical") if isinstance(snapshot, dict) else None
+                        check(isinstance(mechanical, dict) and mechanical.get("legal_candidates") == candidates,
+                            "source_semantic_candidates_mismatch")
+                        metadata = reply.get("metadata") or {}
+                        if metadata.get("resolved_model"):
+                            check(metadata.get("semantic_sha256") == semantic_hash, "provider_semantic_mismatch")
                     check(old.observed_ns == c["observed_ns"], "source_timestamp_mismatch")
                     check(old_skill["generation"] == c["skill_generation"], "source_generation_mismatch")
                     check((old.bot.details.life_generation_derived, old.opponent.details.life_generation_derived) ==

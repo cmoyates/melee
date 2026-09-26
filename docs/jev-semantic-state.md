@@ -4,8 +4,9 @@ J18 gives the existing asynchronous Jev policy a bounded snapshot of gameplay
 meaning. Fox remains the controlled character, against Mario CPU level 3 on
 Battlefield. The deterministic executor still owns input timing, legality,
 recovery, interruptions and stale-response rejection. This slice changes the
-representation; the paid policy's five movement/defense labels remain unchanged.
-Grounded attacks and the aerial become tactical choices in J19.
+representation; its original paid pilots used five movement/defense labels.
+The later [grounded tactical slice](jev-grounded-tactics.md) adds jab, down-tilt
+and grab. Aerial integration and complete-player acceptance remain later work.
 
 ## State contract
 

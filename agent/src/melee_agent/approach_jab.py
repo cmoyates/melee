@@ -42,6 +42,8 @@ def can_start_approach_jab(direction, observation):
         return 'wrong_facing'
     if abs(b.x-a.x) <= COMBAT['jab']['range']:
         return can_start_combat('jab',direction,observation)
+    # The option may be accepted while settling a turn or dash, but starts its
+    # walk child only after standing/walking with released input is observed.
     return can_start(SkillSpec('move',direction),observation)
 
 
@@ -108,13 +110,13 @@ class ApproachJab:
             if a.details.action_id in START_ACTIONS and a.details.input_neutral_derived:
                 if (1 if a.details.facing_right else -1) != self.direction:
                     return self.finish(observation,'aborted','facing_changed')
-                name = 'jab' if abs(b.x-a.x) <= COMBAT['jab']['range'] else 'move'
-                if name == 'move' and self.moves >= MAX_MOVES:
+                name = 'jab' if abs(b.x-a.x) <= COMBAT['jab']['range'] else 'walk'
+                if name == 'walk' and self.moves >= MAX_MOVES:
                     return self.finish(observation,'aborted','movement_count_bound')
                 refusal = self.child.request(SkillSpec(name,self.direction),observation)
                 if refusal:
                     return self.finish(observation,'aborted','child_precondition:'+refusal)
-                self.moves += int(name == 'move')
+                self.moves += int(name == 'walk')
                 self.phase = name
             else:
                 self.phase = 'settle'

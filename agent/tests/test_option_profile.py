@@ -37,8 +37,8 @@ class OptionProfileTests(unittest.TestCase):
             now[0]=1_000_000_000+frame*16_666_667
             x,motion,velocity = (0.,14,0.) if frame==0 else (1.,20,2.) if frame==1 else (7.,20,2.) if frame==2 else (9.,14,0.)
             if frame>=34:
-                x,motion,velocity={34:(9.,14,0.),35:(16.,20,2.),36:(18.,20,0.),37:(19.,14,0.),
-                    38:(26.,20,2.),39:(28.,20,0.),40:(28.,14,0.),41:(28.,44,0.),42:(28.,14,0.)}[frame]
+                x,motion,velocity={34:(9.,14,0.),35:(16.,15,.6),36:(18.,14,0.),37:(19.,14,0.),
+                    38:(26.,15,.6),39:(28.,14,0.),40:(28.,14,0.),41:(28.,44,0.),42:(28.,14,0.)}[frame]
             observation=replace(sample(frame,x,motion,opponent_x=33.,self_velocity_x=velocity),observed_ns=now[0])
             if episode_boundary and frame>=36:
                 sudden_frame=frame-159

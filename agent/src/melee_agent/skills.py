@@ -11,6 +11,7 @@ from .stage import GROUND_EDGE, PLATFORMS, support_surface
 # Landing is excluded: a held jump pressed before its actionable window can be
 # ignored for the entire landing, then remain held without a new press edge.
 GROUND_ACTIONS = frozenset((14, 15, 16, 17, 18, 19, 20, 21, 22, 23))
+WALK_ACTIONS = frozenset((15, 16, 17))
 JUMP_ACTIONS = frozenset((25, 26, 27, 28))
 SHIELD_ACTIONS = frozenset((178, 179, 180, 181, 182))
 
@@ -21,9 +22,9 @@ class SkillSpec:
     direction: int = 0
 
     def __post_init__(self):
-        if self.name not in ("neutral", "move", "jump", "shield", "approach_jab", *COMBAT, *AERIAL) or type(self.direction) is not int or self.direction not in (-1, 0, 1):
+        if self.name not in ("neutral", "move", "walk", "jump", "shield", "approach_jab", *COMBAT, *AERIAL) or type(self.direction) is not int or self.direction not in (-1, 0, 1):
             raise ValueError("Invalid skill")
-        if self.name in ("move", "approach_jab", *COMBAT, *AERIAL) and self.direction == 0 or self.name in ("neutral", "shield") and self.direction:
+        if self.name in ("move", "walk", "approach_jab", *COMBAT, *AERIAL) and self.direction == 0 or self.name in ("neutral", "shield") and self.direction:
             raise ValueError("Invalid skill direction")
 
 
@@ -75,7 +76,12 @@ def can_start(spec, observation):
         return "shield_low"
     if spec.name == "jump" and (not bot.jumps or details.input_jump_held):
         return "jump_unavailable_or_held"
-    if spec.name == "move":
+    if spec.name == "walk":
+        if details.action_id not in (14, *WALK_ACTIONS) or not details.input_neutral_derived:
+            return "requires_released_walk_or_stand"
+        if (1 if details.facing_right else -1) != spec.direction:
+            return "wrong_facing"
+    if spec.name in ("move", "walk"):
         surface = support_surface(bot.x, bot.y, bot.grounded)
         bounds = (-GROUND_EDGE, GROUND_EDGE) if surface == "ground" else next(
             ((p["left"], p["right"]) for p in PLATFORMS if p["id"] == surface), None)
@@ -188,12 +194,15 @@ class SkillArbiter:
         acknowledged = False
         if spec.name == "neutral":
             acknowledged = details.input_neutral_derived
-        elif spec.name == "move":
+        elif spec.name in ("move", "walk"):
             if not bot.grounded:
                 return self.abort(observation, "lost_ground_support")
-            action = "right" if spec.direction > 0 else "left"
+            walking = spec.name == "walk"
+            if walking and details.action_id not in (14, *WALK_ACTIONS):
+                return self.abort(observation, "unexpected_walk_motion")
+            action = ("slow_right" if spec.direction > 0 else "slow_left") if walking else ("right" if spec.direction > 0 else "left")
             acknowledged = ((bot.x - active["start_x"]) * spec.direction >= 6 and
-                            details.action_id in GROUND_ACTIONS and details.self_velocity_x * spec.direction > 0)
+                            details.action_id in (WALK_ACTIONS if walking else GROUND_ACTIONS) and details.self_velocity_x * spec.direction > 0)
         elif spec.name == "jump":
             action = {0: "jump", 1: "jump_right", -1: "jump_left"}[spec.direction]
             if details.action_id == 24 and active["knee_start"] is None:

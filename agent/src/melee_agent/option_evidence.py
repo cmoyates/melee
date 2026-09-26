@@ -3,7 +3,7 @@
 from .approach_jab import MAX_MOVES, MAX_FRAMES, MAX_DISPLACEMENT, can_start_approach_jab
 from .combat_evidence import audit_combat_trace
 from .engine import ACTION_PACKETS, Observation
-from .skills import GROUND_ACTIONS, SkillSpec, can_start
+from .skills import WALK_ACTIONS, SkillSpec, can_start
 
 
 def audit_option_trace(option,rows,errors,*,completed,require_move=False):
@@ -19,7 +19,7 @@ def audit_option_trace(option,rows,errors,*,completed,require_move=False):
         if option['end_frame'] != rows[-1]['frame'] or option['end_frame']-option['source_frame'] > MAX_FRAMES:
             errors['option_deadline_or_end_mismatch'] += 1
         children = option['children']
-        moves = [c for c in children if c['skill']=='move']
+        moves = [c for c in children if c['skill']=='walk']
         jabs = [c for c in children if c['skill']=='jab']
         if len(moves)>MAX_MOVES or len(jabs)>1 or len(children)!=len(moves)+len(jabs) or option['movement_count']!=len(moves):
             errors['option_child_count'] += 1
@@ -46,9 +46,9 @@ def audit_option_trace(option,rows,errors,*,completed,require_move=False):
                 ack=indexed[child['ack_frame']]
                 raw=ack['raw_observation']['players']['1']['raw_post']
                 direction=child['direction']
-                action='right' if direction>0 else 'left'
+                action='slow_right' if direction>0 else 'slow_left'
                 valid=(start<child['ack_frame']<=end and not raw['airborne'] and
-                    (raw['x']-initial.bot.x)*direction>=6 and raw['action_id'] in GROUND_ACTIONS and
+                    (raw['x']-initial.bot.x)*direction>=6 and raw['action_id'] in WALK_ACTIONS and
                     raw['speed_ground_x_self']*direction>0 and all(
                         indexed[f]['control']['packet']==ACTION_PACKETS[action].wire()
                         for f in range(start,child['ack_frame'])))

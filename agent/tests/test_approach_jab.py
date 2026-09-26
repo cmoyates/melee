@@ -22,15 +22,44 @@ def sample(frame=0,x=0.,motion=14,direction=1,opponent_x=24.,**details):
 
 
 class ApproachJabTests(unittest.TestCase):
+    def test_walk_uses_partial_stick_and_never_acknowledges_a_dash(self):
+        for direction in (-1,1):
+            start=sample(direction=direction)
+            walk=SkillArbiter()
+            self.assertIsNone(walk.request(SkillSpec('walk',direction),start))
+            action=walk.step(start).action
+            self.assertEqual(action,'slow_right' if direction>0 else 'slow_left')
+            self.assertEqual(ACTION_PACKETS[action].main_x,.65 if direction>0 else .35)
+            dash=sample(1,7.,20,direction,self_velocity_x=2.)
+            self.assertEqual(walk.step(dash).action,'wait')
+            self.assertEqual(walk.last_event['reason'],'unexpected_walk_motion')
+            self.assertIsNone(walk.last_event['ack_frame'])
+            self.assertIsNotNone(can_start(SkillSpec('walk',direction),dash))
+            held=sample(direction=direction,input_neutral_derived=False)
+            self.assertIsNotNone(can_start(SkillSpec('walk',direction),held))
+            move=SkillArbiter()
+            self.assertIsNone(move.request(SkillSpec('move',direction),start))
+            self.assertEqual(move.step(start).action,'right' if direction>0 else 'left')
+            move.step(dash)
+            self.assertEqual(move.active['ack_frame'],1)
+
+    def test_option_waits_for_dash_to_settle_before_starting_a_walk(self):
+        option=ApproachJab(1,sample(motion=20))
+        self.assertEqual(option.step(sample(motion=20)),'wait')
+        self.assertEqual(option.step(sample(1,1.,20)),'wait')
+        self.assertIsNone(option.child.active)
+        self.assertEqual(option.step(sample(2,1.,14)),'slow_right')
+        self.assertEqual(option.child.active['spec'].name,'walk')
+
     def test_two_moves_then_one_fresh_jab_share_the_single_packet_writer(self):
         for direction in (-1,1):
             arbiter,sink = SkillArbiter(),RecordingSink()
             executor = FrameExecutor(SimpleNamespace(decide=arbiter.step),sink,
                 SimpleNamespace(now_ns=lambda:1_100_000_000))
             states = [sample(0,direction=direction),
-                sample(1,7.,20,direction,self_velocity_x=2.,input_neutral_derived=False),
+                sample(1,7.,15,direction,self_velocity_x=.6,input_neutral_derived=False),
                 sample(2,9.,20,direction),sample(3,10.,14,direction),
-                sample(4,17.,20,direction,self_velocity_x=2.,input_neutral_derived=False),
+                sample(4,17.,15,direction,self_velocity_x=.6,input_neutral_derived=False),
                 sample(5,19.,20,direction),sample(6,19.,14,direction),
                 sample(7,19.,44,direction),sample(8,19.,14,direction)]
             self.assertIsNone(arbiter.request(SkillSpec('approach_jab',direction),states[0]))
@@ -41,7 +70,7 @@ class ApproachJabTests(unittest.TestCase):
             self.assertEqual(terminal['ack_frame'],7)
             option = terminal['option']
             self.assertEqual(option['movement_count'],2)
-            self.assertEqual([c['skill'] for c in option['children']],['move','move','jab'])
+            self.assertEqual([c['skill'] for c in option['children']],['walk','walk','jab'])
             self.assertEqual(option['combat']['press_frame'],6)
             self.assertEqual(option['combat']['contact_frames'],[])
             self.assertEqual(len(sink.packets),len(states))
@@ -61,7 +90,7 @@ class ApproachJabTests(unittest.TestCase):
     def test_changed_opportunity_never_issues_the_jab(self):
         for change in ('range','crossed','airborne','invulnerable','shield','hitstun','episode','gap'):
             option = ApproachJab(1,sample())
-            self.assertEqual(option.step(sample()),'right')
+            self.assertEqual(option.step(sample()),'slow_right')
             current=sample(1,7.,20,self_velocity_x=2.)
             if change=='range':current=replace(current,opponent=replace(current.opponent,x=60.))
             if change=='crossed':current=replace(current,opponent=replace(current.opponent,x=0.))
@@ -79,7 +108,7 @@ class ApproachJabTests(unittest.TestCase):
     def test_facing_and_input_are_rechecked_after_movement_release(self):
         option=ApproachJab(1,sample(opponent_x=18.))
         option.step(sample(opponent_x=18.))
-        option.step(sample(1,7.,20,opponent_x=18.,self_velocity_x=2.))
+        option.step(sample(1,7.,15,opponent_x=18.,self_velocity_x=.6))
         option.step(sample(2,9.,20,opponent_x=18.))
         settling=sample(3,9.,14,opponent_x=18.,input_neutral_derived=False)
         self.assertEqual(option.step(settling),'wait')
@@ -119,8 +148,8 @@ class ApproachJabTests(unittest.TestCase):
         option=ApproachJab(1,sample())
         for index in range(4):
             frame,x=index*3,index*6.
-            self.assertEqual(option.step(sample(frame,x,opponent_x=x+24)),'right')
-            self.assertEqual(option.step(sample(frame+1,x+6,20,opponent_x=x+30,self_velocity_x=2.)),'wait')
+            self.assertEqual(option.step(sample(frame,x,opponent_x=x+24)),'slow_right')
+            self.assertEqual(option.step(sample(frame+1,x+6,15,opponent_x=x+30,self_velocity_x=.6)),'wait')
             self.assertEqual(option.step(sample(frame+2,x+6,20,opponent_x=x+30)),'wait')
         self.assertEqual(option.step(sample(12,24,opponent_x=48)),'wait')
         self.assertEqual(option.reason,'movement_count_bound')
@@ -133,8 +162,8 @@ class ApproachJabTests(unittest.TestCase):
     def test_scenario_and_raw_auditor_require_actual_child_motion_and_packets(self):
         policy=ScenarioPolicy(find_scenario('approach-jab-right'))
         executor=FrameExecutor(policy,RecordingSink(),SimpleNamespace(now_ns=lambda:1_100_000_000))
-        states=[sample(0),sample(1,7,20,self_velocity_x=2.),sample(2,9,20),
-            sample(3,10),sample(4,17,20,self_velocity_x=2.),sample(5,19,20),
+        states=[sample(0),sample(1,7,15,self_velocity_x=.6),sample(2,9,14),
+            sample(3,10),sample(4,17,15,self_velocity_x=.6),sample(5,19,14),
             sample(6,19),sample(7,19,44),sample(8,19)]
         rows=[]
         for state in states:
@@ -154,10 +183,12 @@ class ApproachJabTests(unittest.TestCase):
         evidence=audit_option(report,rows,errors)
         self.assertEqual(errors,{})
         self.assertEqual(evidence,{'moves_acknowledged':2,'jab_acknowledged':True,'completed':True,'contacts':0})
-        for change in ('movement','packet','jab'):
+        for change in ('movement','packet','dash_packet','dash_motion','jab'):
             altered=deepcopy(rows)
             if change=='movement':altered[1]['raw_observation']['players']['1']['raw_post']['x']=1.
             if change=='packet':altered[0]['control']['packet']=ACTION_PACKETS['wait'].wire()
+            if change=='dash_packet':altered[0]['control']['packet']=ACTION_PACKETS['right'].wire()
+            if change=='dash_motion':altered[1]['raw_observation']['players']['1']['raw_post']['action_id']=20
             if change=='jab':altered[7]['raw_observation']['players']['1']['raw_post']['action_id']=14
             errors=Counter()
             audit_option(report,altered,errors)

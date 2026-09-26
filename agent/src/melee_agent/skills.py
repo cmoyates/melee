@@ -74,9 +74,16 @@ def can_start(spec, observation):
         return "jump_unavailable_or_held"
     if spec.name == "move":
         surface = support_surface(bot.x, bot.y, bot.grounded)
-        bounds = (-GROUND_EDGE + 8, GROUND_EDGE - 8) if surface == "ground" else next(
-            ((p["left"] + 8, p["right"] - 8) for p in PLATFORMS if p["id"] == surface), None)
-        if bounds is None or not bounds[0] <= bot.x + 6 * spec.direction <= bounds[1]:
+        bounds = (-GROUND_EDGE, GROUND_EDGE) if surface == "ground" else next(
+            ((p["left"], p["right"]) for p in PLATFORMS if p["id"] == surface), None)
+        if bounds is None:
+            return "support_edge"
+        left, right = bounds
+        target = bot.x + 6 * spec.direction
+        normal = left+8 <= target <= right-8
+        inward_escape = ((bot.x < left+8 or bot.x > right-8) and left < target < right and
+            abs(target-(left+right)/2) < abs(bot.x-(left+right)/2))
+        if not (normal or inward_escape):
             return "support_edge"
     return None
 

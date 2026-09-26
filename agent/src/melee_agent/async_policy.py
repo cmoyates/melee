@@ -316,7 +316,7 @@ class AsyncPolicy:
             return reflex_decision
         self._record_owner(self.owner, observation)
         if self.arbiter.active is None and now >= self.next_fallback_ns:
-            label = "approach" if "approach" in candidates else "neutral"
+            label = "approach" if "approach" in candidates else "retreat" if "retreat" in candidates else "neutral"
             if self.arbiter.request(relative_skill(label, observation), observation) is None:
                 self.next_fallback_ns = now + 1_500_000_000
                 self.counts["local_fallbacks"] += 1

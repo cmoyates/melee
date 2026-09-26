@@ -11,6 +11,7 @@ from .stage import GROUND_EDGE, PLATFORMS, support_surface
 # Landing is excluded: a held jump pressed before its actionable window can be
 # ignored for the entire landing, then remain held without a new press edge.
 GROUND_ACTIONS = frozenset((14, 15, 16, 17, 18, 19, 20, 21, 22, 23))
+TEETER_ACTIONS = frozenset((245, 246))  # Ottotto/OttottoWait share native movement IASA.
 WALK_ACTIONS = frozenset((15, 16, 17))
 JUMP_ACTIONS = frozenset((25, 26, 27, 28))
 SHIELD_ACTIONS = frozenset((178, 179, 180, 181, 182))
@@ -70,7 +71,8 @@ def can_start(spec, observation):
         return can_start_approach_jab(spec.direction, observation)
     if not bot.grounded:
         return "requires_ground"
-    if details.action_id not in GROUND_ACTIONS:
+    teeter_escape = spec.name == "move" and details.action_id in TEETER_ACTIONS
+    if details.action_id not in GROUND_ACTIONS and not teeter_escape:
         return "motion_not_interruptible"
     if spec.name == "shield" and details.shield_strength < 15:
         return "shield_low"
@@ -92,6 +94,8 @@ def can_start(spec, observation):
         normal = left+8 <= target <= right-8
         inward_escape = ((bot.x < left+8 or bot.x > right-8) and left < target < right and
             abs(target-(left+right)/2) < abs(bot.x-(left+right)/2))
+        if teeter_escape and not inward_escape:
+            return "support_edge"
         if not (normal or inward_escape):
             return "support_edge"
     return None

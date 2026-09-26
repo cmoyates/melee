@@ -18,6 +18,43 @@ def edge_state(platform, edge, frame=0):
 
 
 class PlatformInwardMovementTests(unittest.TestCase):
+    def test_teeter_states_only_enable_inward_movement_at_all_six_edges(self):
+        for action in (245,246):
+            for platform in PLATFORMS:
+                for edge,inward in (('left',1),('right',-1)):
+                    state = edge_state(platform,edge)
+                    state = replace(state,bot=replace(state.bot,
+                        details=replace(state.bot.details,action_id=action)))
+                    self.assertIsNone(can_start(SkillSpec('move',inward),state))
+                    self.assertEqual(can_start(SkillSpec('move',-inward),state),'support_edge')
+                    self.assertEqual(legal_candidates(state),('neutral','retreat'))
+                    for skill in (SkillSpec('walk',inward),SkillSpec('jump'),SkillSpec('shield'),
+                            SkillSpec('jab',inward),SkillSpec('approach_jab',inward)):
+                        self.assertIsNotNone(can_start(skill,state))
+
+    def test_teeter_escape_retains_support_damage_and_interior_guards(self):
+        state = edge_state(PLATFORMS[0],'right')
+        state = replace(state,bot=replace(state.bot,details=replace(state.bot.details,action_id=246)))
+        for bot in (replace(state.bot,y=30.),replace(state.bot,grounded=False),
+                replace(state.bot,x=-38.),
+                replace(state.bot,details=replace(state.bot.details,hitstun_frames_derived=3)),
+                replace(state.bot,details=replace(state.bot.details,hitlag_frames_derived=2)),
+                replace(state.bot,details=replace(state.bot.details,action_id=247))):
+            self.assertIsNotNone(can_start(SkillSpec('move',-1),replace(state,bot=bot)))
+
+    def test_retained_teeter_wait_sample_starts_inward_fallback_and_heuristic(self):
+        state = edge_state(PLATFORMS[0],'right')
+        state = replace(state,bot=replace(state.bot,x=-19.950454711914062,y=27.20009994506836,
+            details=replace(state.bot.details,action_id=246)),
+            opponent=replace(state.opponent,x=-17.90666961669922,y=54.40010070800781))
+        policy = AsyncPolicy('fixture',ManualBridge(),clock=lambda:state.observed_ns+1000)
+        policy.decide(state)
+        self.assertEqual(policy.arbiter.trace()['active']['skill'],'move')
+        self.assertEqual(policy.arbiter.trace()['active']['direction'],-1)
+        local = LocalCombatPolicy('heuristic-tactical')
+        self.assertEqual(local.decide(state).action,'left')
+        self.assertEqual(local.selection['selected'],'retreat')
+
     def test_all_six_platform_edges_allow_only_the_inward_escape(self):
         for platform in PLATFORMS:
             for edge, inward in (('left',1),('right',-1)):

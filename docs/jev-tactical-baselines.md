@@ -30,6 +30,14 @@ The configured per-run limit and artifact cap must cover the requested run.
 Normal result-event and replay checks determine whether a full match completed;
 a wall-clock stop with a partial match is not a completed comparison trial.
 
+`melee-agent inspect RUN_ID --policy-evidence` replays local policy recordings
+without network, emulator or controller writes. It requires the launch control
+sources, recreates the recorded seed, and checks every decision, packet,
+selection/reflex trace and final selector summary. It stops at the first
+divergence; altered source identities fail before replay. Use the separate
+`--integrity` audit for raw input, rules and result evidence. Exact replay on
+historical observations is not a counterfactual simulation.
+
 Host tests cover candidate parity for both directions, spacing, shielding and
 invulnerability; the random selector can choose every legal tactic and retains
 its seed; commitment/hitlag and damage preemption still use the shared executor.

@@ -13,16 +13,21 @@ from .matches import locate_run
 from .semantic import SemanticHistory, canonical, compact_observation
 from .skills import can_start, relative_skill
 from .source_states import captured_observation
+from .trace_limits import MAX_SOURCE_BYTES
 
 CANDIDATE_ORDER = ("neutral", "approach", "retreat", "jump", "shield", "jab", "dtilt", "grab")
 MAX_CORPUS_BYTES = 134217728
-COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py")
+COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py", "trace_limits.py")
 
 
 def digest(path):
     h = hashlib.sha256()
-    with open_regular(path, 268435456) as source:
+    with open_regular(path, MAX_SOURCE_BYTES) as source:
+        size = 0
         for block in iter(lambda: source.read(1048576), b""):
+            size += len(block)
+            if size > MAX_SOURCE_BYTES:
+                raise ValueError("Corpus source byte limit exceeded")
             h.update(block)
     return h.hexdigest()
 
@@ -51,7 +56,7 @@ def choose_sources(root, limit):
         if priority is None:
             continue
         try:
-            first = next(row for _, row in stream_records(folder/"frames.jsonl", 268435456) if row.get("menu") == "IN_GAME")
+            first = next(row for _, row in stream_records(folder/"frames.jsonl", MAX_SOURCE_BYTES) if row.get("menu") == "IN_GAME")
             captured_observation(first)
         except (ValueError, KeyError, StopIteration):
             continue
@@ -90,7 +95,7 @@ def generate_cases(root, runs, maximum_states):
         previous_identity = None
         previous_frame = None
         source_index = emitted = 0
-        for line, row in stream_records(folder/"frames.jsonl", 268435456):
+        for line, row in stream_records(folder/"frames.jsonl", MAX_SOURCE_BYTES):
             if row.get("menu") != "IN_GAME":
                 continue
             observation = captured_observation(row)

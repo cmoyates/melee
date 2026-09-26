@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import tomllib
 
+from .trace_limits import MAX_SOURCE_BYTES
+
 
 class ConfigError(ValueError):
     """A deliberately public-safe error message."""
@@ -104,6 +106,8 @@ def load_config(root: Path, path: Path | None = None) -> Config:
     if digest and not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ConfigError("Runtime SHA-256 must be 64 lowercase hexadecimal characters.")
     config = Config(**values, limits=Limits(**limits))
+    if config.limits.max_artifact_bytes > MAX_SOURCE_BYTES:
+        raise ConfigError("Run artifact budget cannot exceed 512 MiB.")
     try:
         owned_path(root, config.run_root)
     except (OSError, RuntimeError, ValueError) as error:

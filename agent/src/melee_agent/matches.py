@@ -18,6 +18,7 @@ from .doctor import STOCK_DISC_SHA1, STOCK_DOL_SHA1, digest
 from .match_worker import write_json
 from .stage import STAGE_NAME, STAGE_ID
 from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
+from .trace_limits import MAX_SOURCE_BYTES
 
 
 def isolated_environment():
@@ -58,6 +59,8 @@ def terminate_child(child, *, grace_seconds=3):
 
 def preflight(root, duration, episodes, policy, capture=False):
     config = load_config(root)
+    if not 0 < config.limits.max_artifact_bytes <= MAX_SOURCE_BYTES:
+        raise ValueError("Run artifact budget must be positive and cannot exceed 512 MiB.")
     if type(duration) is not int or not 1 <= duration <= config.limits.max_run_seconds:
         raise ValueError("Duration must fit the configured run limit")
     if type(capture) is not bool:

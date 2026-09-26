@@ -58,7 +58,7 @@ class HorizontalRecoveryTests(unittest.TestCase):
             details=replace(base.bot.details,life_generation_derived=5))))
         observations.extend(replace(base,bot=replace(base.bot,details=replace(base.bot.details,**c))) for c in
             ({'action_id':29},{'hitlag_frames_derived':1},{'hitstun_frames_derived':1},
-             {'input_jump_held':True},{'self_velocity_y':.01}))
+            {'input_jump_held':True},{'self_velocity_y':.01}))
         observations.append(replace(base,frame=-1))
         for value in observations:
             self.assertFalse(horizontal_recovery_entry(value),value)

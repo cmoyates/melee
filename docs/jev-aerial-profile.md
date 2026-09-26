@@ -19,7 +19,7 @@ selection. The corpus compiler now also hashes the aerial implementation. A
 new-profile corpus needs its own compatible source sessions; old recordings
 and compiler identities are preserved. No fine-tuning is introduced.
 
-364 host tests pass. A 500 ms delayed response completes an observed short hop,
+368 host tests pass after integrating the lifecycle fix. A 500 ms delayed response completes an observed short hop,
 Nair and seven-frame landing fixture, followed by exact 49-frame sealed replay
 with network/process creation blocked. Tests reject changed raw motion, landing
 duration, direction and uncalibrated reduced-lag claims, and prove interruption

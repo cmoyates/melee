@@ -227,7 +227,7 @@ def verify_bundle(root, folder):
         raise IncidentError("policy_contract_mismatch")
     if provenance["provider_config_sha256"] is not None:
         from .live_provider import policy_config_hash
-        if provenance["provider_config_sha256"] != policy_config_hash():
+        if provenance["provider_config_sha256"] != policy_config_hash(provenance.get('candidate_profile','grounded-tactical-v1')):
             raise IncidentError("provider_config_mismatch")
     if (provenance["stage_id"], provenance["starting_stocks"], provenance["time_limit_seconds"]) != (31, 4, 480):
         raise IncidentError("rules_provenance_mismatch")

@@ -94,6 +94,28 @@ class OptionProfileTests(unittest.TestCase):
         self.assertEqual(replay['status'],'pass',replay)
         self.assertEqual(replay['replayed_records'],43)
 
+    def test_paid_option_replay_checks_its_declared_profile_config_without_network(self):
+        from melee_agent.incidents import IncidentError
+        for config_profile in (OPTION_PROFILE,PROFILE):
+            root,run,_=self.fixture()
+            launch=json.loads((run/'launch.json').read_text())
+            launch['policy']='jev'
+            (run/'launch.json').write_bytes(canonical(launch))
+            summary=json.loads((run/'summary.json').read_text())
+            summary['async_policy']['bridge']['provider']={'config_sha256':policy_config_hash(config_profile)}
+            (run/'summary.json').write_bytes(canonical(summary))
+            with patch('socket.socket',side_effect=AssertionError('network forbidden')),patch('subprocess.Popen',side_effect=AssertionError('process forbidden')):
+                incident=export_incident(root,run,frame=42,after_frames=0)
+                self.assertEqual(incident['provider_kind'],'openrouter')
+                folder=root/'build/jev/incidents'/incident['incident_id']
+                if config_profile==PROFILE:
+                    with self.assertRaisesRegex(IncidentError,'provider_config_mismatch'):
+                        replay_incident(root,folder)
+                else:
+                    replay=replay_incident(root,folder)
+                    self.assertEqual(replay['status'],'pass',replay)
+                    self.assertEqual(replay['replayed_records'],43)
+
     def test_profiles_share_candidates_and_atomic_mode_rejects_option(self):
         state=sample()
         labels=legal_candidates(state,OPTION_PROFILE)

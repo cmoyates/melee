@@ -269,6 +269,10 @@ class ScenarioPolicy:
             return "left" if surface == "right" else "right"
         if not a.grounded:
             return "left" if a.x > 0 else "right"
+        if option and support_surface(b.x,b.y,b.grounded) != 'ground':
+            # Horizontal spacing is not a setup opportunity while Mario is on
+            # a platform or airborne. Chasing it can consume the whole stage.
+            return 'wait'
         toward, away = ("slow_right", "slow_left") if direction > 0 else ("slow_left", "slow_right")
         if distance <= 0 and direction*a.x <= -35:
             self.combat_recentering = True

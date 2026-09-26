@@ -6,6 +6,20 @@ from test_combat_recenter import scene
 
 
 class OptionSetupTests(unittest.TestCase):
+    def test_option_waits_on_main_ground_until_opponent_shares_the_surface(self):
+        for direction,side in ((1,'right'),(-1,'left')):
+            for grounded,height in ((False,12.),(True,27.2)):
+                policy=ScenarioPolicy(find_scenario('approach-jab-'+side))
+                initial=scene(direction,0,-30,-20)
+                current=replace(initial,opponent=replace(initial.opponent,
+                    x=-30*direction,y=height,grounded=grounded))
+                self.assertEqual(policy.decide(current).action,'wait')
+                self.assertFalse(policy.combat_crossing)
+                self.assertIsNone(policy.measurement_start)
+                landed=scene(direction,1,-30,-20)
+                self.assertEqual(policy.decide(landed).action,
+                    'jump_left' if direction>0 else 'jump_right')
+
     def test_close_opponent_uses_bounded_hop_spacing_then_observed_neutral(self):
         for direction,side in ((1,'right'),(-1,'left')):
             policy=ScenarioPolicy(find_scenario('approach-jab-'+side))

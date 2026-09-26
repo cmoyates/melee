@@ -1,4 +1,4 @@
-"""Frozen, checkpointed free-policy cohorts; each child retains the match watchdog."""
+"""Frozen policy cohorts; each child retains the watchdog and explicit funding."""
 
 from contextlib import contextmanager
 import fcntl
@@ -19,8 +19,10 @@ from .local_policy_evidence import inspect_local_policy
 from .match_lifecycle import replay_layout_valid
 from .matches import artifact_bytes, isolated_environment, locate_run
 from .tactical_choices import PROFILE, profile_labels
+from . import paid_cohort
 
 MODES = ('random-tactical', 'heuristic-tactical')
+ALL_MODES = (*MODES, 'jev')
 CHILD_GRACE = 30
 
 
@@ -44,10 +46,10 @@ def bounded(value, minimum, maximum):
 
 def validate_plan(policies, repeats, match_seconds, duration, profile):
     profile_labels(profile)
-    if (not policies or len(set(policies)) != len(policies) or any(p not in MODES for p in policies) or
+    if (not policies or len(set(policies)) != len(policies) or any(p not in ALL_MODES for p in policies) or
             not bounded(repeats, 1, 10) or not bounded(match_seconds, 30, 600) or
             not bounded(duration, match_seconds+CHILD_GRACE, 43200)):
-        raise ValueError('Invalid bounded free-policy batch')
+        raise ValueError('Invalid bounded policy batch')
     return [{'round': number, 'policy': policy} for number in range(1, repeats+1) for policy in policies]
 
 
@@ -98,10 +100,14 @@ def artifact_path(run, name):
 
 def load_batch(root, folder):
     manifest = read_json(folder/'manifest.json')
+    provider = manifest.get('provider')
     expected = validate_plan(manifest['policies'], manifest['matches_per_policy'],
         manifest['match_seconds'], manifest['duration_seconds'], manifest['candidate_profile'])
     if (manifest['schema_version'] != 1 or manifest['batch_id'] != folder.name or
-            manifest['schedule'] != expected or manifest['provider_enabled'] is not False or
+            manifest['schedule'] != expected or manifest['provider_enabled'] != ('jev' in manifest['policies']) or
+            bool(provider) != manifest['provider_enabled'] or
+            (provider is not None and (provider['profile'] != manifest['candidate_profile'] or
+                provider['config_sha256'] != paid_cohort.policy_config_hash(provider['profile']))) or
             manifest['source_identity'] != source_identity(root)):
         raise ValueError('Batch identity or source changed; start a separate cohort')
     events_path = folder/'events.jsonl'
@@ -111,10 +117,13 @@ def load_batch(root, folder):
     if not events or events[0] != {'kind':'created','manifest_sha256':file_hash(folder/'manifest.json')}:
         raise ValueError('Batch manifest changed or creation journal missing')
     results, pending = [], None
+    ledger = provider['initial_ledger'] if provider else None
     for event in events[1:]:
         slot = len(results)
         if (event.get('kind') == 'launch' and pending is None and event.get('slot') == slot and slot < len(expected)
                 and all(row['passed'] for row in results)):
+            if event.get('ledger_before') != ledger:
+                raise ValueError('Launch spending checkpoint changed')
             pending = event
         elif event.get('kind') == 'audited' and pending is not None and event.get('slot') == slot:
             audit_path = folder/f'audit-{slot:02}.json'
@@ -127,14 +136,23 @@ def load_batch(root, folder):
                     not {'launch.json','summary.json','frames.jsonl'}.issubset(audit['artifact_sha256']) or
                     any(file_hash(artifact_path(run,name)) != digest for name,digest in audit['artifact_sha256'].items())):
                 raise ValueError('Prior match artifacts changed')
+            if provider:
+                if audit['spending']['before'] != ledger:
+                    raise ValueError('Audited spending chain changed')
+                ledger = audit['spending']['after']
+                paid_cohort.verify_checkpoint(root,provider,ledger,exact=False)
+            if audit['policy']=='jev':
+                paid_cohort.verify_replay_artifacts(root,audit['control_replay'])
             results.append(audit)
             pending = None
         else:
             raise ValueError('Ambiguous batch journal')
+    if provider:
+        paid_cohort.verify_checkpoint(root,provider,ledger,exact=pending is None)
     return manifest, results, pending
 
 
-def audit_child(root, folder, manifest, slot):
+def audit_child(root, folder, manifest, slot, *, ledger_before=None):
     if source_identity(root) != manifest['source_identity']:
         raise ValueError('Batch source changed during child run')
     log = folder/f'match-{slot:02}.log'
@@ -158,23 +176,29 @@ def audit_child(root, folder, manifest, slot):
             launch.get('candidate_profile', PROFILE) != manifest['candidate_profile'] or
             launch['source_sha256'] != manifest['source_identity']['modules'] or
             launch['duration_seconds'] != manifest['match_seconds'] or launch['episodes'] != 1 or
-            launch['provider_enabled'] or launch.get('budget_directory') is not None or
+            launch['provider_enabled'] != (policy=='jev') or
+            (policy!='jev' and launch.get('budget_directory') is not None) or
             launch['runtime_sha256'] != manifest['runtime_sha256']):
         raise ValueError('Child differs from frozen batch')
-    integrity, control = inspect_integrity(run), inspect_local_policy(run)
+    spending = (paid_cohort.audit_spending(root,manifest['provider'],ledger_before,launch,summary,policy)
+        if manifest.get('provider') else None)
+    integrity = inspect_integrity(run)
+    control = (paid_cohort.audit_replay(root,folder,slot,run,summary) if policy=='jev' else inspect_local_policy(run))
+    provider_ok = (summary['provider_contacted'] and spending['http_calls']>0 and spending['validated']>0
+        and spending['provider_shutdown']) if policy=='jev' else not summary['provider_contacted']
     rules = replay_layout_valid(summary['episodes'], summary['replays'], complete=True, expected_matches=1)
     passed = (summary['status'] == 'complete' and summary.get('completed_matches') == 1 and
-        integrity['status'] == control['status'] == 'pass' and rules and not summary['provider_contacted'] and
+        integrity['status'] == control['status'] == 'pass' and rules and provider_ok and
         all(summary[k] for k in ('neutralized','worker_stopped','emulator_stopped')) and summary['state_receiver']['stopped'])
     files = ['launch.json', 'summary.json', 'frames.jsonl', *['replays/'+r['file'] for r in summary['replays']]]
     return {'schema_version':1, 'slot':slot, 'run_id':run.name, 'policy':policy,
-        'passed':bool(passed), 'summary':summary, 'integrity':integrity, 'control_replay':control,
-        'rules_and_result':rules, 'artifact_bytes':artifact_bytes(run),
+        'passed':bool(passed), 'summary':summary, 'integrity':integrity, 'control_replay':control, 'spending':spending,
+        'rules_and_result':rules, 'artifact_bytes':artifact_bytes(run)+control.get('incident_bytes',0),
         'artifact_sha256':{name:file_hash(artifact_path(run,name)) for name in files}}
 
 
-def record_audit(root, folder, manifest, slot):
-    audit = audit_child(root, folder, manifest, slot)
+def record_audit(root, folder, manifest, slot, *, ledger_before=None):
+    audit = audit_child(root, folder, manifest, slot,ledger_before=ledger_before)
     if audit['run_id'] in {read_json(folder/f'audit-{n:02}.json')['run_id'] for n in range(slot)}:
         raise ValueError('Child identity reused across slots')
     path = folder/f'audit-{slot:02}.json'
@@ -203,17 +227,23 @@ def report_batch(manifest, results, pending=None):
     return {'schema_version':1, 'batch_id':manifest['batch_id'], 'status':status,
         'candidate_profile':manifest['candidate_profile'], 'expected_matches':len(manifest['schedule']),
         'audited_attempts':len(results), 'policies':groups,
+        'pending_slot':pending['slot'] if pending else None,
         'provider_contacted':True if any(row['summary']['provider_contacted'] for row in results) else None if pending else False,
+        'paid_request_cap_per_match':(manifest.get('provider') or {}).get('max_requests'),
+        'paid_ledger_checkpoint':(results[-1]['spending']['after'] if results else manifest['provider']['initial_ledger']) if manifest.get('provider') else None,
         'game_rng_seed':None, 'interpretation':'One frozen cohort. Failed attempts remain visible; source revisions require a separate cohort. No causal strength claim.'}
 
 
 def run_child(root, folder, manifest, slot):
     policy = manifest['schedule'][slot]['policy']
+    provider = manifest.get('provider') if policy=='jev' else None
+    from .live_provider import provider_environment
     command = [sys.executable, '-B', '-m', 'melee_agent.matches', str(root),
-        str(manifest['match_seconds']), '1', policy, '0', '20', '', '0', '', '', manifest['candidate_profile']]
+        str(manifest['match_seconds']), '1', policy, '0', '20', provider['budget_directory'] if provider else '',
+        str(provider['max_requests']) if provider else '0', '', '', manifest['candidate_profile']]
     with (folder/f'match-{slot:02}.log').open('x') as log:
         child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
-            start_new_session=True, env=isolated_environment())
+            start_new_session=True, env=provider_environment(policy) if provider else isolated_environment())
         try:
             try:
                 child.wait(timeout=manifest['match_seconds']+15)
@@ -238,7 +268,7 @@ def resume_batch(root, batch_id, *, max_new_matches=20):
             # Never adopt a child while an existing supervisor can still own it.
             with batch_lock(root/'build/jev', name='match.lock'):
                 pass
-            results.append(record_audit(root, folder, manifest, len(results)))
+            results.append(record_audit(root, folder, manifest, len(results),ledger_before=pending.get('ledger_before')))
         reason = None
         for _ in range(max_new_matches):
             if len(results) == len(manifest['schedule']) or any(not r['passed'] for r in results):
@@ -248,26 +278,38 @@ def resume_batch(root, batch_id, *, max_new_matches=20):
             if time.time()+manifest['match_seconds']+CHILD_GRACE > manifest['deadline_unix']:
                 reason = 'batch_deadline'
                 break
+            from .incidents import MAX_PREFIX_BYTES
+            extra = MAX_PREFIX_BYTES+2*1024**2 if manifest['schedule'][len(results)]['policy']=='jev' else 0
             if (shutil.disk_usage(root).free < 8*1024**3 or
-                    sum(r['artifact_bytes'] for r in results)+manifest['max_match_bytes'] > 12*1024**3):
+                    sum(r['artifact_bytes'] for r in results)+manifest['max_match_bytes']+extra > 12*1024**3):
                 raise ValueError('Batch storage floor or capacity reached')
             slot = len(results)
-            append_event(folder, {'kind':'launch', 'slot':slot})
+            provider = manifest.get('provider')
+            ledger = None
+            if provider:
+                ledger = results[-1]['spending']['after'] if results else provider['initial_ledger']
+                paid_cohort.verify_checkpoint(root,provider,ledger,exact=True)
+                if manifest['schedule'][slot]['policy']=='jev':
+                    paid_cohort.admit(root,provider)
+            append_event(folder, {'kind':'launch', 'slot':slot,'ledger_before':ledger})
             run_child(root, folder, manifest, slot)
-            results.append(record_audit(root, folder, manifest, slot))
+            results.append(record_audit(root, folder, manifest, slot,ledger_before=ledger))
             print(json.dumps({'event':'batch_match_audited', 'batch_id':batch_id,
                 'slot':slot, 'run_id':results[-1]['run_id'], 'passed':results[-1]['passed']}), flush=True)
         return {**report_batch(manifest, results), 'stop_reason':reason}
 
 
 def start_batch(root, *, policies=MODES, matches_per_policy=10, match_seconds=600,
-        duration=14400, profile=PROFILE, max_new_matches=20, previous_batch=None):
+        duration=14400, profile=PROFILE, max_new_matches=20, previous_batch=None,
+        budget=None, max_requests=None):
     schedule = validate_plan(policies, matches_per_policy, match_seconds, duration, profile)
     if not bounded(max_new_matches, 1, 20):
         raise ValueError('Invalid checkpoint size')
     config = load_config(root)
     if match_seconds > config.limits.max_run_seconds:
         raise ValueError('Match exceeds configured run limit')
+    deadline = time.time()+duration
+    provider = paid_cohort.make_contract(root,policies,profile,budget,max_requests,deadline)
     previous = None
     if previous_batch is not None:
         prior = locate_batch(root, previous_batch)/'manifest.json'
@@ -279,10 +321,10 @@ def start_batch(root, *, policies=MODES, matches_per_policy=10, match_seconds=60
     folder.mkdir(parents=True)
     manifest = {'schema_version':1, 'batch_id':batch_id, 'policies':list(policies),
         'matches_per_policy':matches_per_policy, 'match_seconds':match_seconds,
-        'duration_seconds':duration, 'deadline_unix':time.time()+duration,
+        'duration_seconds':duration, 'deadline_unix':deadline,
         'candidate_profile':profile, 'schedule':schedule, 'source_identity':source_identity(root),
         'runtime_sha256':config.runtime_sha256, 'max_match_bytes':config.limits.max_artifact_bytes,
-        'provider_enabled':False, 'previous_cohort':previous}
+        'provider_enabled':provider is not None, 'provider':provider, 'previous_cohort':previous}
     write_new(folder/'manifest.json', manifest)
     append_event(folder, {'kind':'created', 'manifest_sha256':file_hash(folder/'manifest.json')})
     print(json.dumps({'event':'batch_started', 'batch_id':batch_id}), flush=True)

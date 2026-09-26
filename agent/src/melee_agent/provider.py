@@ -227,6 +227,9 @@ class DecisionsClient:
             self._slots.release()
             raise
         future = Future()
+        # Retain reservation identity even if transport or answer validation
+        # fails. Cohort audits must account for uncertain charged requests too.
+        future.request_id = request_id
         future.set_running_or_notify_cancel()
         with self._lock:
             if self._closed:

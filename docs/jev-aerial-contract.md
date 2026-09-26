@@ -1,6 +1,7 @@
 # Fox short-hop aerial contract
 
-Status: J17 integration with host coverage. Live aerial acceptance is pending.
+Status: J17 has full live-suite evidence; left-side clean-completion acceptance
+remains open. Right-side matched landing-lag calibration passed.
 
 ## One measured approach
 
@@ -66,3 +67,44 @@ acceptance criteria remain unchanged.
 Recorded failed setup also exposed repeated full-stick dash turns across the
 settling window. Aerial setup now uses walking input, then observed neutral
 release, to reach the same declared predicate without that oscillation.
+
+## September 26 measured result
+
+The corrected pilot completed all four mirrored cases. The full suite
+`scenarios-a536d263980b4d969d03864e8b3fb6cd` then completed all eighty scheduled
+trials in 1,312.00 seconds, with no setup failures or audit failures:
+
+| Setup | Aerial acknowledged | Clean neutral landing | LandingAirN duration |
+| --- | --- | --- | --- |
+| L-cancel attempt, left | 20/20 | 17/20 | 7 frames in all 17 completions |
+| L-cancel attempt, right | 20/20 | 20/20 | 7 frames in all 20 completions |
+| No-L control, left | 20/20 | 11/20 | 15 frames in all 11 completions |
+| No-L control, right | 20/20 | 20/20 | 15 frames in all 20 completions |
+
+All twelve interruptions were own hitstun after aerial acknowledgement. They
+terminated with neutral input and remain failures of the clean-completion gate;
+they were not replaced or omitted. All forty intended L pulses were observed,
+and the forty no-L controls contained none. The right-side twenty-versus-twenty
+comparison establishes reduced landing lag for that declared setup. The left
+comparison remains uncalibrated under the strict suite contract. Overall
+acceptance is false, and J17 remains open.
+
+Every replay/rules/raw-state/cleanup audit passed. All 21,361 game records
+reproduced identical decisions, controller packets and complete scenario traces
+offline. Suite-summary SHA-256:
+`3bcd980754aa3e5fefc1430abdfbe61b656afabc75467a15f954f1d9f4895269`.
+Private audit: `build/jev/continuation-20260926/j17-final-suite.json`.
+
+The stock DOL, stock disc and pinned emulator fingerprints were reverified, and
+tracked native source/config/assets have no diff from the original Showboat
+base. The historical forty-two-file manifest under `/tmp` is no longer present;
+this continuation does not claim to have rerun that missing full baseline.
+The aerial suite made no provider calls. A separate twenty-request J18 frozen
+corpus evaluation ran during its final portion and is accounted independently.
+
+Host coverage includes 245 tracked tests. CI exposed a scheduling assumption in
+an existing provider test: its fifty-millisecond deadline could expire during
+ledger fsync before the mock transport entered. The test now explicitly fires
+the deadline callback after observing entry, still asserting that the caller
+times out while the occupied transport slot and spend reservation are retained.
+Production deadline behavior is unchanged.

@@ -12,6 +12,21 @@ from test_async_policy import ManualBridge
 
 
 class AerialIntegrationTests(unittest.TestCase):
+    def test_setup_walks_out_of_recorded_dash_oscillation_and_releases_before_jump(self):
+        from test_scenarios import position
+        for direction in (-1, 1):
+            side = "left" if direction < 0 else "right"
+            policy = ScenarioPolicy(find_scenario("sh_nair-"+side))
+            # The failed live setup kept redashing between x 30.9 and 41.4.
+            # Both sides approach with a walking packet, then observe release.
+            outside = position(x=-41.41*direction, action_id=18, self_velocity_x=-.23*direction)
+            self.assertEqual(policy.decide(outside).action, "slow_right" if direction > 0 else "slow_left")
+            settled = position(1, x=-35.*direction)
+            self.assertEqual(policy.decide(settled).action, "wait")
+            self.assertIsNone(policy.measurement_start)
+            self.assertEqual(policy.decide(position(2, x=-35.*direction)).action, "jump")
+            self.assertEqual(policy.measurement_start, 2)
+
     def test_arbiter_has_one_packet_writer_through_jump_attack_and_landing(self):
         arbiter, sink = SkillArbiter(), RecordingSink()
         executor = FrameExecutor(SimpleNamespace(decide=arbiter.step), sink,

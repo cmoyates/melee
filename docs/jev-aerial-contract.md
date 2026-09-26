@@ -54,3 +54,15 @@ matched declared fresh-match setups, not identical counterfactual physics.
 Acceptance command: `skill-check --suite aerial-v1 --repeats 20`. Its 80 trials
 cover both directions with and without the L-cancel attempt. Full motion and
 neutral-completion acceptance is separate from the landing-lag calibration.
+
+The September 26 full run stopped after 13 scheduled trials: seven completed,
+three were interrupted by CPU hitstun, two failed setup, and one hit the
+30-second wall-clock limit at approximately 28 observed FPS before setup ended.
+The latter saved its replay and shut down cleanly but failed the trial audit;
+it is retained as a failure. Scenario launches now allow 60 wall-clock seconds,
+inside an 80-second parent deadline. Setup/measurement game-frame limits and
+acceptance criteria remain unchanged.
+
+Recorded failed setup also exposed repeated full-stick dash turns across the
+settling window. Aerial setup now uses walking input, then observed neutral
+release, to reach the same declared predicate without that oscillation.

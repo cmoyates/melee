@@ -39,7 +39,7 @@ class ScenarioV1:
             "stocks": 4, "timer_seconds": 480, "initial_state": "fresh_match", "game_rng_seed": None,
             "savestate": None, "setup_privilege": "ordinary_controller_packets_only",
             "setup_inputs": ["wait", "left", "right", "jump", "jump_left", "jump_right", "recover_left", "recover_right"] +
-                (["slow_left", "slow_right"] if self.kind in COMBAT_KINDS else []),
+                (["slow_left", "slow_right"] if self.kind in PRIMITIVE_KINDS else []),
             "starting_common": "active life; no hitlag or hitstun; observed neutral input after a queued neutral setup packet",
             "starting_predicate": {
                 "grounded": "main ground; signed x in [25,50]; idle/walk/dash state; abs self x speed < 0.25",
@@ -183,8 +183,10 @@ class ScenarioPolicy:
                 action = self.probe.decide(observation).action
                 return "wait" if action == "attack" else action
             target = -35*self.spec.direction
-            if abs(a.x-target) > 5:
-                return "right" if a.x < target else "left"
+            if abs(a.x-target) > 3:
+                # Full stick repeatedly dash-turns across this window before
+                # Fox can settle. Walking still reaches the same predicate.
+                return "slow_right" if a.x < target else "slow_left"
             return "wait"
         a = observation.bot
         direction = self.spec.direction

@@ -241,6 +241,7 @@ def run_suite(root, repeats=10, duration=2400, seed=0, suite="mechanics-v1", req
         "repeats": repeats, "ordering_seed": seed, "game_rng_seed": None,
         "runtime_sha256": config.runtime_sha256, "initial_state": "fresh_match_per_trial",
         "savestates_supported": False, "duration_seconds": duration, "order": order,
+        "trial_wall_clock_seconds": 60, "trial_process_deadline_seconds": 80,
         "scenarios": [spec.manifest() for spec in specs], "artifact_limit_bytes": 2_147_483_648,
         "provider_contacted": False, "repeatability": "Observed predicates are controlled; CPU and game RNG are not seeded."}
     write_json(folder / "manifest.json", manifest)
@@ -257,15 +258,15 @@ def run_suite(root, repeats=10, duration=2400, seed=0, suite="mechanics-v1", req
         for repetition, name in order:
             # Reserve the complete child deadline plus teardown, not a fresh
             # timeout after each startup/read operation.
-            if time.monotonic()-started+60 > duration:
+            if time.monotonic()-started+90 > duration:
                 reason = "suite_deadline"
                 break
             if sum(row["artifact_bytes"] for row in results)+config.limits.max_artifact_bytes > 2_147_483_648:
                 reason = "artifact_limit"
                 break
-            trial_deadline = time.monotonic()+40
+            trial_deadline = time.monotonic()+80
             child = subprocess.Popen([sys.executable, "-B", "-m", "melee_agent.cli", "scenario-run",
-                "--name", name, "--duration", "30"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                "--name", name, "--duration", "60"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 env=isolated_environment(), start_new_session=True)
             if not select.select([child.stdout], [], [], 35)[0]:
                 raise ValueError("Scenario startup timed out")

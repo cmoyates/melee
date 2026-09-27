@@ -1,5 +1,10 @@
 # Paid cohorts keep their existing spending ledger
 
+The [completed thirty-match cohort](jev-j19-cohort-results.md) passed its final
+inspection with 1,999 reconciled provider requests. All policies were 0–10;
+cumulative accounted spending was $0.313272330 of the original $1 cap. The
+checkpoint evidence below is retained as history.
+
 Issue #80 extends the checkpointed runner from #78 with explicit `jev` slots.
 Free-only invocations remain credential-free. A mixed or paid cohort requires
 both an existing ledger and a 1–200 request cap per Jev match:

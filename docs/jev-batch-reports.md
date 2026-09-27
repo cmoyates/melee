@@ -1,5 +1,9 @@
 # Retained policy batch reports
 
+The [completed thirty-match cohort](jev-j19-cohort-results.md) now has full
+native evidence: all audits pass, with ten losses per policy. The earlier
+checkpoints below remain historical snapshots.
+
 Issue #82 adds a read-only report for the checkpointed J19 cohort. It reads
 committed audits from a single batch, verifies the retained artifact hashes, and
 prints JSON or Markdown without launching Dolphin or contacting OpenRouter:

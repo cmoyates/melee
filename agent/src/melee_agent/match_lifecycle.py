@@ -11,14 +11,15 @@ class MatchBoundaryError(ValueError):
     pass
 
 
-def start_segment(number, match_number, phase, frame, now, start_index, settings, *, bot_port=1):
-    if frame != -123 or start_index != number or not expected_settings(settings,phase=phase,bot_port=bot_port):
+def start_segment(number, match_number, phase, frame, now, start_index, settings, *, bot_port=1, opponent_control="cpu3"):
+    if frame != -123 or start_index != number or not expected_settings(settings,phase=phase,bot_port=bot_port,opponent_control=opponent_control):
         raise MatchBoundaryError('unverified_segment_start')
     return {'episode':number,'match_number':match_number,'phase':phase,
         'start_event_index':start_index,'start_settings':settings,
         'first_frame':frame,'last_frame':frame,'observations':0,'gaps':0,
         'duplicates':0,'rollbacks':0,'started_monotonic':now,
-        **({'bot_port':bot_port} if bot_port != 1 else {})}
+        **({'bot_port':bot_port} if bot_port != 1 else {}),
+        **({'opponent_control':opponent_control} if opponent_control != 'cpu3' else {})}
 
 
 def record_observation(episode, current, stocks, now):

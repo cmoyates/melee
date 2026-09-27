@@ -17,7 +17,7 @@ from test_matches import replay_fixture
 
 
 class WorkerLifecycleTests(unittest.TestCase):
-    def exercise(self, verified_start, menu_scene=None, *, scenario=False, bot_port=1, wrong_roles=False):
+    def exercise(self, verified_start, menu_scene=None, *, scenario=False, bot_port=1, wrong_roles=False, calibration=False):
         buttons = Enum('Button',{ 'BUTTON_'+name:i for i,name in enumerate((*BUTTONS,'MAIN','C'))})
         characters = Enum('Character',{'FOX':1,'MARIO':0})
         stages = Enum('Stage',{'BATTLEFIELD':31})
@@ -53,6 +53,8 @@ class WorkerLifecycleTests(unittest.TestCase):
                     header = bytearray(replay_fixture()[8:8+0xf0])
                     if actor_port == 2:
                         header[0x65:0x89],header[0x89:0xad] = header[0x89:0xad],header[0x65:0x89]
+                    if calibration:
+                        header[0x8a] = 0
                     if sudden:
                         header[5] &= ~2
                         header[0x67] = header[0x8b] = 1
@@ -72,7 +74,7 @@ class WorkerLifecycleTests(unittest.TestCase):
                     struct.pack_into('>f',data,0xa,x)
                     data[0x21] = stocks
                     self._Console__post_frame(None,data)
-                    players[port] = NS(character=character,cpu_level=0 if port == actor_port else 3,
+                    players[port] = NS(character=character,cpu_level=0 if port == actor_port or calibration else 3,
                         stock=stocks,percent=percent,position=NS(x=x,y=0.),on_ground=True,jumps_left=2,
                         action=NS(value=14,name='STANDING'),action_frame=1,hitstun_frames_left=0,
                         hitlag_left=0,invulnerable=False,facing=True,speed_ground_x_self=0.,
@@ -97,7 +99,9 @@ class WorkerLifecycleTests(unittest.TestCase):
         run = Path(tempfile.mkdtemp(prefix='jev-worker-lifecycle-'))
         (run/'launch.json').write_text(json.dumps({'runtime':'fixture','port':51441,'run_id':'fixture',
             **({'bot_port':bot_port} if bot_port != 1 else {}),
-            'policy':'scenario' if scenario else 'scripted','scenario_name':'offstage-left',
+            'policy':'scenario' if scenario else 'scripted',
+            'scenario_name':'calibration-sh_nair-left' if calibration else 'offstage-left',
+            **({'opponent_control':'neutral-human-v1'} if calibration else {}),
             'max_frame_bytes':1000000,'episodes':1}))
         fake = NS(Console=Console,Controller=Controller,Button=buttons,MenuHelper=lambda:None,
             Menu=menus,Character=characters,Stage=stages)
@@ -121,6 +125,19 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(outcome['recorder']['unwritten'],0)
         self.events,self.last_run=events,run
         return outcome,rows
+
+    def test_calibration_worker_verifies_human_opponent_and_records_observed_release(self):
+        outcome,rows=self.exercise(True,scenario=True,calibration=True)
+        self.assertEqual(outcome['status'],'scenario_complete')
+        self.assertEqual(outcome['episodes'][0]['opponent_control'],'neutral-human-v1')
+        from collections import Counter
+        from melee_agent.scenario_runner import audit_opponent_fixture
+        errors=Counter()
+        for row in rows:
+            if row['menu']=='IN_GAME':
+                audit_opponent_fixture(row,'neutral-human-v1',errors)
+                self.assertEqual(row['opponent_fixture']['port'],2)
+        self.assertFalse(errors)
 
     def test_port_two_worker_controls_fox_and_preserves_native_result_and_indices(self):
         outcome,rows=self.exercise(True,bot_port=2)

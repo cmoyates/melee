@@ -17,7 +17,7 @@ import uuid
 
 from .config import load_config, owned_path
 from .combat_evidence import audit_combat_trace
-from .engine import Observation
+from .engine import Observation, BUTTONS
 from .aerial_audit import audit_aerial, aerial_acceptance
 from .option_evidence import audit_option, option_acceptance
 from .integrity import inspect_integrity
@@ -37,6 +37,10 @@ def inspect_scenario(run):
     spec = find_scenario(name)
     integrity = inspect_integrity(run)
     errors = Counter()
+    if (launch.get('opponent_control','cpu3') != spec.opponent_control or
+            summary.get('opponent_control','cpu3') != spec.opponent_control or
+            any(e.get('opponent_control','cpu3') != spec.opponent_control for e in summary.get('episodes',[]))):
+        errors['opponent_fixture_identity'] += 1
     if integrity["status"] != "pass":
         errors["frame_integrity"] += 1
     if not verified_trial(report, name):
@@ -44,7 +48,7 @@ def inspect_scenario(run):
     if (summary["status"] != "scenario_recorded" or summary["provider_contacted"] or
             not summary["neutralized"] or not summary["worker_stopped"] or not summary["emulator_stopped"] or
             not summary.get("state_receiver", {}).get("stopped") or summary.get("replay_errors") or
-            not summary.get("replays") or any(not expected_settings(replay.get("settings")) for replay in summary["replays"])):
+            not summary.get("replays") or any(not expected_settings(replay.get("settings"),opponent_control=spec.opponent_control) for replay in summary["replays"])):
         errors["run_or_cleanup_invalid"] += 1
     start = report.get("measurement_start_frame")
     result = report.get("result") or {}
@@ -61,6 +65,7 @@ def inspect_scenario(run):
             row = json.loads(line)
             if row["menu"] != "IN_GAME":
                 continue
+            audit_opponent_fixture(row, spec.opponent_control, errors)
             observation = Observation.parse(row["control"]["observation"])
             trace = row["scenario"]
             first = first or row
@@ -135,6 +140,7 @@ def inspect_scenario(run):
         elif sum(row["raw_observation"]["players"]["1"]["raw_post"]["action_id"] == 179 for row in measured) < 8:
             errors["shield_not_observed"] += 1
     return {"schema_version": 1, "run_id": launch["run_id"], "scenario": name,
+        **({'opponent_control':spec.opponent_control} if spec.opponent_control != 'cpu3' else {}),
         "status": "pass" if not errors else "fail", "errors": dict(errors),
         "trial_status": result.get("status"), "trial_reason": result.get("reason"),
         "starting_predicate_reached": boundary is not None,
@@ -149,6 +155,32 @@ def inspect_scenario(run):
         **({"option": option_evidence} if option_evidence is not None else {}),
         "artifacts": {"frames": "build/jev/runs/"+launch["run_id"]+"/frames.jsonl",
             "summary": "build/jev/runs/"+launch["run_id"]+"/summary.json"}}
+
+
+def audit_opponent_fixture(row, mode, errors):
+    """Neutral is an observed input requirement, not a claim about motion."""
+    fixture = row.get('opponent_fixture')
+    if mode == 'cpu3':
+        if fixture is not None:
+            errors['unexpected_opponent_fixture'] += 1
+        return
+    try:
+        if (mode != 'neutral-human-v1' or fixture['mode'] != mode or fixture['port'] != 2 or
+                fixture['queued'] != 'release_all'):
+            raise ValueError('fixture identity')
+        packet = fixture['observed']
+        if set(packet['buttons']) != set(BUTTONS) or any(type(v) is not bool for v in packet['buttons'].values()):
+            raise ValueError('incomplete observed packet')
+        if packet['main'] != row['players']['2']['observed_main']:
+            raise ValueError('opponent input mismatch')
+        # Menu input may still be visible at the beginning of countdown. Every
+        # nonnegative frame, including setup, must observe released input.
+        if row['frame'] >= 0 and (any(packet['buttons'].values()) or
+                not all(0 <= packet[key] <= .025 for key in ('l','r')) or
+                not all(len(packet[key]) == 2 and all(abs(v-.5) <= .025 for v in packet[key]) for key in ('main','c'))):
+            errors['opponent_input_not_neutral'] += 1
+    except (KeyError, TypeError, ValueError):
+        errors['opponent_fixture_evidence_invalid'] += 1
 
 
 def audit_terminal_release(end, rows, report, errors):
@@ -268,7 +300,8 @@ def run_suite(root, repeats=10, duration=2400, seed=0, suite="mechanics-v1", req
         "savestates_supported": False, "duration_seconds": duration, "order": order,
         "trial_wall_clock_seconds": 60, "trial_process_deadline_seconds": 80,
         "scenarios": [spec.manifest() for spec in specs], "artifact_limit_bytes": 2_147_483_648,
-        "provider_contacted": False, "repeatability": "Observed predicates are controlled; CPU and game RNG are not seeded."}
+        "provider_contacted": False, "repeatability": ("Neutral human opponent; observed predicates are controlled; game RNG is not seeded. Not CPU3 gameplay."
+            if suite == 'aerial-calibration-v1' else "Observed predicates are controlled; CPU and game RNG are not seeded.")}
     write_json(folder / "manifest.json", manifest)
     started = time.monotonic()
     results = []
@@ -340,8 +373,11 @@ def run_suite(root, repeats=10, duration=2400, seed=0, suite="mechanics-v1", req
             report["acceptance"] = recovery_acceptance(results, repeats)
         elif suite == "ground-combat-v1":
             report["acceptance"] = combat_acceptance(results, repeats)
-        elif suite == "aerial-v1":
-            report["acceptance"] = aerial_acceptance(results, repeats)
+        elif suite in ("aerial-v1", "aerial-calibration-v1"):
+            report["acceptance"] = aerial_acceptance(results, repeats,
+                scenario_prefix='calibration-' if suite == 'aerial-calibration-v1' else '')
+            if suite == 'aerial-calibration-v1':
+                report['acceptance_scope'] = 'Neutral-opponent timing calibration only; does not replace CPU3 gameplay or interruption acceptance.'
         elif suite == "approach-jab-v1":
             report["acceptance"] = option_acceptance(results,repeats)
         write_json(folder / "summary.json", report)

@@ -45,7 +45,7 @@ class SupervisorTests(unittest.TestCase):
 
     def exercise(self, *, worker_text=None, start_error=False, scan_error=False,
                 summary_error=False, artifact_limit=False, fake_replay=False, scenario=False, bad_replay=False,
-                bot_port=1, replay_bot_port=1):
+                bot_port=1, replay_bot_port=1, calibration=False, human_replay=False):
         root = Path(tempfile.mkdtemp(prefix="jev-supervisor-test-")).resolve()
         config = Config(slippi_port=0, limits=Limits(max_artifact_bytes=1 if artifact_limit else 1_000_000))
         children = []
@@ -91,6 +91,8 @@ class SupervisorTests(unittest.TestCase):
                     from test_matches import replay_fixture
                     from melee_agent.replay import summarize_raw
                     replay = {**summarize_raw(replay_fixture()),'sha256':'f'*64}
+                    if human_replay:
+                        replay['settings']['players'][1]['type']=0
                     if replay_bot_port==2:
                         a,b=replay['settings']['players'][:2]
                         replay['settings']['players'][:2]=[{**b,'port':1},{**a,'port':2}]
@@ -101,7 +103,7 @@ class SupervisorTests(unittest.TestCase):
                     stack.enter_context(patch("melee_agent.scenarios.verified_trial", return_value=True))
                 with redirect_stdout(output):
                     code = matches.supervise(root, 2, 1, "scenario" if scenario else "smoke",
-                        scenario_name="jab-left" if scenario else None,bot_port=bot_port)
+                        scenario_name=("calibration-sh_nair-left" if calibration else "jab-left") if scenario else None,bot_port=bot_port)
             summary = json.loads(output.getvalue().splitlines()[-1])
             self.assertTrue(all(child.poll() is not None for child in children))
             self.assertIsNone(unrelated.poll())
@@ -139,6 +141,19 @@ class SupervisorTests(unittest.TestCase):
             code, summary = self.exercise(worker_text=json.dumps(worker), scenario=True, fake_replay=replay, bad_replay=bad)
             self.assertEqual(code, 0 if replay and not bad else 2)
             self.assertEqual(summary["status"], "scenario_recorded" if replay and not bad else "incomplete")
+
+    def test_calibration_cannot_use_cpu3_replay_or_be_reported_as_normal_gameplay(self):
+        worker={'episodes':[], 'neutralized':True, 'status':'scenario_complete', 'scenario':{},
+            'recorder':{'status':'closed', 'writer_stopped':True, 'accepted':1, 'written':1,
+                'unwritten':0, 'rejected':0}}
+        for calibration,human in ((True,True),(True,False),(False,True)):
+            code,summary=self.exercise(worker_text=json.dumps(worker),scenario=True,fake_replay=True,
+                calibration=calibration,human_replay=human)
+            self.assertEqual(code,0 if calibration and human else 2)
+            if calibration:
+                self.assertEqual(self.last_launch['opponent_control'],'neutral-human-v1')
+                self.assertEqual(summary['opponent_control'],'neutral-human-v1')
+                self.assertEqual(summary['completed_matches'],0)
 
     def test_artifact_scan_failure_reaps_both_children(self):
         code, summary = self.exercise(scan_error=True)

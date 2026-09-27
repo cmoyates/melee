@@ -178,10 +178,13 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
     if (policy == "faults" and fault_mode not in MODES) or (policy != "faults" and fault_mode is not None):
         raise ValueError("Runtime fault injection requires its explicit policy and mode")
     from .scenarios import find_scenario, verified_trial
+    opponent_control = "cpu3"
     if policy == "scenario":
-        find_scenario(scenario_name)
+        opponent_control = find_scenario(scenario_name).opponent_control
         if capture or episodes != 1:
             raise ValueError("Scenarios require one fresh-match trial")
+        if opponent_control != 'cpu3' and duration > 60:
+            raise ValueError('Calibration trials are limited to sixty seconds')
     elif scenario_name is not None:
         raise ValueError("Scenario setup requires its explicit policy")
     config, runtime, image = preflight(root, duration, episodes, policy, capture)
@@ -209,6 +212,7 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
         run_dir.mkdir()
         (run_dir / "replays").mkdir()
         options = {"schema_version": 2, "run_id": run_id, "runtime": str(runtime), "disc": str(image),
+                    **({'opponent_control':opponent_control} if opponent_control != 'cpu3' else {}),
                     **({'bot_port':bot_port} if bot_port != 1 else {}),
                     "runtime_sha256": config.runtime_sha256, "disc_sha1": STOCK_DISC_SHA1,
                     "libmelee_commit": "bce21f09984b286e6d36bfd2939e4cd4691f94c2",
@@ -359,11 +363,12 @@ def supervise(root, duration, episodes, policy, capture=False, skill_repeats=20,
                     recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and recorder.get("rejected") == 0)
         scenario_ok = (policy == "scenario" and reason == "worker_finished" and result.get("status") == "scenario_complete" and
             verified_trial(result.get("scenario", {}), scenario_name) and result["neutralized"] and stopped and receiver_closed and
-            bool(replays) and replay_errors == 0 and all(expected_settings(r["settings"]) for r in replays) and
+            bool(replays) and replay_errors == 0 and all(expected_settings(r["settings"],opponent_control=opponent_control) for r in replays) and
             not cleanup_errors and recorder.get("status") == "closed" and recorder.get("unwritten") == 0 and
             recorder.get("rejected") == 0 and recorder.get("writer_stopped") is True)
         status = "scenario_recorded" if scenario_ok else "skills_verified" if skill_ok else "captured" if captured else "complete" if complete else "probe_verified" if probe_ok else "incomplete"
         summary = {"schema_version": 1, "run_id": run_id, "status": status, "reason": reason,
+                    **({'opponent_control':opponent_control} if opponent_control != 'cpu3' else {}),
                     **({'bot_port':bot_port} if bot_port != 1 else {}),
                     "policy": policy, "candidate_profile":candidate_profile, "episodes": result["episodes"], "replays": replays,
                     "completed_matches": result.get('completed_matches',sum(e.get('result_event_verified') is True for e in result['episodes'])),

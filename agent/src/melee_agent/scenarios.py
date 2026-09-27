@@ -37,7 +37,9 @@ class ScenarioV1:
             raise ValueError("Invalid fixed ScenarioV1 contract")
 
     def manifest(self):
-        return {**asdict(self), "stage_id": STAGE_ID, "bot": "FOX", "opponent": "MARIO", "cpu_level": 3,
+        return {**asdict(self), "stage_id": STAGE_ID, "bot": "FOX", "opponent": "MARIO",
+            "cpu_level": 0 if self.opponent_control == "neutral-human-v1" else 3,
+            **({"opponent_control": self.opponent_control} if self.opponent_control != "cpu3" else {}),
             "stocks": 4, "timer_seconds": 480, "initial_state": "fresh_match", "game_rng_seed": None,
             "savestate": None, "setup_privilege": "ordinary_controller_packets_only",
             "setup_inputs": ["wait", "left", "right", "jump", "jump_left", "jump_right", "recover_left", "recover_right"] +
@@ -69,6 +71,10 @@ class ScenarioV1:
                 "option_approach_jab": "bounded observed movement and release, fresh legal jab, native acknowledgement and actionable neutral completion; contact separate",
             }[self.kind]}
 
+    @property
+    def opponent_control(self):
+        return "neutral-human-v1" if self.name.startswith("calibration-") else "cpu3"
+
 
 SUITE = tuple(ScenarioV1(kind+"-"+("left" if direction < 0 else "right"), kind, direction)
     for kind in ("grounded", "airborne", "offstage", "ledge") for direction in (-1, 1)) + (ScenarioV1("shielded-opponent", "shielded", -1),)
@@ -81,6 +87,8 @@ COMBAT_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
 AERIAL_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
     kind, direction, measured_policy="aerial-v1")
     for kind, name in AERIAL_KINDS.items() for direction in (-1, 1))
+AERIAL_CALIBRATION_SUITE = tuple(ScenarioV1("calibration-"+spec.name, spec.kind, spec.direction,
+    measured_policy=spec.measured_policy) for spec in AERIAL_SUITE)
 OPTION_SUITE = tuple(ScenarioV1("approach-jab-"+("left" if direction < 0 else "right"),
     "option_approach_jab", direction, measured_policy="approach-jab-v1") for direction in (-1,1))
 
@@ -94,17 +102,21 @@ def find_suite(name):
         return COMBAT_SUITE
     if name == "aerial-v1":
         return AERIAL_SUITE
+    if name == "aerial-calibration-v1":
+        return AERIAL_CALIBRATION_SUITE
     if name == "approach-jab-v1":
         return OPTION_SUITE
     raise ValueError("Unknown fixed scenario suite")
 
 
 def scenario_suite(spec):
+    if spec in AERIAL_CALIBRATION_SUITE:
+        return "aerial-calibration-v1"
     return {"fox-reflex-v1": "recovery-v1", "ground-combat-v1": "ground-combat-v1", "aerial-v1": "aerial-v1", "approach-jab-v1":"approach-jab-v1"}.get(spec.measured_policy, "mechanics-v1")
 
 
 def find_scenario(name):
-    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE+AERIAL_SUITE+OPTION_SUITE:
+    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE+AERIAL_SUITE+OPTION_SUITE+AERIAL_CALIBRATION_SUITE:
         if spec.name == name:
             return spec
     raise ValueError("Unknown fixed mechanical scenario")

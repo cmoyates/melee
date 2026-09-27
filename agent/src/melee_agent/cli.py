@@ -48,6 +48,11 @@ def main(argv=None):
     batch_resume.add_argument('--max-new-matches', type=int, default=20)
     batch_inspect = batches.add_parser('inspect')
     batch_inspect.add_argument('batch_id')
+    batch_report = batches.add_parser('report', help='Read historical evidence without launching or replaying')
+    batch_report.add_argument('batch_id')
+    batch_report.add_argument('--format', choices=('json','markdown'), default='json')
+    batch_report.add_argument('--workspace', type=Path, default=Path(__file__).resolve().parents[3],
+        help='Read retained evidence from this workspace; never execute its code')
     soak = commands.add_parser("soak", help="Thirty-minute runtime-v1 fault schedule; no external provider calls")
     soak.add_argument("--budget", required=True, help="Existing paid ledger to verify remains unchanged")
     soak.add_argument("--duration", type=int, default=1800)
@@ -124,6 +129,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
     if args.command == 'batch':
+        if args.batch_command == 'report':
+            from .batch_report import build_report, markdown
+            try:
+                report = build_report(args.workspace.resolve(), args.batch_id)
+                print(markdown(report) if args.format == 'markdown' else json.dumps(report,indent=2,allow_nan=False))
+                return 0
+            except (ValueError,OSError,KeyError,TypeError,IndexError,OverflowError):
+                print(json.dumps({'status':'blocked','message':'Retained batch evidence changed, is incomplete or cannot be verified. No execution attempted.'}))
+                return 2
         from .policy_batch import batch_lock, load_batch, locate_batch, report_batch, resume_batch, start_batch
         try:
             if args.batch_command == 'start':

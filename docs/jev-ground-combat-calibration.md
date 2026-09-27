@@ -8,10 +8,25 @@ the intended Fox motion starts; this calibration measures execution separately.
 
 `ground-combat-calibration-v1` uses fresh Battlefield matches with Fox on port 1
 and a human Mario on port 2 receiving only ordinary released controller input.
-Each of the six `calibration-` scenarios preserves its original geometry,
-vulnerability, facing, range, input, timing and motion predicates. The existing
-recenter/setup controller positions Fox through normal input. There are no
-savestates, memory writes or changes to the measured skill.
+Each of the six `calibration-` scenarios preserves the combat vulnerability,
+facing, range, input, timing and motion checks, with a narrower starting fixture:
+both fighters settled on the right platform. There are no savestates, memory
+writes or changes to the measured skill.
+
+The native aerial pilot showed neutral Mario remains at x=38.8, y=27.2001 on
+that platform. The CPU3-oriented main-floor setup cannot wait for this stationary
+opponent to approach it. The new, explicitly hashed
+`right-platform-full-jump-v1` setup moves Fox off the left spawn platform,
+walks to a declared position under the right platform, settles, then holds one
+jump through jumpsquat until native rising takeoff is acknowledged. It releases
+all input in the air, requires a right-platform landing, and settles/faces Mario
+before admitting the original attack primitive. Mario receives no setup input.
+
+Missing takeoff after eight frames, a wrong landing, unexpected opponent setup,
+route bounds or a 120-frame landing deadline stop this setup without another
+jump. The original 480-frame whole-setup deadline and continuity/life guards
+still apply. This is one controlled measurement route, not general platform
+navigation. Original CPU3 and aerial fixture hashes remain unchanged.
 
 The supervisor and raw replay rules require the declared human-opponent fixture.
 Every nonnegative gameplay observation, including setup, must show Mario's
@@ -43,6 +58,7 @@ visible and cannot be dropped to obtain a pass.
 
 Native calibration is pending. Passing it would establish this controlled
 mechanical fixture, without replacing the original CPU3 integration result or
-demonstrating tactical strength. The six host tests cover preserved scenario
-contracts, CLI bounds, isolated acceptance groups, failed/missing trials and the
-difference between a grab motion and a captured opponent.
+demonstrating tactical strength. Thirteen focused host tests cover preserved
+contracts, bounded mirrored setup and release, interrupted/missing takeoff,
+landing and continuity, isolated acceptance groups, failed/missing trials and
+the difference between a grab motion and a captured opponent.

@@ -65,9 +65,41 @@ actual capture in each grab direction. Contact, capture and acknowledgement are
 reported separately. Setup failures, interruptions and missing trials remain
 visible and cannot be dropped to obtain a pass.
 
-Native calibration is pending. Passing it would establish this controlled
+The native pilot and full calibration passed. This establishes this controlled
 mechanical fixture, without replacing the original CPU3 integration result or
 demonstrating tactical strength. Fourteen focused host tests cover preserved
 contracts, bounded mirrored setup and release, interrupted/missing takeoff,
 landing and continuity, isolated acceptance groups, failed/missing trials and
 the difference between a grab motion and a captured opponent.
+
+## Native evidence, 2026-09-27
+
+Implementation `678a40e55` first passed all six pilot cases, then completed suite
+`scenarios-96255f843de34a1b88b67c1da6de0672` with 120/120 audited successes.
+
+| Action / direction | Native acknowledgement | Clean completion | Contact / capture |
+| --- | --- | --- | --- |
+| Jab left | 20/20 | 20/20 | 20 contact trials |
+| Jab right | 20/20 | 20/20 | 20 contact trials |
+| Down-tilt left | 20/20 | 20/20 | 20 contact trials |
+| Down-tilt right | 20/20 | 20/20 | 20 contact trials |
+| Grab left | 20/20 | 20/20 | 20 actual captures |
+| Grab right | 20/20 | 20/20 | 20 actual captures |
+
+All trials passed fixture/input, raw-state, rules and owned-cleanup checks.
+Independent exact replay reproduced all 44,300 recorded game-frame decisions,
+packets, scenario traces and final reports. All launch-recorded source hashes
+matched. The suite took 1,890.43 seconds and retained 373,246,324 artifact bytes.
+All five spend journals stayed byte-identical; there were no provider calls.
+
+Suite summary SHA-256:
+`6178624114b2e2ca678552d1d98df128ce7ddf8d9a4650c0b3a912854fdf3fd5`.
+Private recordings and full independent audits remain under
+`build/jev/scenarios/` and `build/jev/continuation-20260926/` using the suite ID.
+The six-case pilot was `scenarios-54e86e87d2fb4564a0434cf38926acd0` (2,215 exact
+records); it was not used to fill the full matrix's denominators.
+
+The original CPU3 suite still records 101 clean completions, 18 interruptions
+and one setup failure. This neutral-opponent platform fixture does not reclassify
+those trials, prove reliable attacks against an active opponent, or constitute a
+general platform-navigation skill.

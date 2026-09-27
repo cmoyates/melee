@@ -6,7 +6,7 @@ import json
 
 from .engine import Decision, ScriptedPolicy
 from .aerial import AERIAL, can_start_aerial
-from .fox_reflex import FoxReflex
+from .fox_reflex import FoxReflex, LANDING_ORIGIN_FLOOR
 from .ground_combat import COMBAT, can_start_combat
 from .approach_jab import can_start_approach_jab
 from .skills import SkillArbiter, SkillSpec, inhibited
@@ -40,6 +40,7 @@ class ScenarioV1:
         return {**asdict(self), "stage_id": STAGE_ID, "bot": "FOX", "opponent": "MARIO",
             "cpu_level": 0 if self.opponent_control == "neutral-human-v1" else 3,
             **({"opponent_control": self.opponent_control} if self.opponent_control != "cpu3" else {}),
+            **({'setup_variant':'right-platform-full-jump-v1'} if self.platform_calibration else {}),
             "stocks": 4, "timer_seconds": 480, "initial_state": "fresh_match", "game_rng_seed": None,
             "savestate": None, "setup_privilege": "ordinary_controller_packets_only",
             "setup_inputs": ["wait", "left", "right", "jump", "jump_left", "jump_right", "recover_left", "recover_right"] +
@@ -52,7 +53,8 @@ class ScenarioV1:
                 "offstage_low": "signed x in [88,112]; y in [-40,-20]; falling; zero remaining jumps",
                 "ledge": "native CliffCatch/CliffWait motion 252/253 on declared side",
                 "shielded": "bot stable on main ground; opponent Guard/GuardSetOff within 25 units",
-                **{kind: "known shared support; declared facing toward opponent; observed vulnerable target; legal "+name+
+                **{kind: ("settled right platform; " if self.platform_calibration else "")+
+                    "known shared support; declared facing toward opponent; observed vulnerable target; legal "+name+
                     " range/input/motion predicate" for kind, name in COMBAT_KINDS.items()},
                 **{kind: "settled main ground; x opposite drift direction in [25,45]; legal fresh short-hop input"
                     for kind in AERIAL_KINDS},
@@ -75,6 +77,10 @@ class ScenarioV1:
     def opponent_control(self):
         return "neutral-human-v1" if self.name.startswith("calibration-") else "cpu3"
 
+    @property
+    def platform_calibration(self):
+        return self.opponent_control == 'neutral-human-v1' and self.kind in COMBAT_KINDS
+
 
 SUITE = tuple(ScenarioV1(kind+"-"+("left" if direction < 0 else "right"), kind, direction)
     for kind in ("grounded", "airborne", "offstage", "ledge") for direction in (-1, 1)) + (ScenarioV1("shielded-opponent", "shielded", -1),)
@@ -84,6 +90,8 @@ RECOVERY_SUITE = tuple(ScenarioV1("recovery-"+height+"-"+("left" if direction < 
 COMBAT_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
     kind, direction, measured_policy="ground-combat-v1")
     for kind, name in COMBAT_KINDS.items() for direction in (-1, 1))
+COMBAT_CALIBRATION_SUITE = tuple(ScenarioV1("calibration-"+spec.name, spec.kind, spec.direction,
+    measured_policy=spec.measured_policy) for spec in COMBAT_SUITE)
 AERIAL_SUITE = tuple(ScenarioV1(name+"-"+("left" if direction < 0 else "right"),
     kind, direction, measured_policy="aerial-v1")
     for kind, name in AERIAL_KINDS.items() for direction in (-1, 1))
@@ -100,6 +108,8 @@ def find_suite(name):
         return RECOVERY_SUITE
     if name == "ground-combat-v1":
         return COMBAT_SUITE
+    if name == "ground-combat-calibration-v1":
+        return COMBAT_CALIBRATION_SUITE
     if name == "aerial-v1":
         return AERIAL_SUITE
     if name == "aerial-calibration-v1":
@@ -110,13 +120,15 @@ def find_suite(name):
 
 
 def scenario_suite(spec):
+    if spec in COMBAT_CALIBRATION_SUITE:
+        return "ground-combat-calibration-v1"
     if spec in AERIAL_CALIBRATION_SUITE:
         return "aerial-calibration-v1"
     return {"fox-reflex-v1": "recovery-v1", "ground-combat-v1": "ground-combat-v1", "aerial-v1": "aerial-v1", "approach-jab-v1":"approach-jab-v1"}.get(spec.measured_policy, "mechanics-v1")
 
 
 def find_scenario(name):
-    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE+AERIAL_SUITE+OPTION_SUITE+AERIAL_CALIBRATION_SUITE:
+    for spec in SUITE+RECOVERY_SUITE+COMBAT_SUITE+AERIAL_SUITE+OPTION_SUITE+AERIAL_CALIBRATION_SUITE+COMBAT_CALIBRATION_SUITE:
         if spec.name == name:
             return spec
     raise ValueError("Unknown fixed mechanical scenario")
@@ -138,6 +150,10 @@ def starting_predicate(spec, observation):
         return False
     x = spec.direction*a.x
     if spec.kind in COMBAT_KINDS:
+        if spec.platform_calibration and (support_surface(a.x,a.y,a.grounded) != 'right' or
+                support_surface(b.x,b.y,b.grounded) != 'right' or abs(a.details.self_velocity_x) >= .05 or
+                not 36 <= b.x <= 42 or abs(b.details.self_velocity_x) >= .05 or b.details.action_id != 14):
+            return False
         return can_start_combat(COMBAT_KINDS[spec.kind], spec.direction, observation) is None
     if spec.kind in OPTION_KINDS:
         return (stable_ground(observation) and 18 <= (b.x-a.x)*spec.direction <= 30 and
@@ -179,6 +195,9 @@ class ScenarioPolicy:
         self.crossing_started = None
         self.crossing_airborne = False
         self.combat_recentering = False
+        self.calibration_jump_started = None
+        self.calibration_jump_airborne = False
+        self.calibration_setup_failure = None
 
     @property
     def complete(self):
@@ -222,6 +241,8 @@ class ScenarioPolicy:
         return self._decision(observation)
 
     def _setup(self, observation):
+        if self.spec.platform_calibration:
+            return self._platform_calibration_setup(observation)
         if self.spec.kind in (*COMBAT_KINDS,*OPTION_KINDS):
             return self._combat_setup(observation)
         if self.spec.kind in AERIAL_KINDS:
@@ -280,6 +301,57 @@ class ScenarioPolicy:
             return "wait"
         action = self.probe.decide(observation).action
         return "wait" if action == "attack" else action
+
+    def _platform_calibration_setup(self, observation):
+        """One fixed fresh-match route; never drives the neutral opponent."""
+        a,b,frame = observation.bot,observation.opponent,observation.frame
+        def fail(reason):
+            self.calibration_setup_failure = reason
+            self.setup_phase = 'calibration_refused'
+            return 'wait'
+        if (support_surface(b.x,b.y,b.grounded) != 'right' or not 36 <= b.x <= 42 or
+                b.details.action_id != 14 or abs(b.details.self_velocity_x) >= .05):
+            return fail('calibration_opponent_left_fixed_setup')
+        surface = support_surface(a.x,a.y,a.grounded)
+        target = b.x-6*self.spec.direction
+        if abs(a.x) > 62 or a.y < LANDING_ORIGIN_FLOOR or a.y > 80:
+            return fail('calibration_route_out_of_bounds')
+        if self.calibration_jump_started is not None:
+            age = frame-self.calibration_jump_started
+            if not self.calibration_jump_airborne:
+                self.setup_phase = 'calibration_full_jump'
+                if a.grounded:
+                    if age >= 8 or a.details.action_id not in (14,24):
+                        return fail('calibration_jump_unacknowledged')
+                    return 'jump'  # Hold X throughout native jumpsquat.
+                if a.details.action_id not in (25,26) or a.jumps != 1 or a.details.self_velocity_y <= 0:
+                    return fail('calibration_takeoff_unacknowledged')
+                self.calibration_jump_airborne = True
+            if not a.grounded:
+                self.setup_phase = 'calibration_airborne_release'
+                return fail('calibration_landing_timeout') if age >= 120 else 'wait'
+            if surface != 'right':
+                return fail('calibration_missed_platform')
+        if surface == 'left':
+            self.setup_phase = 'calibration_leave_spawn_platform'
+            return 'right'
+        if not a.grounded:
+            self.setup_phase = 'calibration_wait_main_floor'
+            return 'wait'
+        if surface not in ('ground','right'):
+            return fail('calibration_unknown_support')
+        self.setup_phase = 'calibration_align_'+surface
+        if abs(a.x-target) > 1:
+            return 'slow_right' if a.x < target else 'slow_left'
+        if abs(a.details.self_velocity_x) >= .05 or not a.details.input_neutral_derived:
+            return 'wait'
+        if surface == 'right':
+            return ('slow_right' if self.spec.direction > 0 else 'slow_left') if a.details.facing_right != (self.spec.direction > 0) else 'wait'
+        if a.details.action_id != 14 or a.details.input_jump_held:
+            return 'wait'
+        self.calibration_jump_started = frame
+        self.setup_phase = 'calibration_full_jump'
+        return 'jump'
 
     def _combat_setup(self, observation):
         a, b = observation.bot, observation.opponent
@@ -354,6 +426,8 @@ class ScenarioPolicy:
             return self._finish(observation, "setup_failed" if self.phase == "setup" else "skill_failed", "observation_discontinuity")
         self.previous_frame = observation.frame
         if self.phase == "setup":
+            if self.calibration_setup_failure is not None:
+                return self._finish(observation, 'setup_failed', self.calibration_setup_failure)
             if self.last_action == "wait" and starting_predicate(self.spec, observation):
                 self.phase = "measured"
                 self.owner = "measured"

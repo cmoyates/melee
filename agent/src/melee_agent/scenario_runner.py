@@ -250,11 +250,15 @@ class SuiteInterrupted(BaseException):
     pass
 
 
-def combat_acceptance(results, repeats):
+def combat_acceptance(results, repeats, *, suite="ground-combat-v1"):
+    if suite not in ("ground-combat-v1", "ground-combat-calibration-v1"):
+        raise ValueError("Unknown combat acceptance suite")
+    opponent_control = "neutral-human-v1" if suite == "ground-combat-calibration-v1" else "cpu3"
     per_scenario = {}
-    for spec in find_suite("ground-combat-v1"):
+    for spec in find_suite(suite):
         trials = [row for row in results if row["scenario"] == spec.name]
-        audited = [row for row in trials if row["status"] == "pass"]
+        audited = [row for row in trials if row["status"] == "pass" and
+            row.get("opponent_control", "cpu3") == opponent_control]
         acknowledged = sum(row.get("combat", {}).get("motion_acknowledged", False) for row in audited)
         completed = sum(row.get("combat", {}).get("completed", False) for row in audited)
         captures = sum(row.get("combat", {}).get("capture_observed", False) for row in audited)
@@ -301,7 +305,7 @@ def run_suite(root, repeats=10, duration=2400, seed=0, suite="mechanics-v1", req
         "trial_wall_clock_seconds": 60, "trial_process_deadline_seconds": 80,
         "scenarios": [spec.manifest() for spec in specs], "artifact_limit_bytes": 2_147_483_648,
         "provider_contacted": False, "repeatability": ("Neutral human opponent; observed predicates are controlled; game RNG is not seeded. Not CPU3 gameplay."
-            if suite == 'aerial-calibration-v1' else "Observed predicates are controlled; CPU and game RNG are not seeded.")}
+            if specs[0].opponent_control == 'neutral-human-v1' else "Observed predicates are controlled; CPU and game RNG are not seeded.")}
     write_json(folder / "manifest.json", manifest)
     started = time.monotonic()
     results = []
@@ -371,8 +375,10 @@ def run_suite(root, repeats=10, duration=2400, seed=0, suite="mechanics-v1", req
             "acceptance_scope": "A completed suite records setup and skill outcomes; it does not imply all skills succeeded."}
         if suite == "recovery-v1":
             report["acceptance"] = recovery_acceptance(results, repeats)
-        elif suite == "ground-combat-v1":
-            report["acceptance"] = combat_acceptance(results, repeats)
+        elif suite in ("ground-combat-v1", "ground-combat-calibration-v1"):
+            report["acceptance"] = combat_acceptance(results, repeats, suite=suite)
+            if suite == 'ground-combat-calibration-v1':
+                report['acceptance_scope'] = 'Neutral-opponent mechanical calibration only; original CPU3 acceptance remains separate.'
         elif suite in ("aerial-v1", "aerial-calibration-v1"):
             report["acceptance"] = aerial_acceptance(results, repeats,
                 scenario_prefix='calibration-' if suite == 'aerial-calibration-v1' else '')

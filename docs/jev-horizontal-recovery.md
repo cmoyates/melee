@@ -89,8 +89,26 @@ Full private audit: `build/jev/horizontal-recovery-20260927/pilot-audit.json`.
 
 This is one observed left-side success and zero right-side encounters. It does
 not meet the twenty-encounters-per-side target or establish better match
-performance. The fresh eighty-trial narrow recovery regression is running;
-the earlier suite's success is not substituted for that check.
+performance.
+
+## Fresh recovery regression
+
+Suite `scenarios-6abfea758d8b4ef091b88ebec24645f2` completed all eighty fresh
+matches on this implementation: 20/20 successful audited returns in each of
+high-left, high-right, low-left and low-right. It satisfies the unchanged
+18/20-per-setup gate. The suite took 1,271.20 seconds and retained 199,690,623
+artifact bytes.
+
+Independent exact replay reproduced all 23,369 game-frame decisions, packets,
+scenario traces and final reports. Every scenario audit passed, all source
+hashes matched, and all five spend journals remained byte-identical. Summary
+SHA-256: `0770370aaa17dbf8603969388374ed1e21bb2eae09afa8fe1159187c2eff1388`.
+Private evidence is retained under `build/jev/scenarios/` and
+`build/jev/continuation-20260926/` using that suite identifier.
+
+These narrow controlled setups preserve the original recovery acceptance.
+They do not supply the still-pending twenty natural high-horizontal encounters
+per side or replace the pilot's observed match loss.
 
 ## Offline boundary evidence
 

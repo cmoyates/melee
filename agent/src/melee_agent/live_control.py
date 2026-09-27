@@ -5,6 +5,7 @@ import time
 from .engine import Fighter, FighterDetails, MatchProgress, Observation
 from .rules import STARTING_STOCKS, TIME_LIMIT_SECONDS
 from .raw_observation import combat_counters, normalized_hurtbox
+from .player_roles import validate_bot_port
 
 
 class SystemClock:
@@ -13,7 +14,8 @@ class SystemClock:
 
 
 def observe(state, episode, clock, raw_players, *, starting_stocks=STARTING_STOCKS,
-        time_limit_seconds=TIME_LIMIT_SECONDS):
+        time_limit_seconds=TIME_LIMIT_SECONDS, bot_port=1):
+    validate_bot_port(bot_port)
     def fighter(player, port):
         hitlag, hitstun = combat_counters(raw_players[str(port)]["raw_post"])
         buttons = {b.name.removeprefix("BUTTON_"): bool(v) for b, v in player.controller_state.button.items()}
@@ -32,7 +34,7 @@ def observe(state, episode, clock, raw_players, *, starting_stocks=STARTING_STOC
         return Fighter(float(player.position.x), float(player.position.y), bool(player.on_ground),
                         int(player.jumps_left), getattr(player.action, "name", "UNKNOWN"), int(player.stock), details)
     return Observation(5, episode, int(state.frame), clock.now_ns(), state.stage.name,
-                        fighter(state.players[1], 1), fighter(state.players[2], 2),
+                        fighter(state.players[bot_port], bot_port), fighter(state.players[3-bot_port], 3-bot_port),
                         MatchProgress.from_frame(int(state.frame), time_limit_seconds, starting_stocks))
 
 

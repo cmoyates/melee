@@ -4,19 +4,21 @@ import time
 
 from .replay import expected_settings, summarize_file
 from .rules import TIME_LIMIT_SECONDS, SIMULATION_FPS
+from .player_roles import validate_bot_port
 
 
 class MatchBoundaryError(ValueError):
     pass
 
 
-def start_segment(number, match_number, phase, frame, now, start_index, settings):
-    if frame != -123 or start_index != number or not expected_settings(settings,phase=phase):
+def start_segment(number, match_number, phase, frame, now, start_index, settings, *, bot_port=1):
+    if frame != -123 or start_index != number or not expected_settings(settings,phase=phase,bot_port=bot_port):
         raise MatchBoundaryError('unverified_segment_start')
     return {'episode':number,'match_number':match_number,'phase':phase,
         'start_event_index':start_index,'start_settings':settings,
         'first_frame':frame,'last_frame':frame,'observations':0,'gaps':0,
-        'duplicates':0,'rollbacks':0,'started_monotonic':now}
+        'duplicates':0,'rollbacks':0,'started_monotonic':now,
+        **({'bot_port':bot_port} if bot_port != 1 else {})}
 
 
 def record_observation(episode, current, stocks, now):
@@ -40,7 +42,7 @@ def record_sudden_death_menu(episode, menu, now):
     """
     previous = episode.get('sudden_death_menu_events', [])
     if (episode.get('phase') != 'sudden_death' or not menu or menu.get('scene') != 0x0302 or
-            not expected_settings(episode.get('start_settings'), phase='sudden_death') or
+            not expected_settings(episode.get('start_settings'), phase='sudden_death',bot_port=episode.get('bot_port',1)) or
             not -123 <= episode['last_frame'] < 0 or len(previous) >= 8 or
             not 0 <= now-episode['started_monotonic'] <= 5 or
             (previous and menu['index'] <= previous[-1]['index'])):
@@ -48,14 +50,14 @@ def record_sudden_death_menu(episode, menu, now):
     episode.setdefault('sudden_death_menu_events', []).append({**menu, 'monotonic': now})
 
 
-def completed_replay(run_dir, episode_number, phase):
+def completed_replay(run_dir, episode_number, phase, *, bot_port=1):
     deadline = time.monotonic()+3
     while time.monotonic() < deadline:
         paths = sorted((run_dir/'replays').glob('*.slp'))
         if len(paths) >= episode_number:
             try:
                 replay = summarize_file(paths[episode_number-1], 268435456)
-                if replay['outcome'] in ('game','time') and expected_settings(replay['settings'],phase=phase):
+                if replay['outcome'] in ('game','time') and expected_settings(replay['settings'],phase=phase,bot_port=bot_port):
                     return replay
             except (OSError,ValueError,KeyError):
                 pass
@@ -64,10 +66,11 @@ def completed_replay(run_dir, episode_number, phase):
 
 
 def verify_sudden_death(previous, replay, settings, frame, stocks, percents, start_index):
+    bot_port = previous.get('bot_port',1)
     if (previous.get('phase','regulation') != 'regulation' or
             previous['last_frame'] < TIME_LIMIT_SECONDS*SIMULATION_FPS or
-            replay['outcome'] != 'time' or not expected_settings(replay['settings']) or
-            not expected_settings(settings,phase='sudden_death') or frame != -123 or
+            replay['outcome'] != 'time' or not expected_settings(replay['settings'],bot_port=bot_port) or
+            not expected_settings(settings,phase='sudden_death',bot_port=bot_port) or frame != -123 or
             stocks != [1,1] or percents != [300.,300.] or
             len(previous['last_stocks']) != 2 or previous['last_stocks'][0] < 1 or
             previous['last_stocks'][0] != previous['last_stocks'][1] or
@@ -75,7 +78,7 @@ def verify_sudden_death(previous, replay, settings, frame, stocks, percents, sta
         raise MatchBoundaryError('unverified_sudden_death_boundary')
 
 
-def replay_layout_valid(episodes, replays, *, complete=False, expected_matches=None):
+def replay_layout_valid(episodes, replays, *, complete=False, expected_matches=None, bot_port=1):
     """One replay per segment; one completed contest per final result only."""
     if not episodes or len(episodes) != len(replays):
         return False
@@ -84,7 +87,8 @@ def replay_layout_valid(episodes, replays, *, complete=False, expected_matches=N
     try:
         for index, (episode,replay) in enumerate(zip(episodes,replays),1):
             phase = episode.get('phase','regulation')
-            if episode['episode'] != index or not expected_settings(replay['settings'],phase=phase):
+            if (episode['episode'] != index or validate_bot_port(episode.get('bot_port',1)) != bot_port or
+                    not expected_settings(replay['settings'],phase=phase,bot_port=bot_port)):
                 return False
             if episode.get('start_settings',replay['settings']) != replay['settings']:
                 return False

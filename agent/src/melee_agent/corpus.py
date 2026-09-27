@@ -14,9 +14,10 @@ from .semantic import SemanticHistory, canonical, compact_observation
 from .tactical_choices import PROFILE, legal_candidates, profile_labels
 from .source_states import captured_observation
 from .trace_limits import MAX_SOURCE_BYTES
+from .player_roles import record_bot_port, validate_bot_port
 
 MAX_CORPUS_BYTES = 134217728
-COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py", "trace_limits.py", "tactical_choices.py", "live_control.py", "raw_observation.py", "replay.py", "approach_jab.py", "aerial.py")
+COMPILER_MODULES = ("corpus.py", "semantic.py", "source_states.py", "native_motions.py", "skills.py", "ground_combat.py", "stage.py", "engine.py", "trace_limits.py", "tactical_choices.py", "live_control.py", "raw_observation.py", "replay.py", "approach_jab.py", "aerial.py", "player_roles.py")
 
 
 def digest(path):
@@ -60,6 +61,7 @@ def choose_sources(root, limit, *, profile=PROFILE):
             continue
         try:
             first = next(row for _, row in stream_records(folder/"frames.jsonl", MAX_SOURCE_BYTES) if row.get("menu") == "IN_GAME")
+            record_bot_port(first,validate_bot_port(summary.get('bot_port',1)))
             captured_observation(first)
         except (ValueError, KeyError, StopIteration):
             continue
@@ -93,6 +95,7 @@ def generate_cases(root, runs, maximum_states, *, profile=PROFILE):
         quota = base_quota+int(run_index < remainder)
         folder = locate_run(root, run_id)
         summary = read_json(folder/"summary.json", 1048576)
+        bot_port = validate_bot_port(summary.get('bot_port',1))
         if summary.get('candidate_profile',PROFILE) != profile:
             raise ValueError('Corpus cannot relabel a different candidate profile')
         expected_frames = sum(row.get("observations", 0) for row in summary.get("episodes", []))
@@ -104,6 +107,7 @@ def generate_cases(root, runs, maximum_states, *, profile=PROFILE):
         for line, row in stream_records(folder/"frames.jsonl", MAX_SOURCE_BYTES):
             if row.get("menu") != "IN_GAME":
                 continue
+            record_bot_port(row,bot_port)
             observation = captured_observation(row)
             prior = history.before(observation)
             identity = (observation.episode, observation.bot.details.life_generation_derived)
@@ -121,6 +125,7 @@ def generate_cases(root, runs, maximum_states, *, profile=PROFILE):
             labels = legal_candidates(observation,profile)
             state = compact_observation(observation, labels, active_skill=active, skill_known=known, history=prior)
             yield {"schema_version": 1, 'candidate_profile':profile, "source": {"run_id": run_id, "episode": observation.episode,
+                **({'bot_port':bot_port} if bot_port != 1 else {}),
                 "frame": observation.frame, "observation_schema_version": row["control"]["observation"]["schema_version"],
                 "raw_record_sha256": hashlib.sha256(line).hexdigest()},
                 "split": episode_split(run_id, observation.episode), "state": state.wire(), "state_sha256": state.sha256,

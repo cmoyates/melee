@@ -4,6 +4,7 @@ from .approach_jab import MAX_MOVES, MAX_FRAMES, MAX_DISPLACEMENT, can_start_app
 from .combat_evidence import audit_combat_trace
 from .engine import ACTION_PACKETS, Observation
 from .skills import WALK_ACTIONS, SkillSpec, can_start
+from .player_roles import raw_fighter
 
 
 def audit_option_trace(option,rows,errors,*,completed,require_move=False):
@@ -44,7 +45,7 @@ def audit_option_trace(option,rows,errors,*,completed,require_move=False):
                     errors['option_combat_report_mismatch'] += 1
             elif child['ack_frame'] is not None:
                 ack=indexed[child['ack_frame']]
-                raw=ack['raw_observation']['players']['1']['raw_post']
+                raw=raw_fighter(ack)
                 direction=child['direction']
                 action='slow_right' if direction>0 else 'slow_left'
                 valid=(start<child['ack_frame']<=end and not raw['airborne'] and

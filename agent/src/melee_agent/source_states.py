@@ -7,14 +7,18 @@ from .engine import Observation
 from .live_control import observe
 from .raw_observation import LifeTracker, RawStreamTap, normalized_hurtbox, player_record
 from .replay import expected_settings, summarize_file
+from .player_roles import record_bot_port, validate_bot_port
 
 
 def captured_observation(row):
     if row.get("menu") != "IN_GAME":
         raise ValueError("Capture row is not a gameplay observation")
+    bot_port = record_bot_port(row)
     data = row["control"]["observation"]
     version = data.get("schema_version")
     if version == 3:
+        if bot_port != 1:
+            raise ValueError('Historical observation adapter requires port 1')
         # An explicit historical adapter, never an assumed vulnerable target.
         data = deepcopy(data)
         for name, port in (("bot", "1"), ("opponent", "2")):
@@ -29,7 +33,7 @@ def captured_observation(row):
     return observation
 
 
-def replay_observations(path, *, episode=1, maximum_bytes=268435456, maximum_frames=40000, phase="regulation"):
+def replay_observations(path, *, episode=1, maximum_bytes=268435456, maximum_frames=40000, phase="regulation", bot_port=1):
     """Read an already-owned completed file; never create a runtime or controller.
 
     Only the pinned adapter's supported Fox/Mario Battlefield format is accepted.
@@ -37,10 +41,11 @@ def replay_observations(path, *, episode=1, maximum_bytes=268435456, maximum_fra
     remains nullable. Controller commitment is absent from a standalone replay.
     """
     import melee
+    validate_bot_port(bot_port)
     if type(episode) is not int or episode < 1 or type(maximum_frames) is not int or not 1 <= maximum_frames <= 40000:
         raise ValueError("Invalid replay extraction bound")
     summary = summarize_file(path, maximum_bytes)
-    if not expected_settings(summary["settings"], phase=phase):
+    if not expected_settings(summary["settings"], phase=phase,bot_port=bot_port):
         raise ValueError("Unsupported replay matchup or rules")
     console = melee.Console(path=str(path), is_dolphin=False)
     if console.temp_dir is not None or console._process is not None or console.controllers:
@@ -65,7 +70,7 @@ def replay_observations(path, *, episode=1, maximum_bytes=268435456, maximum_fra
                 episode, port, lives, console.zero_indices) for port in (1, 2)}
             yield observe(state, episode, SimpleNamespace(now_ns=lambda: 0), raw,
                 starting_stocks=1 if phase == "sudden_death" else 4,
-                time_limit_seconds=None if phase == "sudden_death" else 480), raw
+                time_limit_seconds=None if phase == "sudden_death" else 480,bot_port=bot_port), raw
             count += 1
             if count >= maximum_frames:
                 return

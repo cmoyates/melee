@@ -59,10 +59,40 @@ raw combat/aerial acknowledgement, sealed option replay, corpus parity and
 missing/conflicting role rejection. The focused role tests also passed after
 the final type-validation hardening.
 
-Native port-2 acceptance is **pending**. After the frozen J19 cohort completes or
-records a stop, the first tracer match will use the free heuristic selector on
-Battlefield. Retain its full recordings, verify raw integrity and exact local
-replay, check observed native action acknowledgements and replay extraction
-parity, confirm stock rules/result and owned cleanup, and keep failures visible.
-Do not count a mock worker or a successful menu launch as native side-swap
-acceptance. This slice makes no playing-strength or held-out tournament claim.
+## Native port-2 results
+
+After the frozen thirty-match J19 cohort completed, two free full matches
+validated the local and asynchronous paths on source `de8f2a09e`:
+
+| Policy | Run | Wall seconds | Exact game records | Result, Fox–Mario |
+| --- | --- | ---: | ---: | --- |
+| heuristic-tactical | `match-b75d5fbb23e647ecbf3a2841cb2366ec` | 302.85 | 17,308 | 0–4 |
+| delayed-fake | `match-ce46421919d44ea7844390e05fd023d9` | 332.65 | 19,088 | 0–4 |
+
+Both replay headers identify human Fox on port 2 and Mario CPU3 on port 1, with
+the expected Battlefield stock/timer rules. Both native winners are port 1,
+while canonical final stocks are `[0, 4]`. Raw integrity, source identity,
+complete results and owned cleanup passed. All 36,396 canonical observations
+and legal-candidate sets matched standalone Slippi extraction exactly, with
+zero unmatched states. Standalone files do not recover historical skill
+commitment; the complete controller traces were checked separately.
+
+The local controller replay matched all 17,308 records. The asynchronous sealed
+replay matched all 19,088 records and 192 accepted choices, with zero raw policy
+audit errors. Native acknowledgements included fifteen completed Nairs, two
+approach-jabs, two down tilts, one jab and one grab. The Nair landing durations
+were fourteen seven-frame landings and one fifteen-frame landing; an attempted
+L-cancel is not automatically a reduced-lag success. Thirteen skills aborted
+and remain in the result. The fault backend supplied stale, duplicate, invalid
+and misbound responses; none bypassed the apply-time guards.
+
+Sealed incident: `incident-2ed7be433e914a579cdcace57942dc98`.
+Asynchronous packet SHA-256:
+`883ff5c2a577f9f493d2e168a4650f88190dbc295045fd6ba58a9a9f4b19a220`.
+Local packet SHA-256:
+`1866c86038676ca01808b886f4481afc79cf2abbb618335505510ea32df794bb`.
+
+The audits ran with network and subprocess creation blocked. All five spending
+journal hashes remained unchanged across both matches and their audits.
+These results establish the explicit controller-role contract, without claiming
+playing strength, paid-model port-2 performance or a held-out tournament.

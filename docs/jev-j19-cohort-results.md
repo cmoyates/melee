@@ -32,6 +32,22 @@ Resolved response identities: `~typesafe/jev-latest` → `typesafe/jev-1.13-2026
 
 Latency is retained per match in the JSON report; no average of per-match percentiles is presented.
 
+## Retained stock-loss context
+
+A separate read-only pass reverified all thirty frame-file hashes and retained
+the preceding raw context for all 120 Fox stock decreases. In 75 cases the last
+observation before the stock decrement was native DamageFall (38) with the
+recovery reflex failed: 22/40 Jev, 26/40 random and 27/40 heuristic. The first
+recorded reflex failure in each of those lives was outside the declared recovery
+envelope. Another 33 losses had a last observation in a native damage motion;
+twelve already showed a death motion before the stock counter changed.
+
+These are observed terminal contexts, not causal self-destruct classifications
+or proof that a different input could recover every position. They motivate the
+separately bounded recovery experiment in #88. Its results cannot replace this
+frozen cohort. Private loss-context JSON SHA-256:
+`9d480e630d65726313d62b6646db6249a8846ca5cb655f0532a9eed51ed5a3d4`.
+
 ## Spending and provenance
 
 This cohort accounted for $0.184776132: $0.154776132 reported charges and $0.030000000 retained uncertain reservations. All five experiment journals total **$0.313272330 of the original $1 cap**, including $0.042000000 uncertain reservations. The four ancestor journal hashes were rechecked unchanged.
@@ -79,5 +95,4 @@ Regenerate JSON or full Markdown from retained local artifacts using `melee-agen
 | 27 | jev | `match-aacd6dc5398348eb8ab4b7ce6f7e418d` | 0–3 | 367.17 | 21165 |
 | 28 | random-tactical | `match-e165c31bcbff4a33a5647b5fcdc82998` | 0–4 | 346.87 | 19959 |
 | 29 | heuristic-tactical | `match-464eeb32996b414795113311ce7a699a` | 0–4 | 280.39 | 15983 |
-
 

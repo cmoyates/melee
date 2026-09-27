@@ -34,6 +34,16 @@ def occupied_ledge(observation):
     return b.details.action_id in LEDGE and abs(b.x) > 60 and a.x*b.x > 0
 
 
+def horizontal_recovery_entry(observation):
+    """One declared natural-knockback setup, not general offstage reachability."""
+    a = observation.bot
+    return (observation.frame >= 0 and a.stocks_remaining > 0 and not a.grounded and
+        a.details.action_id == 38 and a.jumps == 1 and 130 < abs(a.x) <= 180 and
+        0 <= a.y <= 140 and a.details.self_velocity_y <= 0 and
+        not a.details.hitlag_frames_derived and not a.details.hitstun_frames_derived and
+        not a.details.input_jump_held)
+
+
 def aim_action(observation):
     """Choose a coarse charge-time aim from current observed geometry."""
     a = observation.bot
@@ -98,6 +108,8 @@ class FoxReflex:
         self.last_tech_frame = -1000
         self.last_tech_state = False
         self.failed = False
+        self.horizontal_start = None
+        self.horizontal_used = False
         self.event = None
         self.counts = Counter()
         self.last_action = "wait"
@@ -118,6 +130,9 @@ class FoxReflex:
         self.last_hitstun = False
         self.last_tech_frame = observation.frame if preserve_deadline else -1000
         self.last_tech_state = False
+        self.horizontal_start = None
+        if not preserve_deadline:
+            self.horizontal_used = False
         self._phase("idle", observation, reason)
 
     def reason(self, observation):
@@ -183,6 +198,10 @@ class FoxReflex:
             self.jump_attempted = False
             self.special_request_frame = None
             self.jump_request_frame = None
+            if self.horizontal_start is not None:
+                self.counts['horizontal_interruptions'] += 1
+            self.horizontal_start = None
+            self.horizontal_used = False
             self.counts["damage_interruptions"] += 1
         self.last_hitstun = hitstun
         if hitstun or a.details.hitlag_frames_derived:
@@ -194,6 +213,8 @@ class FoxReflex:
             self.started_frame = None
             self.jump_attempted = self.special_attempted = self.special_launched = self.failed = False
             self.jump_request_frame = self.special_request_frame = None
+            self.horizontal_start = None
+            self.horizontal_used = False
             if support == "ground" and abs(a.x) > 62:
                 self._phase("edge_clear", observation)
                 return self._output("left" if a.x > 0 else "right")
@@ -210,7 +231,16 @@ class FoxReflex:
             return self._fail(observation, "unknown_geometry_or_resources")
         if frame-self.started_frame >= MAX_RECOVERY_FRAMES:
             return self._fail(observation, "recovery_deadline")
-        if a.y < -85 or abs(a.x) > 130:
+        if (not self.horizontal_used and not self.jump_attempted and not self.special_attempted and
+                self.jump_request_frame is None and self.special_request_frame is None and
+                horizontal_recovery_entry(observation)):
+            self.horizontal_used = True
+            self.horizontal_start = {'episode':observation.episode,'frame':frame,
+                'life':a.details.life_generation_derived,'x':a.x,'y':a.y,'jumps':a.jumps,
+                'motion':a.details.action_id}
+            self.counts['horizontal_admissions'] += 1
+        horizontal_limit = 180 if self.horizontal_start is not None else 130
+        if a.y < -85 or abs(a.x) > horizontal_limit:
             return self._fail(observation, "outside_declared_recovery_envelope")
         inward = "left" if a.x > 0 else "right"
         if a.details.action_id == 252:
@@ -264,6 +294,8 @@ class FoxReflex:
                 return self._output(inward)
             self.jump_request_frame = None
             self.counts["unacknowledged_jump_attempts"] += 1
+            if self.horizontal_start is not None:
+                return self._fail(observation, 'horizontal_jump_unacknowledged')
         if a.details.input_jump_held:
             self._phase("release_jump", observation)
             return self._output(inward)
@@ -307,4 +339,5 @@ class FoxReflex:
             "started_frame": self.started_frame, "jump_attempted": self.jump_attempted,
             "special_attempted": self.special_attempted, "special_launched": self.special_launched,
             "failed": self.failed, "last_action": self.last_action, "event": self.event,
-            "counts": dict(self.counts)}
+            "counts": dict(self.counts),
+            **({'horizontal_start':dict(self.horizontal_start)} if self.horizontal_start is not None else {})}

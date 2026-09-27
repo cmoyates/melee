@@ -128,6 +128,7 @@ def main(argv=None):
             command.add_argument("--skills", action="store_true")
             command.add_argument("--policy-evidence", action="store_true")
             command.add_argument("--scenario-evidence", action="store_true")
+            command.add_argument('--horizontal-recovery-evidence',action='store_true')
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[3]
     if args.command == 'batch':
@@ -272,7 +273,12 @@ def main(argv=None):
                     (run / "stop.request").touch(exist_ok=True)
                 print(json.dumps({"run_id": args.run_id, "stop_requested": True}))
             else:
-                if args.policy_evidence:
+                if args.horizontal_recovery_evidence:
+                    from .horizontal_recovery_evidence import inspect_horizontal_recovery
+                    report = inspect_horizontal_recovery(run)
+                    print(json.dumps(report,allow_nan=False))
+                    return 0 if report['status'] == 'pass' else 1
+                elif args.policy_evidence:
                     from .policy_evidence import inspect_policy
                     report = inspect_policy(run)
                     print(json.dumps(report, allow_nan=False))

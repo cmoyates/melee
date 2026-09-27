@@ -121,7 +121,7 @@ class PlatformJumpTests(unittest.TestCase):
             report,rows=recorded(direction);errors=Counter()
             result=audit_platform(spec,report,rows,errors)
             self.assertFalse(errors);self.assertTrue(result['completed'])
-            for mode in ('knee','resource','extra_jump','landing','neutral','incomplete_input'):
+            for mode in ('knee','resource','extra_jump','landing','neutral','incomplete_input','drift','midair_resource'):
                 altered=deepcopy(rows)
                 if mode=='knee':altered[2]['input_provenance']['observed']['buttons']['X']=False
                 if mode=='resource':altered[4]['raw_observation']['players']['1']['raw_post']['jumps']=0
@@ -129,6 +129,8 @@ class PlatformJumpTests(unittest.TestCase):
                 if mode=='landing':altered[-1]['raw_observation']['players']['1']['raw_post']['y']=0.
                 if mode=='neutral':altered[-1]['input_provenance']['observed']['buttons']['X']=True
                 if mode=='incomplete_input':altered[-1]['input_provenance']['observed']['buttons'].pop('Y')
+                if mode=='drift':altered[6]['raw_observation']['players']['1']['raw_post']['x']+=3
+                if mode=='midair_resource':altered[6]['raw_observation']['players']['1']['raw_post']['jumps']=0
                 errors=Counter();audit_platform(spec,report,altered,errors)
                 self.assertTrue(errors,mode)
 

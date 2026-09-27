@@ -61,7 +61,13 @@ def audit_platform(spec,report,rows,errors):
         if report['result']['status']=='succeeded':
             evidence['completed']=(evidence['full_jump_observed'] and trace['status']=='succeeded' and
                 landing is not None and ack<landing<end==rows[-1]['frame'] and
+                end-start<90 and
                 len(trace['children'])==1 and trace['children'][0]['status']=='succeeded' and
+                all(abs(raw(f)['x']-raw(start)['x'])<=2 and
+                    target['left']+4<=raw(f)['x']<=target['right']-4 and
+                    -12<=raw(f)['y']<=target['height']+20 for f in range(start,end+1)) and
+                all(raw(f)['airborne']==1 and raw(f)['jumps']==1 and
+                    raw(f)['action_id'] in (25,26,29,30,31) for f in range(ack,landing)) and
                 all(raw(f)['airborne']==0 and support_surface(raw(f)['x'],raw(f)['y'],True)==target['id']
                     for f in range(landing,end+1)) and raw(end)['action_id']==14 and raw(end)['jumps']==2 and
                 neutral(indexed[end]['input_provenance']['observed']) and

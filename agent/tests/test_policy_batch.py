@@ -244,6 +244,15 @@ class PolicyBatchTests(unittest.TestCase):
         manifest['schema_version']=2;manifest['bot_ports']=None
         with self.assertRaises(ValueError):batch.manifest_plan(manifest)
 
+    def test_explicit_port_one_cannot_adopt_a_child_with_missing_role(self):
+        def missing(root,folder,manifest,slot):
+            self.child(root,folder,manifest,slot)
+            path=root/'build/jev/runs'/('match-'+f'{slot+1:032x}')/'summary.json'
+            value=batch.read_json(path);value.pop('bot_port');path.write_text(json.dumps(value))
+        with patch.object(batch,'run_child',side_effect=missing):
+            with self.assertRaisesRegex(ValueError,'Child differs'):
+                batch.start_batch(self.root,bot_ports=(1,),max_new_matches=1)
+
     def test_cli_routes_explicit_port_order_and_count(self):
         with patch('melee_agent.policy_batch.start_batch',return_value={'status':'checkpointed'}) as start:
             self.assertEqual(main(['batch','start','--bot-ports','2','1','--matches-per-policy','3']),0)

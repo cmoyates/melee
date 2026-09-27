@@ -34,10 +34,11 @@ force. Free children receive no provider credentials. An explicit Jev schedule
 still requires an existing conserved ledger and a per-match request limit;
 choosing another port never allocates additional money or extends a deadline.
 
-All 454 dependency-free host tests pass. Coverage checks exact resume order,
+All 455 dependency-free host tests pass. Coverage checks exact resume order,
 P2 scoring, role mismatch rejection, credential isolation, historical
-compatibility and paid ledger conservation. A final focused rerun passed all
-36 batch/report tests after adding per-port operational summaries.
+compatibility and paid ledger conservation. Explicit version-2 children must
+record their role even when assigned P1; the legacy P1 default cannot fill a
+missing role in a new schedule.
 
 The historical thirty-match cohort
 `batch-17fa1c8b61fb4a2988cc42fb73e62b06` was read through the new reporter.

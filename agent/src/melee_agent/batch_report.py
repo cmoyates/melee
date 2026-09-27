@@ -86,6 +86,7 @@ def snapshot(root, batch_id):
         require(summary['run_id'] == launch['run_id'] == audit['run_id'])
         require(summary['policy'] == launch['policy'] == audit['policy'])
         port = child_port(manifest,slot)
+        require(manifest['schema_version']==1 or all('bot_port' in value for value in (summary,launch,audit)))
         require(all(type(value) is int and value == port for value in
             (summary.get('bot_port',1),launch.get('bot_port',1),audit.get('bot_port',1))))
         require(launch['source_sha256'] == manifest['source_identity']['modules'])

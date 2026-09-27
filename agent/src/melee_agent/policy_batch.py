@@ -154,6 +154,7 @@ def load_batch(root, folder):
             audit = read_json(audit_path)
             run = locate_run(root, audit['run_id'])
             if (audit['slot'] != slot or audit['policy'] != expected[slot]['policy'] or
+                    (manifest['schema_version']==2 and any('bot_port' not in value for value in (audit,audit['summary']))) or
                     any(type(value) is not int or value != child_port(manifest,slot) for value in
                         (audit.get('bot_port',1),audit['summary'].get('bot_port',1))) or
                     audit['run_id'] in {row['run_id'] for row in results} or
@@ -197,6 +198,7 @@ def audit_child(root, folder, manifest, slot, *, ledger_before=None):
     policy = manifest['schedule'][slot]['policy']
     port = child_port(manifest,slot)
     if (launch['run_id'] != run.name or summary['run_id'] != run.name or
+            (manifest['schema_version']==2 and any('bot_port' not in value for value in (launch,summary))) or
             type(launch.get('bot_port',1)) is not int or type(summary.get('bot_port',1)) is not int or
             launch.get('bot_port',1) != port or summary.get('bot_port',1) != port or
             launch['policy'] != policy or summary['policy'] != policy or

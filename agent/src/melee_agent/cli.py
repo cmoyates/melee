@@ -37,7 +37,10 @@ def main(argv=None):
     batch_start = batches.add_parser('start')
     batch_start.add_argument('--policies', nargs='+', choices=('random-tactical','heuristic-tactical','jev'),
         default=['random-tactical','heuristic-tactical'])
-    batch_start.add_argument('--matches-per-policy', type=int, default=10)
+    batch_start.add_argument('--matches-per-policy', type=int, default=10,
+        help='1-10 matches per policy on each selected port')
+    batch_start.add_argument('--bot-ports', nargs='+', type=int, choices=(1,2),
+        help='Explicit frozen player-port schedule; omitted preserves the legacy P1 cohort')
     batch_start.add_argument('--match-seconds', type=int, default=600)
     batch_start.add_argument('--duration', type=int, default=14400)
     batch_start.add_argument('--profile', choices=tuple(PROFILES), default=PROFILE)
@@ -147,7 +150,7 @@ def main(argv=None):
                 report = start_batch(root,policies=args.policies,matches_per_policy=args.matches_per_policy,
                     match_seconds=args.match_seconds,duration=args.duration,profile=args.profile,
                     max_new_matches=args.max_new_matches,previous_batch=args.previous_batch,
-                    budget=args.budget,max_requests=args.max_requests)
+                    budget=args.budget,max_requests=args.max_requests,bot_ports=args.bot_ports)
             elif args.batch_command == 'resume':
                 report = resume_batch(root,args.batch_id,max_new_matches=args.max_new_matches)
             else:

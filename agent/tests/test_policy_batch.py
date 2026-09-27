@@ -28,11 +28,14 @@ class PolicyBatchTests(unittest.TestCase):
         run_id = 'match-'+f'{slot+1:032x}'
         run = root/'build/jev/runs'/run_id;run.mkdir(parents=True)
         policy = manifest['schedule'][slot]['policy']
+        role = {'bot_port':batch.child_port(manifest,slot)} if manifest['schema_version'] == 2 else {}
         batch.write_new(run/'launch.json',{'run_id':run_id,'policy':policy,
+            **role,
             'candidate_profile':manifest['candidate_profile'], 'source_sha256':manifest['source_identity']['modules'],
             'duration_seconds':manifest['match_seconds'],'episodes':1,'provider_enabled':False,
             'budget_directory':None,'runtime_sha256':manifest['runtime_sha256']})
         batch.write_new(run/'summary.json',{'run_id':run_id,'policy':policy,
+            **role,
             'status':'incomplete' if self.failed else 'complete','completed_matches':0 if self.failed else 1,
             'episodes':[{'winner_port':2}], 'replays':[], 'provider_contacted':False,
             'neutralized':True,'worker_stopped':True,'emulator_stopped':True,'state_receiver':{'stopped':True}})
@@ -192,3 +195,57 @@ class PolicyBatchTests(unittest.TestCase):
         self.assertIsNone(batch.report_batch(manifest,rows,{'slot':1})['provider_contacted'])
         rows[0]['summary']['provider_contacted']=True
         self.assertTrue(batch.report_batch(manifest,rows)['provider_contacted'])
+
+    def test_both_ports_resume_exact_schedule_and_score_native_winners_by_role(self):
+        first=self.start(bot_ports=(1,2))
+        manifest,_,_=batch.load_batch(self.root,self.folder())
+        self.assertEqual(manifest['schema_version'],2)
+        self.assertEqual([(r['round'],r['bot_port'],r['policy']) for r in manifest['schedule']],
+            [(n,p,policy) for n in (1,2) for p in (1,2) for policy in batch.MODES])
+        with patch.object(batch,'run_child',side_effect=self.child):
+            final=batch.resume_batch(self.root,first['batch_id'])
+        self.assertEqual(self.launched,list(range(8)))
+        self.assertTrue(all(g['wins']==g['losses']==2 for g in final['policies'].values()))
+        self.assertTrue(all(g['by_port']['2']['wins']==2 and g['by_port']['1']['losses']==2
+            for g in final['policies'].values()))
+        self.assertEqual(batch.replay_layout_valid.call_args.kwargs['bot_port'],2)
+
+    def test_port_two_child_command_is_explicit_and_still_has_no_secret(self):
+        self.start(bot_ports=(2,));folder=self.folder();manifest,_,_=batch.load_batch(self.root,folder)
+        child=MagicMock();child.wait.return_value=0
+        with patch.dict('os.environ',{'OPENROUTER_API_KEY':'fixture-secret'}),patch.object(batch.subprocess,'Popen',return_value=child) as spawn:
+            batch.run_child(self.root,folder,manifest,1)
+        self.assertEqual(spawn.call_args.args[0][-2:],['grounded-tactical-v1','2'])
+        self.assertNotIn('OPENROUTER_API_KEY',spawn.call_args.kwargs['env'])
+        child.stdin.close.assert_called_once()
+
+    def test_wrong_child_port_is_retained_pending_without_retry(self):
+        def wrong(root,folder,manifest,slot):
+            self.child(root,folder,manifest,slot)
+            path=root/'build/jev/runs'/('match-'+f'{slot+1:032x}')/'launch.json'
+            value=batch.read_json(path);value['bot_port']=1
+            path.write_text(json.dumps(value))
+        with patch.object(batch,'run_child',side_effect=wrong):
+            with self.assertRaisesRegex(ValueError,'Child differs'):
+                batch.start_batch(self.root,bot_ports=(2,),max_new_matches=1)
+        with patch.object(batch,'run_child',side_effect=AssertionError('retry forbidden')):
+            with self.assertRaisesRegex(ValueError,'Child differs'):
+                batch.resume_batch(self.root,self.folder().name)
+        self.assertEqual(self.launched,[0])
+
+    def test_invalid_ports_and_version_disagreement_cannot_launch(self):
+        for ports in ((),(True,),(3,),(1,1),'12',(1,2,1)):
+            with self.assertRaises(ValueError):
+                batch.start_batch(self.root,bot_ports=ports)
+        self.assertFalse((self.root/'build').exists())
+        self.start();manifest,_,_=batch.load_batch(self.root,self.folder())
+        manifest['bot_ports']=[2]
+        with self.assertRaises(ValueError):batch.manifest_plan(manifest)
+        manifest['schema_version']=2;manifest['bot_ports']=None
+        with self.assertRaises(ValueError):batch.manifest_plan(manifest)
+
+    def test_cli_routes_explicit_port_order_and_count(self):
+        with patch('melee_agent.policy_batch.start_batch',return_value={'status':'checkpointed'}) as start:
+            self.assertEqual(main(['batch','start','--bot-ports','2','1','--matches-per-policy','3']),0)
+        self.assertEqual(start.call_args.kwargs['bot_ports'],[2,1])
+        self.assertEqual(start.call_args.kwargs['matches_per_policy'],3)

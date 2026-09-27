@@ -1,7 +1,7 @@
 # Neutral-opponent aerial timing fixture
 
 Issue [#86](https://github.com/cmoyates/melee/issues/86) adds a separate mechanical
-calibration for J17. Native pilot and full calibration are pending. This fixture
+calibration for J17. The native pilot and full eighty-trial calibration passed. This fixture
 does not replace the existing CPU3 suite or turn its interruptions into passes.
 
 The earlier CPU3 suite acknowledged all eighty aerials. Twelve own-hitstun
@@ -42,5 +42,33 @@ corpora. Standalone replay extraction still requires the original CPU3 rules.
 
 Host coverage exercises the real worker and supervisor boundaries with synthetic
 states/replays, the scenario audit, input tampering, grouping, and corpus
-exclusion. These checks do not establish native timing or menu-setup success.
-Run the live pilot only after the frozen J19 cohort releases its emulator lease.
+exclusion. The following native evidence separately verifies setup and timing.
+
+## Native calibration evidence
+
+Implementation `7ae36d6be` was exercised first in four fresh matches, then in
+suite `scenarios-9ca179a7a21e457fb7cd33012de5ca4b` on 2026-09-27. All eighty
+trials acknowledged the aerial, returned to neutral grounded state, and passed
+the independent scenario audit. Exact replay reproduced all 21,600 recorded
+game-frame decisions, controller packets, scenario traces and final reports.
+All launch-recorded source hashes matched the tested checkout.
+
+| Direction | L-cancel attempt | No-L-cancel control |
+| --- | --- | --- |
+| Left | 20/20 completions, all 7 landing frames | 20/20 completions, all 15 landing frames |
+| Right | 20/20 completions, all 7 landing frames | 20/20 completions, all 15 landing frames |
+
+Every nonnegative gameplay frame passed the observed neutral-opponent input
+check. The suite took 1,118.13 seconds and retained 188,790,006 artifact bytes.
+All five existing spend journals remained byte-identical; no provider was used.
+
+Suite summary SHA-256:
+`8d11ad60ede17c4b0503a99af54909c1762c782b07cce1afc227580051307b55`.
+Full private evidence is retained under `build/jev/scenarios/` and
+`build/jev/continuation-20260926/` using that suite identifier.
+
+This establishes the declared mechanical timing calibration in both directions.
+The older CPU3 suite still records 68 clean completions and 12 interruptions;
+its strict left-side clean-completion gate remains unmet. These results do not
+establish tactical strength, paired RNG, or aerial success against an attacking
+opponent.

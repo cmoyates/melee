@@ -1,7 +1,8 @@
 # High horizontal recovery experiment
 
 Issue [#88](https://github.com/cmoyates/melee/issues/88) covers one additional
-Fox recovery situation. Native acknowledgement and return evidence are pending.
+Fox recovery situation. One native left-side acknowledgement and stage return
+passed the pilot audit; broader directional coverage remains pending.
 The frozen J19 comparison and its historical losses remain unchanged.
 
 In a hash-verified snapshot of sixteen development matches, 44 of 64 Fox stock
@@ -62,6 +63,52 @@ coverage target; retain every failed or partial encounter and every match loss.
 The existing narrow recovery suite also needs a fresh native regression pass.
 This is a development experiment with uncontrolled game RNG, not a paired or
 held-out strength comparison.
+
+## Native pilot, 2026-09-27
+
+Run `match-ce5f11a06cbc44eb8bf128528b313a09` used free heuristic-tactical
+`fox-aerial-v1`, Fox P1 versus Mario CPU3, on stock Battlefield. It completed in
+369.85 seconds with a verified 0–3 loss. One eligible natural encounter occurred:
+
+| Side | Source frame / life | Position | Jump acknowledged | Known stage return |
+| --- | --- | --- | --- | --- |
+| Left | 9,844 / 2 | x −141.1066, y 56.1003 | Frame 9,845 | Frame 9,995 |
+
+The independent raw-state recovery audit verified admission, resource/motion
+acknowledgement and return with no errors. Full recording integrity, rules,
+native result and owned cleanup passed. Exact local control replay and complete
+standalone SLP semantic/legal-candidate parity covered all 21,160 game records,
+with no unmatched states or differences. All source hashes and all five spend
+journals were unchanged; no provider was contacted.
+
+Frames SHA-256:
+`482195a7a6502cc4e4aed5e2920725fea230ff726d5471faecc2d8994c43a709`.
+Replayed controller packets SHA-256:
+`83d4b97e83368782272be6a83640c7fc9d7ef12d566a4a3f3b4a384f13dea894`.
+Full private audit: `build/jev/horizontal-recovery-20260927/pilot-audit.json`.
+
+This is one observed left-side success and zero right-side encounters. It does
+not meet the twenty-encounters-per-side target or establish better match
+performance.
+
+## Fresh recovery regression
+
+Suite `scenarios-6abfea758d8b4ef091b88ebec24645f2` completed all eighty fresh
+matches on this implementation: 20/20 successful audited returns in each of
+high-left, high-right, low-left and low-right. It satisfies the unchanged
+18/20-per-setup gate. The suite took 1,271.20 seconds and retained 199,690,623
+artifact bytes.
+
+Independent exact replay reproduced all 23,369 game-frame decisions, packets,
+scenario traces and final reports. Every scenario audit passed, all source
+hashes matched, and all five spend journals remained byte-identical. Summary
+SHA-256: `0770370aaa17dbf8603969388374ed1e21bb2eae09afa8fe1159187c2eff1388`.
+Private evidence is retained under `build/jev/scenarios/` and
+`build/jev/continuation-20260926/` using that suite identifier.
+
+These narrow controlled setups preserve the original recovery acceptance.
+They do not supply the still-pending twenty natural high-horizontal encounters
+per side or replace the pilot's observed match loss.
 
 ## Offline boundary evidence
 

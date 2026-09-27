@@ -44,13 +44,36 @@ def bounded(value, minimum, maximum):
     return type(value) is int and minimum <= value <= maximum
 
 
-def validate_plan(policies, repeats, match_seconds, duration, profile):
+def validate_plan(policies, repeats, match_seconds, duration, profile, bot_ports=None):
     profile_labels(profile)
     if (not policies or len(set(policies)) != len(policies) or any(p not in ALL_MODES for p in policies) or
             not bounded(repeats, 1, 10) or not bounded(match_seconds, 30, 600) or
             not bounded(duration, match_seconds+CHILD_GRACE, 43200)):
         raise ValueError('Invalid bounded policy batch')
-    return [{'round': number, 'policy': policy} for number in range(1, repeats+1) for policy in policies]
+    if bot_ports is None:
+        return [{'round': number, 'policy': policy} for number in range(1, repeats+1) for policy in policies]
+    if (not isinstance(bot_ports,(list,tuple)) or not bot_ports or len(bot_ports)>2 or
+            any(type(port) is not int or port not in (1,2) for port in bot_ports) or
+            len(set(bot_ports)) != len(bot_ports)):
+        raise ValueError('Invalid batch player ports')
+    return [{'round':number,'policy':policy,'bot_port':port}
+        for number in range(1,repeats+1) for port in bot_ports for policy in policies]
+
+
+def manifest_plan(manifest):
+    version = manifest['schema_version']
+    if type(version) is not int or version not in (1,2):
+        raise ValueError('Unknown batch schema')
+    if (version == 1 and 'bot_ports' in manifest or
+            version == 2 and manifest.get('bot_ports') is None):
+        raise ValueError('Batch schema and player ports disagree')
+    return validate_plan(manifest['policies'],manifest['matches_per_policy'],
+        manifest['match_seconds'],manifest['duration_seconds'],manifest['candidate_profile'],
+        manifest.get('bot_ports'))
+
+
+def child_port(manifest, slot):
+    return manifest['schedule'][slot].get('bot_port',1)
 
 
 def write_new(path, value):
@@ -101,9 +124,8 @@ def artifact_path(run, name):
 def load_batch(root, folder):
     manifest = read_json(folder/'manifest.json')
     provider = manifest.get('provider')
-    expected = validate_plan(manifest['policies'], manifest['matches_per_policy'],
-        manifest['match_seconds'], manifest['duration_seconds'], manifest['candidate_profile'])
-    if (manifest['schema_version'] != 1 or manifest['batch_id'] != folder.name or
+    expected = manifest_plan(manifest)
+    if (manifest['batch_id'] != folder.name or
             manifest['schedule'] != expected or manifest['provider_enabled'] != ('jev' in manifest['policies']) or
             bool(provider) != manifest['provider_enabled'] or
             (provider is not None and (provider['profile'] != manifest['candidate_profile'] or
@@ -132,6 +154,9 @@ def load_batch(root, folder):
             audit = read_json(audit_path)
             run = locate_run(root, audit['run_id'])
             if (audit['slot'] != slot or audit['policy'] != expected[slot]['policy'] or
+                    (manifest['schema_version']==2 and any('bot_port' not in value for value in (audit,audit['summary']))) or
+                    any(type(value) is not int or value != child_port(manifest,slot) for value in
+                        (audit.get('bot_port',1),audit['summary'].get('bot_port',1))) or
                     audit['run_id'] in {row['run_id'] for row in results} or
                     not {'launch.json','summary.json','frames.jsonl'}.issubset(audit['artifact_sha256']) or
                     any(file_hash(artifact_path(run,name)) != digest for name,digest in audit['artifact_sha256'].items())):
@@ -171,7 +196,11 @@ def audit_child(root, folder, manifest, slot, *, ledger_before=None):
     run = locate_run(root, starts[0])
     launch, summary = read_json(run/'launch.json'), read_json(run/'summary.json')
     policy = manifest['schedule'][slot]['policy']
+    port = child_port(manifest,slot)
     if (launch['run_id'] != run.name or summary['run_id'] != run.name or
+            (manifest['schema_version']==2 and any('bot_port' not in value for value in (launch,summary))) or
+            type(launch.get('bot_port',1)) is not int or type(summary.get('bot_port',1)) is not int or
+            launch.get('bot_port',1) != port or summary.get('bot_port',1) != port or
             launch['policy'] != policy or summary['policy'] != policy or
             launch.get('candidate_profile', PROFILE) != manifest['candidate_profile'] or
             launch['source_sha256'] != manifest['source_identity']['modules'] or
@@ -186,12 +215,12 @@ def audit_child(root, folder, manifest, slot, *, ledger_before=None):
     control = (paid_cohort.audit_replay(root,folder,slot,run,summary) if policy=='jev' else inspect_local_policy(run))
     provider_ok = (summary['provider_contacted'] and spending['http_calls']>0 and spending['validated']>0
         and spending['provider_shutdown']) if policy=='jev' else not summary['provider_contacted']
-    rules = replay_layout_valid(summary['episodes'], summary['replays'], complete=True, expected_matches=1)
+    rules = replay_layout_valid(summary['episodes'], summary['replays'], complete=True, expected_matches=1,bot_port=port)
     passed = (summary['status'] == 'complete' and summary.get('completed_matches') == 1 and
         integrity['status'] == control['status'] == 'pass' and rules and provider_ok and
         all(summary[k] for k in ('neutralized','worker_stopped','emulator_stopped')) and summary['state_receiver']['stopped'])
     files = ['launch.json', 'summary.json', 'frames.jsonl', *['replays/'+r['file'] for r in summary['replays']]]
-    return {'schema_version':1, 'slot':slot, 'run_id':run.name, 'policy':policy,
+    return {'schema_version':1, 'slot':slot, 'run_id':run.name, 'policy':policy,'bot_port':port,
         'passed':bool(passed), 'summary':summary, 'integrity':integrity, 'control_replay':control, 'spending':spending,
         'rules_and_result':rules, 'artifact_bytes':artifact_bytes(run)+control.get('incident_bytes',0),
         'artifact_sha256':{name:file_hash(artifact_path(run,name)) for name in files}}
@@ -219,12 +248,21 @@ def report_batch(manifest, results, pending=None):
         rows = [row for row in results if row['policy'] == policy]
         valid = [row for row in rows if row['passed']]
         groups[policy] = {'attempts':len(rows), 'verified_matches':len(valid),
-            'wins':sum(row['summary']['episodes'][-1].get('winner_port') == 1 for row in valid),
-            'losses':sum(row['summary']['episodes'][-1].get('winner_port') == 2 for row in valid),
+            'wins':sum(row['summary']['episodes'][-1].get('winner_port') == row.get('bot_port',1) for row in valid),
+            'losses':sum(row['summary']['episodes'][-1].get('winner_port') == 3-row.get('bot_port',1) for row in valid),
             'failed_attempts':len(rows)-len(valid)}
+        groups[policy]['by_port'] = {}
+        for port in manifest.get('bot_ports',[1]):
+            attempts = [row for row in rows if row.get('bot_port',1)==port]
+            checked = [row for row in attempts if row['passed']]
+            groups[policy]['by_port'][str(port)] = {'attempts':len(attempts),
+                'verified_matches':len(checked),'failed_attempts':len(attempts)-len(checked),
+                'wins':sum(row['summary']['episodes'][-1].get('winner_port')==port for row in checked),
+                'losses':sum(row['summary']['episodes'][-1].get('winner_port')==3-port for row in checked)}
     status = ('ambiguous_child' if pending is not None else 'stopped' if any(not r['passed'] for r in results)
         else 'complete' if len(results) == len(manifest['schedule']) else 'checkpointed')
     return {'schema_version':1, 'batch_id':manifest['batch_id'], 'status':status,
+        'bot_ports':manifest.get('bot_ports',[1]),'schedule_schema_version':manifest['schema_version'],
         'candidate_profile':manifest['candidate_profile'], 'expected_matches':len(manifest['schedule']),
         'audited_attempts':len(results), 'policies':groups,
         'pending_slot':pending['slot'] if pending else None,
@@ -241,6 +279,8 @@ def run_child(root, folder, manifest, slot):
     command = [sys.executable, '-B', '-m', 'melee_agent.matches', str(root),
         str(manifest['match_seconds']), '1', policy, '0', '20', provider['budget_directory'] if provider else '',
         str(provider['max_requests']) if provider else '0', '', '', manifest['candidate_profile']]
+    if child_port(manifest,slot) != 1:
+        command.append(str(child_port(manifest,slot)))
     with (folder/f'match-{slot:02}.log').open('x') as log:
         child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
             start_new_session=True, env=provider_environment(policy) if provider else isolated_environment())
@@ -301,8 +341,8 @@ def resume_batch(root, batch_id, *, max_new_matches=20):
 
 def start_batch(root, *, policies=MODES, matches_per_policy=10, match_seconds=600,
         duration=14400, profile=PROFILE, max_new_matches=20, previous_batch=None,
-        budget=None, max_requests=None):
-    schedule = validate_plan(policies, matches_per_policy, match_seconds, duration, profile)
+        budget=None, max_requests=None, bot_ports=None):
+    schedule = validate_plan(policies, matches_per_policy, match_seconds, duration, profile,bot_ports)
     if not bounded(max_new_matches, 1, 20):
         raise ValueError('Invalid checkpoint size')
     config = load_config(root)
@@ -319,12 +359,14 @@ def start_batch(root, *, policies=MODES, matches_per_policy=10, match_seconds=60
     batch_id = 'batch-'+uuid.uuid4().hex
     folder = locate_batch(root, batch_id)
     folder.mkdir(parents=True)
-    manifest = {'schema_version':1, 'batch_id':batch_id, 'policies':list(policies),
+    manifest = {'schema_version':1 if bot_ports is None else 2, 'batch_id':batch_id, 'policies':list(policies),
         'matches_per_policy':matches_per_policy, 'match_seconds':match_seconds,
         'duration_seconds':duration, 'deadline_unix':deadline,
         'candidate_profile':profile, 'schedule':schedule, 'source_identity':source_identity(root),
         'runtime_sha256':config.runtime_sha256, 'max_match_bytes':config.limits.max_artifact_bytes,
         'provider_enabled':provider is not None, 'provider':provider, 'previous_cohort':previous}
+    if bot_ports is not None:
+        manifest['bot_ports'] = list(bot_ports)
     write_new(folder/'manifest.json', manifest)
     append_event(folder, {'kind':'created', 'manifest_sha256':file_hash(folder/'manifest.json')})
     print(json.dumps({'event':'batch_started', 'batch_id':batch_id}), flush=True)

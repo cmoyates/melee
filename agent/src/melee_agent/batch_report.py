@@ -8,7 +8,7 @@ import re
 
 from .budget import SpendLedger
 from .config import owned_path
-from .policy_batch import artifact_path, file_hash, locate_batch, locate_run, read_json, validate_plan
+from .policy_batch import artifact_path, child_port, file_hash, locate_batch, locate_run, manifest_plan, read_json
 from .paid_cohort import verify_replay_artifacts
 
 
@@ -46,9 +46,8 @@ def snapshot(root, batch_id):
     """Verify historical hashes; current source/ledger suffix need not be identical."""
     folder = locate_batch(root, batch_id)
     manifest = read_json(folder/'manifest.json')
-    require(manifest['schema_version'] == 1 and manifest['batch_id'] == batch_id)
-    plan = validate_plan(manifest['policies'], manifest['matches_per_policy'],
-        manifest['match_seconds'], manifest['duration_seconds'], manifest['candidate_profile'])
+    require(manifest['batch_id'] == batch_id)
+    plan = manifest_plan(manifest)
     require(manifest['schedule'] == plan)
     contract = manifest.get('provider')
     require(bool(contract) == manifest['provider_enabled'] == ('jev' in manifest['policies']))
@@ -86,6 +85,10 @@ def snapshot(root, batch_id):
         require(summary == audit['summary'])
         require(summary['run_id'] == launch['run_id'] == audit['run_id'])
         require(summary['policy'] == launch['policy'] == audit['policy'])
+        port = child_port(manifest,slot)
+        require(manifest['schema_version']==1 or all('bot_port' in value for value in (summary,launch,audit)))
+        require(all(type(value) is int and value == port for value in
+            (summary.get('bot_port',1),launch.get('bot_port',1),audit.get('bot_port',1))))
         require(launch['source_sha256'] == manifest['source_identity']['modules'])
         require(launch['runtime_sha256'] == manifest['runtime_sha256'])
         require(launch['candidate_profile'] == manifest['candidate_profile'])
@@ -178,6 +181,7 @@ def match_row(root, audit):
     episodes = summary['episodes']
     final = episodes[-1] if episodes else {}
     row = {'slot':audit['slot'], 'run_id':audit['run_id'], 'policy':audit['policy'],
+        'bot_port':summary.get('bot_port',1),
         'passed':audit['passed'], 'winner_port':final.get('winner_port') if audit['passed'] else None,
         'final_stocks':final.get('last_stocks'), 'elapsed_seconds':summary['elapsed_seconds'],
         'game_frames':sum(count(e['observations']) for e in episodes),
@@ -234,11 +238,21 @@ def build_report(root, batch_id):
     for policy in manifest['policies']:
         selected = [r for r in rows if r['policy'] == policy]
         valid = [r for r in selected if r['passed']]
-        wins = sum(r['winner_port'] == 1 for r in valid)
+        wins = sum(r['winner_port'] == r['bot_port'] for r in valid)
         groups[policy] = {'audited':len(selected), 'verified_matches':len(valid), 'wins':wins,
-            'losses':sum(r['winner_port'] == 2 for r in valid), 'failed_attempts':len(selected)-len(valid),
+            'losses':sum(r['winner_port'] == 3-r['bot_port'] for r in valid), 'failed_attempts':len(selected)-len(valid),
             'win_fraction':wins/len(valid) if valid else None, 'wilson_95':wilson(wins,len(valid)),
             'verified_game_frames':sum(r['game_frames'] for r in valid)}
+        groups[policy]['by_port'] = {}
+        for port in manifest.get('bot_ports',[1]):
+            attempts = [r for r in selected if r['bot_port'] == port]
+            checked = [r for r in attempts if r['passed']]
+            victories = sum(r['winner_port'] == port for r in checked)
+            groups[policy]['by_port'][str(port)] = {'audited':len(attempts),
+                'verified_matches':len(checked),'wins':victories,
+                'losses':sum(r['winner_port'] == 3-port for r in checked),
+                'failed_attempts':len(attempts)-len(checked),
+                'wilson_95':wilson(victories,len(checked))}
     source = manifest['source_identity']
     modules = {name:digest(sha) for name,sha in source['modules'].items()}
     require(all(re.fullmatch(r'[a-z_]+\.py',name) for name in modules))
@@ -256,13 +270,14 @@ def build_report(root, batch_id):
         spending['includes_pending_spending'] = False
     # Recheck the journal after replay metadata reads too.
     require(file_hash(locate_batch(root,batch_id)/'events.jsonl') == journal_hash)
-    return {'schema_version':1, 'batch_id':batch_id,
+    return {'schema_version':2, 'batch_id':batch_id,
         'status':'pending' if pending else 'failed' if any(not r['passed'] for r in rows)
             else 'complete' if len(rows)==len(manifest['schedule']) else 'checkpointed',
         'scheduled_matches':len(manifest['schedule']), 'audited_matches':len(rows),
         'pending_slot':pending['slot'] if pending else None,
         'unattempted_slots':len(manifest['schedule'])-len(rows)-int(pending is not None),
         'candidate_profile':manifest['candidate_profile'],
+        'bot_ports':manifest.get('bot_ports',[1]),'schedule_schema_version':manifest['schema_version'],
         'manifest_sha256':manifest_hash, 'journal_sha256':journal_hash,
         'recorded_modules_sha256':modules, 'runtime_sha256':digest(manifest['runtime_sha256']),
         'local_config_sha256':digest(source['local_config']) if source['local_config'] else None,
@@ -273,7 +288,8 @@ def build_report(root, batch_id):
             'Current checkout may differ and this report does not authorize resume. '
             'Wins use only passed matches; failures, pending and unattempted slots remain visible. '
             'Wilson intervals describe binomial sampling uncertainty only, not causal or held-out strength. '
-            'Bot is port 1; game RNG was observed, not configured; games are not paired. '
+            'Bot port is explicit per match; native winner ports are scored against that role. '
+            'Final stocks are canonical bot/opponent. Game RNG was observed, not configured; games are not paired. '
             'Phase counters have the original participation semantics, not correctness labels. '
             'Latency distributions are per match, never averages of percentiles. '
             'Spending covers committed cohort audits only, excluding earlier experiments and pending calls. '
@@ -290,6 +306,11 @@ def markdown(report):
         interval = group['wilson_95']
         rate = 'unavailable' if interval is None else f"{group['win_fraction']:.3f} [{interval[0]:.3f}, {interval[1]:.3f}]"
         lines.append(f"| {policy} | {group['verified_matches']} | {group['wins']} | {group['losses']} | {group['failed_attempts']} | {rate} |")
+    lines.extend(['','| Policy | Bot port | Verified | Wins | Losses | Failed |',
+        '| --- | ---: | ---: | ---: | ---: | ---: |'])
+    for policy,group in report['policies'].items():
+        for port,values in group['by_port'].items():
+            lines.append(f"| {policy} | {port} | {values['verified_matches']} | {values['wins']} | {values['losses']} | {values['failed_attempts']} |")
     if report['spending']:
         spend = report['spending']
         lines.extend(['', f"Cohort accounted: ${spend['accounted_nano_usd']/1e9:.9f}; "

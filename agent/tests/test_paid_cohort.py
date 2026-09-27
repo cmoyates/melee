@@ -57,6 +57,17 @@ class PaidCohortTests(unittest.TestCase):
         self.assertIsNone(pending);self.assertEqual(rows[1]['spending']['reserved_requests'],2)
         self.assertEqual(rows[1]['spending']['validated'],1)
 
+    def test_explicit_port_two_keeps_same_paid_budget_and_ledger_chain(self):
+        first=self.start(bot_ports=(2,))
+        with patch.object(batch,'run_child',side_effect=self.child):
+            final=batch.resume_batch(self.root,first['batch_id'])
+        self.assertEqual(final['status'],'complete')
+        self.assertEqual(final['policies']['jev']['wins'],1)
+        self.assertEqual(final['paid_ledger_checkpoint']['report']['accounted_nano_usd'],2_010_000)
+        manifest,rows,_=batch.load_batch(self.root,self.folder())
+        self.assertEqual(manifest['provider']['budget_directory'],self.directory)
+        self.assertEqual([r['bot_port'] for r in rows],[2,2])
+
     def test_external_ledger_append_blocks_resume_before_launch(self):
         first=self.start()
         self.ledger.reserve(cost_nano_usd=2_000_000,input_tokens=2000,payload_sha256='b'*64)

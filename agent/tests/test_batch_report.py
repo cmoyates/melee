@@ -60,9 +60,14 @@ class BatchReportTests(unittest.TestCase):
             'elapsed_seconds':12.5,'episodes':[{'winner_port':2,'last_stocks':[0,3],'observations':100}],
             'replays':[{'file':'game.slp','sha256':batch.file_hash(replay)}],
             'private_prompt':'NEVER_PUBLIC_SECRET','asset_path':'/private/NEVER_PUBLIC_SECRET'}
+        port=batch.child_port(self.manifest,slot)
+        if self.manifest['schema_version']==2:
+            summary['bot_port']=port
+            summary['episodes'][0]['last_stocks']=[3,0] if port==2 else [0,3]
         launch = {'run_id':run_id,'policy':summary['policy'],
             'source_sha256':self.manifest['source_identity']['modules'],
             'runtime_sha256':self.manifest['runtime_sha256'],'candidate_profile':'fox-aerial-v1'}
+        if self.manifest['schema_version']==2:launch['bot_port']=port
         batch.write_new(run/'summary.json',summary);batch.write_new(run/'launch.json',launch)
         (run/'frames.jsonl').write_text('private frame payload\n')
         control = {'status':'pass' if passed else 'fail','packets_sha256':'6'*64}
@@ -83,12 +88,43 @@ class BatchReportTests(unittest.TestCase):
             'integrity':{'status':'pass'},'rules_and_result':passed,
             'artifact_sha256':{n:batch.file_hash(run/n) for n in
                 ('summary.json','launch.json','frames.jsonl','replays/game.slp')}}
+        if self.manifest['schema_version']==2:audit['bot_port']=port
         path = self.folder/f'audit-{slot:02}.json'
         batch.write_new(path,audit)
         batch.append_event(self.folder,{'kind':'audited','slot':slot,'audit_sha256':batch.file_hash(path)})
 
     def render(self):
         return report.build_report(self.root,self.batch_id)
+
+    def use_port_two(self):
+        self.manifest.update(schema_version=2,bot_ports=[2])
+        self.manifest['schedule']=batch.manifest_plan(self.manifest)
+        (self.folder/'manifest.json').write_text(json.dumps(self.manifest))
+        (self.folder/'events.jsonl').write_text(json.dumps({'kind':'created',
+            'manifest_sha256':batch.file_hash(self.folder/'manifest.json')})+'\n')
+
+    def test_native_port_two_wins_are_scored_for_bot_in_json_and_markdown(self):
+        self.use_port_two()
+        for slot in range(3):self.add(slot)
+        value=self.render()
+        self.assertEqual(value['bot_ports'],[2])
+        self.assertEqual(value['schedule_schema_version'],2)
+        self.assertTrue(all(g['wins']==1 and g['losses']==0 for g in value['policies'].values()))
+        self.assertEqual(value['policies']['jev']['by_port']['2']['wins'],1)
+        self.assertEqual(value['matches'][0]['final_stocks'],[3,0])
+        self.assertIn('| jev | 2 | 1 | 1 | 0 | 0 |',report.markdown(value))
+
+    def test_historical_port_two_audit_cannot_be_relabelled_as_port_one(self):
+        self.use_port_two();self.add(0)
+        self.rewrite_audit(lambda audit:audit.update(bot_port=1))
+        with self.assertRaisesRegex(ValueError,'inconsistent'):self.render()
+
+    def test_legacy_summary_roles_cannot_disagree_with_implicit_port_one(self):
+        self.add(0)
+        run=next((self.root/'build/jev/runs').iterdir());path=run/'launch.json'
+        launch=json.loads(path.read_text());launch['bot_port']=2;path.write_text(json.dumps(launch))
+        self.rewrite_audit(lambda audit:audit['artifact_sha256'].update({'launch.json':batch.file_hash(path)}))
+        with self.assertRaisesRegex(ValueError,'inconsistent'):self.render()
 
     def rewrite_audit(self, mutate):
         path=self.folder/'audit-00.json';audit=json.loads(path.read_text());mutate(audit)

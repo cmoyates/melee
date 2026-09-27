@@ -6,7 +6,7 @@ import json
 
 from .engine import Decision, ScriptedPolicy
 from .aerial import AERIAL, can_start_aerial
-from .fox_reflex import FoxReflex
+from .fox_reflex import FoxReflex, LANDING_ORIGIN_FLOOR
 from .ground_combat import COMBAT, can_start_combat
 from .approach_jab import can_start_approach_jab
 from .skills import SkillArbiter, SkillSpec, inhibited
@@ -314,7 +314,7 @@ class ScenarioPolicy:
             return fail('calibration_opponent_left_fixed_setup')
         surface = support_surface(a.x,a.y,a.grounded)
         target = b.x-6*self.spec.direction
-        if abs(a.x) > 62 or a.y < -1 or a.y > 80:
+        if abs(a.x) > 62 or a.y < LANDING_ORIGIN_FLOOR or a.y > 80:
             return fail('calibration_route_out_of_bounds')
         if self.calibration_jump_started is not None:
             age = frame-self.calibration_jump_started

@@ -28,6 +28,15 @@ jump. The original 480-frame whole-setup deadline and continuity/life guards
 still apply. This is one controlled measurement route, not general platform
 navigation. Original CPU3 and aerial fixture hashes remain unchanged.
 
+The route allows the existing `LANDING_ORIGIN_FLOOR` corridor (y at least -12)
+over the main floor. Recorded aerial pilot
+`match-0636f7e0c87149aaa05ab82f0023a7a5`, frame 26, shows an ordinary falling
+origin at x=-5.9600, y=-1.9399 just before floor landing. A stricter -1 bound
+would reject that valid approach before the calibration jump. The route waits
+neutrally while airborne; this allowance does not start an attack or jump below
+the floor or permit offstage horizontal coordinates. Frames SHA-256:
+`01bb81100fdcc9f9c7048b07bca197dcd12048ccbc3e3507499e91792dbc6a4e`.
+
 The supervisor and raw replay rules require the declared human-opponent fixture.
 Every nonnegative gameplay observation, including setup, must show Mario's
 buttons, sticks and triggers released. The original CPU3 rules remain strict.
@@ -58,7 +67,7 @@ visible and cannot be dropped to obtain a pass.
 
 Native calibration is pending. Passing it would establish this controlled
 mechanical fixture, without replacing the original CPU3 integration result or
-demonstrating tactical strength. Thirteen focused host tests cover preserved
+demonstrating tactical strength. Fourteen focused host tests cover preserved
 contracts, bounded mirrored setup and release, interrupted/missing takeoff,
 landing and continuity, isolated acceptance groups, failed/missing trials and
 the difference between a grab motion and a captured opponent.

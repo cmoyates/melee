@@ -110,11 +110,21 @@ class GroundCalibrationTests(unittest.TestCase):
         self.assertEqual(policy.result['reason'],'calibration_landing_timeout')
 
     def test_opponent_departure_and_unknown_routes_fail_neutrally(self):
-        for observation in (platform_state(x=65.),platform_state(y=-2.),
+        for observation in (platform_state(x=65.),platform_state(y=-13.),
                 replace(platform_state(),opponent=replace(platform_state().opponent,y=0.))):
             policy=ScenarioPolicy(find_scenario('calibration-jab-right'))
             self.assertEqual(policy.decide(observation).action,'wait')
             self.assertIsNotNone(policy.calibration_setup_failure)
+
+    def test_observed_landing_origin_dip_waits_for_floor_without_starting_jump(self):
+        for direction,side in ((-1,'left'),(1,'right')):
+            policy=ScenarioPolicy(find_scenario('calibration-jab-'+side))
+            value=platform_state(26,direction,x=-5.959995269775391,y=-1.9398987293243408,
+                grounded=False,action_id=29)
+            self.assertEqual(policy.decide(value).action,'wait')
+            self.assertIsNone(policy.calibration_setup_failure)
+            self.assertIsNone(policy.calibration_jump_started)
+            self.assertEqual(policy.decide(platform_state(27,direction,x=-5.959995269775391)).action,'slow_right')
 
     def test_gap_after_setup_jump_releases_and_preserves_existing_continuity_guard(self):
         policy=ScenarioPolicy(find_scenario('calibration-jab-right'))
